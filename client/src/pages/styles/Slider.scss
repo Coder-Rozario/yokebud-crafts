@@ -1,0 +1,121 @@
+.slider {
+  position: relative;
+  width: 100%;
+  height: 70vh;
+  margin:  auto;
+  overflow: hidden;
+  border-radius: 5px;
+
+  .video-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    z-index: 100;
+    height: 100%;
+    
+    .background-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      filter: brightness(0.7);
+    }
+    
+    .video-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      z-index: 100;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.3);
+    }
+  }
+
+  .mid_text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 200;
+    width: 100%;
+    height: 100%;
+
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    pointer-events: none;
+
+    .fade-text {
+      pointer-events: auto;
+      color: white;
+      font-size: 3rem;
+      font-weight: 500;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+      opacity: 0;
+      animation: fadeInOut 4s ease-in-out forwards;
+
+      @media (max-width: 768px) {
+        font-size: 1.4rem;
+      }
+    }
+
+    .shop-now-btn {
+      pointer-events: auto;
+      margin-top: 2rem;
+      padding: 12px 30px;
+      background: transparent;
+      color: white;
+      border: 2px solid white;
+      border-radius: 30px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+
+      &:hover {
+        background: white;
+        color: black;
+      }
+      
+    }
+  }
+}
+
+@keyframes fadeInOut {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  10% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  90% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+@media (max-width: 768px) {
+  .slider {
+    height: 25vh;
+
+    .mid_text {
+      .fade-text {
+        font-size: 1.4rem;
+      }
+      .shop-now-btn {
+        padding: 10px 25px;
+        font-size: 0.5rem;
+      }
+    }
+  }
+}

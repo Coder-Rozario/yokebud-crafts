@@ -1,0 +1,71 @@
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes slideUp {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  
+  @keyframes slideDown {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  
+  @keyframes slideLeft {
+    from { transform: translateX(20px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  
+  @keyframes slideRight {
+    from { transform: translateX(-20px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  
+  .fade-in {
+    animation: fadeIn 0.5s ease forwards;
+  }
+  
+  .slide-up {
+    animation: slideUp 0.5s ease forwards;
+  }
+  
+  .slide-down {
+    animation: slideDown 0.5s ease forwards;
+  }
+  
+  .slide-left {
+    animation: slideLeft 0.5s ease forwards;
+  }
+  
+  .slide-right {
+    animation: slideRight 0.5s ease forwards;
+  }
+  
+  // Scroll indicator animation
+  .scroll {
+    width: 60px;
+    height: 60px;
+    margin: 0 auto;
+    position: relative;
+    animation: down 1.5s infinite;
+    
+    &::before {
+      content: "";
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      width: 15px;
+      height: 15px;
+      border-left: 2px solid var(--Primary_color);
+      border-bottom: 2px solid var(--Primary_color);
+      transform: rotate(-45deg);
+    }
+  }
+  
+  @keyframes down {
+    0% { transform: translate(0); }
+    20% { transform: translateY(15px); }
+    40% { transform: translate(0); }
+  }

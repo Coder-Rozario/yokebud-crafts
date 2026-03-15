@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin
+Disallow: /admin/
+Disallow: /admin/*
+Disallow: /admin/login
+
+Host: www.yokebud.fi
+Sitemap: https://www.yokebud.fi/sitemap.xml

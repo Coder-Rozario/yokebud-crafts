@@ -1,0 +1,12 @@
+.filter_btn {
+  cursor: pointer;
+  transition: all 0.3s;
+}
+.filter_btn:hover {
+  color: var(--Primary_color);
+  transform: translateY(-2px);
+}
+.filter_btn.active_btn {
+  background-color: var(--Primary_color);
+  color: white;
+}/*# sourceMappingURL=FilterButtons.css.map */

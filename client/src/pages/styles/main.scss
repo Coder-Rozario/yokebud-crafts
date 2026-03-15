@@ -1,0 +1,119 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
+
+/* Base styles */
+* {
+  margin: 0;
+  padding: 0;
+  scroll-behavior: smooth;
+  transition: all 100ms;
+  user-select: none;
+  font-family: 'Poppins', sans-serif;
+  box-sizing: border-box;
+}
+
+:root {
+  --Primary_color: #D4AF37;
+  --gold-solid: #D4AF37;
+  --gold-gradient: linear-gradient(to right, #BF953F, #FCF6BA, #B38728, #FBF5B7, #AA771C);
+  --text_color: #f5f5f5;
+  --nav_background: rgba(18, 18, 18, 0.92);
+  --footer_background: rgba(0, 0, 0, 0.8);
+  --footer-background: rgba(0, 0, 0, 0.8);
+  --background_dark: #0b0b0b;
+  --background_light: #141414;
+  --accent_color: #A67C52;
+}
+
+body {
+  background-color: #000;
+  font-family: 'Poppins', sans-serif !important;
+  color: var(--text_color);
+  overflow-x: hidden;
+  position: relative;
+}
+
+body::-webkit-scrollbar {
+  display: none;
+  background-color: var(--background_dark);
+}
+
+/* Utility classes */
+.gold-text {
+  background: var(--gold-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.gold-button {
+  background: var(--gold-gradient);
+  color: #111;
+  border: 2px solid var(--gold-solid);
+  box-shadow: 0 0 12px rgba(212, 175, 55, 0.35);
+}
+
+/* Layout styles */
+#container {
+  margin: 0 auto;
+  position: relative;
+  height: fit-content;
+  color: var(--text_color);
+  background-color: rgba(26, 26, 26, 0.95);
+}
+
+@media screen and (max-width: 868px) {
+  #container {
+    /* Avoid 100vw which includes scrollbar width and causes right gap */
+    width: 100%;
+    height: fit-content;
+  }
+}
+
+main {
+  height: fit-content;
+  min-height: inherit;
+  width: 100%;
+  background-color: rgba(0, 0, 0, 0.411);
+  color: var(--text_color);
+}
+
+h1, h2, h3, h4, h5, h6, p, span, a, li, button, input, textarea, label {
+  font-family: 'Poppins', sans-serif !important;
+}
+
+/* Component styles (import after base styles) */
+
+/* Toastify premium theme overrides */
+.Toastify__toast-container {
+  z-index: 99999;
+}
+.Toastify__toast {
+  background: #0a0a0a;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 12px rgba(191, 149, 63, 0.25);
+  backdrop-filter: blur(6px);
+  border-radius: 16px;
+  padding: 12px 14px;
+}
+.Toastify__toast-body {
+  font-size: 13px;
+  line-height: 1.45;
+}
+.Toastify__progress-bar {
+  background: linear-gradient(135deg, #BF953F, #FCF6BA, #B38728, #FBF5B7, #AA771C) !important;
+  height: 3px;
+}
+.Toastify__toast-icon svg {
+  color: #BF953F;
+}
+.Toastify__close-button {
+  color: #dddddd;
+}
+.Toastify__close-button:hover {
+  color: #BF953F;
+}
+.Toastify__toast--success .Toastify__toast-icon svg { color: #2ECC71; }
+.Toastify__toast--error .Toastify__toast-icon svg { color: #E74C3C; }
+.Toastify__toast--info .Toastify__toast-icon svg { color: #3498DB; }
+.Toastify__toast--warning .Toastify__toast-icon svg { color: #F1C40F; }

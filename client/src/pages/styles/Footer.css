@@ -1,0 +1,285 @@
+:root {
+  --footer-background: black;
+  --footer-text: #ffffff;
+  --footer-accent: #FFA500;
+  --footer-hover: #ffbb33;
+  --footer-border: rgba(255, 255, 255, 0.1);
+}
+
+.footer {
+  background-color: var(--footer-background);
+  color: var(--footer-text);
+  position: relative;
+  transition: all 0.3s ease;
+}
+.footer.scrolled {
+  padding-top: 2rem;
+}
+.footer .footer-wave {
+  position: absolute;
+  top: -50px;
+  left: 0;
+  width: 100%;
+  overflow: hidden;
+  line-height: 0;
+  transform: rotate(180deg);
+}
+.footer .footer-wave svg {
+  position: relative;
+  display: block;
+  width: calc(100% + 1.3px);
+  height: 50px;
+}
+.footer .footer-wave path {
+  fill: var(--footer-background);
+}
+.footer .footer-content {
+  max-width: 95%;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+.footer .footer-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+.footer .footer-column h3 {
+  font-size: 1.2rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.75rem;
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  color: var(--footer-accent);
+  border-bottom: 1px solid var(--footer-border);
+  transition: all 0.3s ease;
+}
+.footer .footer-column h3:hover {
+  color: var(--footer-hover);
+}
+.footer .footer-column h3 .dropdown-icon {
+  display: none;
+  transition: transform 0.3s ease;
+}
+.footer .footer-column ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  transition: all 0.3s ease;
+}
+.footer .footer-column ul li {
+  margin-bottom: 1rem;
+  line-height: 1.6;
+  width: -moz-fit-content;
+  width: fit-content;
+}
+.footer .footer-column ul li .contact-item {
+  margin-bottom: 1rem;
+}
+.footer .footer-column ul li .contact-item .contact-label {
+  font-weight: 600;
+  color: var(--footer-accent);
+  display: block;
+  margin-bottom: 0.25rem;
+}
+.footer .footer-column ul li .contact-item .contact-value {
+  color: var(--footer-text);
+  opacity: 0.9;
+  transition: all 0.3s ease;
+  display: inline-block;
+}
+.footer .footer-column ul li .contact-item .contact-value:hover {
+  color: var(--footer-accent);
+  opacity: 1;
+}
+.footer .footer-column ul li .footer-link {
+  color: var(--footer-text);
+  opacity: 0.9;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  position: relative;
+  display: inline-block;
+  padding-bottom: 2px;
+}
+.footer .footer-column ul li .footer-link:hover {
+  color: var(--footer-accent);
+  opacity: 1;
+}
+.footer .footer-column ul li .footer-link:hover::after {
+  width: 100%;
+}
+.footer .footer-column ul li .footer-link::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  height: 1px;
+  background-color: var(--footer-accent);
+  transition: width 0.3s ease;
+}
+.footer .footer-column ul li .newsletter-form p {
+  margin-bottom: 1rem;
+  opacity: 0.9;
+  font-size: 0.75rem;
+}
+.footer .footer-column ul li .newsletter-form .input-group {
+  display: flex;
+  margin-bottom: 1.5rem;
+}
+.footer .footer-column ul li .newsletter-form .email-input {
+  flex: 1;
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--footer-border);
+  background-color: rgba(255, 255, 255, 0.05);
+  color: var(--footer-text);
+  border-radius: 4px 0 0 4px;
+  transition: all 0.3s ease;
+}
+.footer .footer-column ul li .newsletter-form .email-input:focus {
+  outline: none;
+  border-color: var(--footer-accent);
+  box-shadow: 0 0 0 2px rgba(255, 165, 0, 0.2);
+}
+.footer .footer-column ul li .newsletter-form .email-input::-moz-placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
+.footer .footer-column ul li .newsletter-form .email-input::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
+.footer .footer-column ul li .newsletter-form .subscribe-btn {
+  padding: 0 1rem;
+  background-color: var(--footer-accent);
+  color: #000;
+  border: none;
+  border-radius: 0 4px 4px 0;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+.footer .footer-column ul li .newsletter-form .subscribe-btn:hover {
+  background-color: var(--footer-hover);
+  transform: translateY(-1px);
+}
+.footer .footer-column ul li .newsletter-form .subscribe-btn:active {
+  transform: translateY(0);
+}
+.footer .footer-column ul li .payment-methods {
+  margin: 1.5rem 0;
+  position: relative;
+  top: 4vh;
+}
+.footer .footer-column ul li .payment-methods .payment-title {
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+  color: var(--footer-accent);
+  opacity: 0.9;
+}
+.footer .footer-column ul li .payment-methods .payment-icons {
+  display: flex;
+  gap: 2rem;
+  align-items: center;
+}
+.footer .footer-column ul li .payment-methods .payment-icons .payment-icon {
+  font-size: 1.5rem;
+  color: var(--footer-text);
+  opacity: 0.8;
+  transition: all 0.3s ease;
+}
+.footer .footer-column ul li .payment-methods .payment-icons .payment-icon:hover {
+  opacity: 1;
+  transform: translateY(-2px);
+}
+.footer .footer-column ul li .social-links {
+  display: flex;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+.footer .footer-column ul li .social-links .social-icon {
+  color: var(--footer-text);
+  font-size: 1rem;
+  opacity: 0.8;
+  transition: all 0.3s ease;
+}
+.footer .footer-column ul li .social-links .social-icon:hover {
+  color: var(--footer-accent);
+  opacity: 1;
+  transform: translateY(-3px);
+}
+.footer .footer-bottom {
+  border-top: 1px solid var(--footer-border);
+  padding: 1.5rem 0;
+  text-align: center;
+  margin-top: 2rem;
+}
+.footer .footer-bottom p {
+  margin: 0;
+  font-size: 0.6rem;
+  opacity: 0.7;
+}
+
+@media (max-width: 992px) {
+  .footer .footer-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+}
+@media (max-width: 768px) {
+  .footer {
+    padding-top: 2rem;
+    padding: 0;
+    margin-bottom: 5vh;
+  }
+  .footer .footer-wave {
+    top: -30px;
+    height: 30px;
+  }
+  .footer .footer-grid {
+    grid-template-columns: 1fr;
+  }
+  .footer .footer-column h3 {
+    font-size: 0.6rem;
+  }
+  .footer .footer-column h3 .dropdown-icon {
+    display: block;
+  }
+  .footer .footer-column ul {
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+  }
+  .footer .footer-column.active h3 .dropdown-icon {
+    transform: rotate(180deg);
+  }
+  .footer .footer-column.active ul {
+    max-height: 1000px;
+    opacity: 1;
+  }
+  .footer {
+    /* Newsletter section always visible on small devices */
+  }
+  .footer .footer-column:nth-child(4) ul {
+    max-height: none;
+    overflow: visible;
+    opacity: 1;
+  }
+  .footer .footer-column:nth-child(4) h3 {
+    cursor: default;
+  }
+  .footer .footer-column:nth-child(4) h3 .dropdown-icon {
+    display: none;
+  }
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}/*# sourceMappingURL=Footer.css.map */

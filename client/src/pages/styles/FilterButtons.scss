@@ -1,0 +1,14 @@
+.filter_btn {
+    cursor: pointer;
+    transition: all 0.3s;
+  
+    &:hover {
+      color: var(--Primary_color);
+      transform: translateY(-2px);
+    }
+  
+    &.active_btn {
+      background-color: var(--Primary_color);
+      color: white;
+    }
+  }

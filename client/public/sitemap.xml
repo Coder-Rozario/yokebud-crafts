@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap>
+    <loc>https://www.yokebud.fi/page-sitemap.xml</loc>
+    <lastmod>2026-03-15</lastmod>
+  </sitemap>
+  <sitemap>
+    <loc>https://www.yokebud.fi/category-sitemap.xml</loc>
+    <lastmod>2026-03-15</lastmod>
+  </sitemap>
+  <sitemap>
+    <loc>https://www.yokebud.fi/product-sitemap.xml</loc>
+    <lastmod>2026-03-15</lastmod>
+  </sitemap>
+  <sitemap>
+    <loc>https://www.yokebud.fi/blog-sitemap.xml</loc>
+    <lastmod>2026-03-15</lastmod>
+  </sitemap>
+</sitemapindex>
