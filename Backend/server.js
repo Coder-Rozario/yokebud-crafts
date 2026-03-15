@@ -523,6 +523,7 @@ async function regenerateSitemap() {
       `    <lastmod>${today}</lastmod>\n` +
       `    <changefreq>weekly</changefreq>\n` +
       `    <priority>0.6</priority>\n` +
+      `    <category>Blog</category>\n` +
       `  </url>`
     );
 
@@ -543,6 +544,7 @@ async function regenerateSitemap() {
         `    <lastmod>${lastmod}</lastmod>\n` +
         `    <changefreq>weekly</changefreq>\n` +
         `    <priority>0.5</priority>\n` +
+        `    <category>Blog</category>\n` +
         `  </url>`
       );
     }
@@ -2746,6 +2748,7 @@ app.get('/blog-sitemap.xml', async (req, res) => {
         `    <lastmod>${today}</lastmod>\n` +
         `    <changefreq>${mainFreq}</changefreq>\n` +
         `    <priority>${mainPriority}</priority>\n` +
+        `    <category>Blog</category>\n` +
         `  </url>`
       );
     }
@@ -2769,6 +2772,7 @@ app.get('/blog-sitemap.xml', async (req, res) => {
         `    <lastmod>${lastmod}</lastmod>\n` +
         `    <changefreq>${freq}</changefreq>\n` +
         `    <priority>${priority}</priority>\n` +
+        `    <category>Blog</category>\n` +
         `  </url>`
       );
     }
