@@ -19,6 +19,8 @@ const crypto = require('crypto');
 const path = require('path');
 
 const app = express();
+// Serve static files (e.g. sitemap.xsl) from Backend/public
+app.use(express.static(path.join(__dirname, 'public')));
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
