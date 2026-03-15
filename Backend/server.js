@@ -371,10 +371,80 @@ async function regenerateSitemap() {
     // Fetch ALL sitemap entries directly from DB table
     // This query mirrors:
     // SELECT `id`, `path`, `priority`, `changefreq`, `type`, `is_active`, `created_at`, `updated_at` FROM `sitemap_entries` WHERE 1
-    const [entries] = await connection.query(
+    let [entries] = await connection.query(
       'SELECT id, path, priority, changefreq, type, is_active, created_at, updated_at FROM sitemap_entries WHERE 1'
     );
     console.log(`Fetched ${entries.length} sitemap entries from database.`);
+
+    // If there are no category-type entries yet but an existing category-sitemap.xml
+    // file is present (legacy static sitemap), import those URLs as initial
+    // category entries so that AdminSitemap and DB-driven category sitemaps use them.
+    const hasCategoryEntries = entries.some(
+      (e) => String(e.type || '').trim().toLowerCase() === 'category'
+    );
+    if (!hasCategoryEntries) {
+      try {
+        const categoryXmlPath = path.join(
+          __dirname,
+          '..',
+          'client',
+          'public',
+          'category-sitemap.xml'
+        );
+        if (fs.existsSync(categoryXmlPath)) {
+          const raw = fs.readFileSync(categoryXmlPath, 'utf8');
+          const locRegex = /<loc>([^<]+)<\/loc>/g;
+          const toPath = (fullUrl) => {
+            try {
+              const url = new URL(fullUrl);
+              return url.pathname + (url.search || '');
+            } catch {
+              return fullUrl.replace(PUBLIC_SITE_URL, '');
+            }
+          };
+
+          const imported = [];
+          let match;
+          while ((match = locRegex.exec(raw)) !== null) {
+            const loc = match[1];
+            if (!loc) continue;
+            const pathValue = toPath(loc.trim());
+            if (!pathValue) continue;
+            imported.push({
+              path: pathValue,
+              priority: '0.6',
+              changefreq: 'weekly',
+              type: 'category'
+            });
+          }
+
+          if (imported.length > 0) {
+            console.log(
+              `Importing ${imported.length} legacy category URLs from static category-sitemap.xml`
+            );
+            for (const entry of imported) {
+              await connection.query(
+                `INSERT INTO sitemap_entries (path, priority, changefreq, type, is_active)
+                 VALUES (?, ?, ?, ?, TRUE)
+                 ON DUPLICATE KEY UPDATE
+                   priority = COALESCE(sitemap_entries.priority, VALUES(priority)),
+                   changefreq = COALESCE(sitemap_entries.changefreq, VALUES(changefreq)),
+                   type = VALUES(type),
+                   is_active = COALESCE(sitemap_entries.is_active, TRUE)`,
+                [entry.path, entry.priority, entry.changefreq, entry.type]
+              );
+            }
+
+            // Re-load entries so subsequent logic sees the imported category URLs
+            ;[entries] = await connection.query(
+              'SELECT id, path, priority, changefreq, type, is_active, created_at, updated_at FROM sitemap_entries WHERE 1'
+            );
+          }
+        }
+      } catch (importErr) {
+        console.warn('Category sitemap import skipped due to error:', importErr.message);
+      }
+    }
     
     const today = new Date().toISOString().slice(0, 10);
     const header = `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
@@ -485,7 +555,7 @@ async function regenerateSitemap() {
     // We select all blogs instead of filtering by is_published so that sitemap always lists blog posts,
     // even if the legacy schema/values for is_published are inconsistent.
     const [blogs] = await connection.query(
-      'SELECT title, excerpt, updated_at, created_at, is_published FROM blogs ORDER BY created_at DESC'
+      'SELECT id, title, excerpt, updated_at, created_at, is_published FROM blogs ORDER BY created_at DESC'
     );
 
     const createBlogSlug = (title, excerpt) => {
@@ -516,16 +586,37 @@ async function regenerateSitemap() {
 
     const blogNodes = [];
 
+    // Load any existing blog sitemap entries so that admin edits are preserved
+    const [existingBlogEntries] = await connection.query(
+      "SELECT path, priority, changefreq, is_active, type FROM sitemap_entries WHERE path = '/blog' OR path LIKE '/blogs/%' OR type = 'blog'"
+    );
+    const existingBlogByPath = new Map(
+      (existingBlogEntries || []).map((e) => [e.path, e])
+    );
+
     // Main blog listing page
+    const mainBlogPath = '/blog';
+    const mainCfg = existingBlogByPath.get(mainBlogPath);
+    const mainPriority = (mainCfg && mainCfg.priority) || '0.6';
+    const mainFreq = (mainCfg && mainCfg.changefreq) || 'weekly';
     blogNodes.push(
       `  <url>\n` +
-      `    <loc>${PUBLIC_SITE_URL}/blog</loc>\n` +
+      `    <loc>${PUBLIC_SITE_URL}${mainBlogPath}</loc>\n` +
       `    <lastmod>${today}</lastmod>\n` +
-      `    <changefreq>weekly</changefreq>\n` +
-      `    <priority>0.6</priority>\n` +
+      `    <changefreq>${mainFreq}</changefreq>\n` +
+      `    <priority>${mainPriority}</priority>\n` +
       `    <category>Blog</category>\n` +
       `  </url>`
     );
+
+    const blogEntriesToUpsert = [];
+    // Ensure main blog entry exists in sitemap_entries as type "blog"
+    blogEntriesToUpsert.push({
+      path: mainBlogPath,
+      priority: mainPriority,
+      changefreq: mainFreq,
+      type: 'blog'
+    });
 
     // Individual blog posts
     for (const b of blogs || []) {
@@ -538,20 +629,45 @@ async function regenerateSitemap() {
           ? lastmodSource.toISOString().slice(0, 10)
           : new Date(lastmodSource).toISOString().slice(0, 10);
 
+      const cfg = existingBlogByPath.get(pathPart);
+      const priority = (cfg && cfg.priority) || '0.5';
+      const freq = (cfg && cfg.changefreq) || 'weekly';
+
       blogNodes.push(
         `  <url>\n` +
         `    <loc>${loc}</loc>\n` +
         `    <lastmod>${lastmod}</lastmod>\n` +
-        `    <changefreq>weekly</changefreq>\n` +
-        `    <priority>0.5</priority>\n` +
+        `    <changefreq>${freq}</changefreq>\n` +
+        `    <priority>${priority}</priority>\n` +
         `    <category>Blog</category>\n` +
         `  </url>`
       );
+
+      blogEntriesToUpsert.push({
+        path: pathPart,
+        priority,
+        changefreq: freq,
+        type: 'blog'
+      });
     }
 
     const blogXml = `${blogHeader}\n${blogNodes.join('\n')}\n</urlset>\n`;
     const blogPath = path.join(__dirname, '..', 'client', 'public', 'blog-sitemap.xml');
     fs.writeFileSync(blogPath, blogXml, 'utf8');
+
+    // Upsert blog entries into sitemap_entries so AdminSitemap can edit them
+    for (const entry of blogEntriesToUpsert) {
+      await connection.query(
+        `INSERT INTO sitemap_entries (path, priority, changefreq, type, is_active)
+         VALUES (?, ?, ?, ?, TRUE)
+         ON DUPLICATE KEY UPDATE
+           priority = COALESCE(sitemap_entries.priority, VALUES(priority)),
+           changefreq = COALESCE(sitemap_entries.changefreq, VALUES(changefreq)),
+           type = VALUES(type),
+           is_active = COALESCE(sitemap_entries.is_active, TRUE)`,
+        [entry.path, entry.priority, entry.changefreq, entry.type]
+      );
+    }
 
     console.log(
       `✅ Sitemap regenerated: all=${allUrls.length}, products=${productUrls.length}, categories=${categoryUrls.length}, pages=${pageUrls.length}, blogs=${blogs.length}`
