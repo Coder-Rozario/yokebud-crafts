@@ -9788,6 +9788,16 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
     await connection.commit();
     connection.release();
 
+    // Emit WebSocket event for real-time client updates
+    io.emit('sitemap_url_updated', {
+      type: 'url_sync',
+      entryId: id,
+      oldPath,
+      newPath,
+      syncResults,
+      timestamp: new Date().toISOString()
+    });
+
     // Trigger regeneration
     regenerateSitemap().catch(err => console.error('Regeneration error after UPDATE_SYNC:', err));
 
