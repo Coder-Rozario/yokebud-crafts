@@ -9731,10 +9731,10 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
       if (oldEntry.type === 'blog' || oldPath.startsWith('/blogs/')) {
         const blogId = extractIdFromPath(oldPath, '/blogs');
         if (blogId) {
-          // Find all related blog URLs
+          // Find all related blog URLs with the same blog ID (more specific pattern)
           const [relatedEntries] = await connection.query(
-            'SELECT * FROM sitemap_entries WHERE path LIKE ? AND id != ?',
-            [`/blogs/${blogId}%`, id]
+            'SELECT * FROM sitemap_entries WHERE path LIKE ? AND id != ? AND type = ?',
+            [`/blogs/${blogId}/%`, id, 'blog']
           );
           
           for (const entry of relatedEntries) {
