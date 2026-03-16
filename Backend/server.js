@@ -9478,6 +9478,20 @@ app.get('/api/sitemap/entries', async (req, res) => {
   }
 });
 
+// Get all sitemap entries including inactive ones (Public - matches WHERE 1)
+app.get('/api/sitemap/entries/all', async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [rows] = await connection.query('SELECT id, path, priority, changefreq, type, is_active, created_at, updated_at FROM sitemap_entries WHERE 1');
+    connection.release();
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to fetch all sitemap entries' });
+  }
+});
+
 // Get all sitemap entries (Admin Protected)
 app.get('/api/admin/sitemap', requireAdminAuth, async (req, res) => {
   let connection;
