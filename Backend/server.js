@@ -7437,7 +7437,6 @@ app.get('/api/categories', async (req, res) => {
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         parent_id INT DEFAULT NULL,
-        slug VARCHAR(255) NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -7448,27 +7447,6 @@ app.get('/api/categories', async (req, res) => {
     } catch (err) {
       if (err.code === 'ER_BAD_FIELD_ERROR') {
          await connection.query("ALTER TABLE categories ADD COLUMN parent_id INT DEFAULT NULL");
-      }
-    }
-
-    // Ensure slug column exists and backfill it
-    try {
-      await connection.query("SELECT slug FROM categories LIMIT 1");
-    } catch (err) {
-      if (err.code === 'ER_BAD_FIELD_ERROR') {
-        await connection.query("ALTER TABLE categories ADD COLUMN slug VARCHAR(255) NULL");
-        
-        // Backfill slugs for existing categories
-        const [categories] = await connection.query('SELECT id, name FROM categories');
-        for (const cat of categories) {
-          const slug = cat.name?.toString().toLowerCase()
-            .trim()
-            .replace(/\s+/g, '-')
-            .replace(/[^\w-]+/g, '')
-            .replace(/--+/g, '-') || `category-${cat.id}`;
-          
-          await connection.query('UPDATE categories SET slug = ? WHERE id = ?', [slug, cat.id]);
-        }
       }
     }
 
@@ -9486,124 +9464,6 @@ app.post('/api/seo/:pageName', requireAdminAuth, async (req, res) => {
 
 // ==================== SITEMAP MANAGEMENT API ====================
 
-// URL Synchronization Helper Function
-async function synchronizeUrlChange(connection, oldPath, newPath, type) {
-  try {
-    const result = {
-      success: true,
-      message: 'URL synchronization completed',
-      updated: [],
-      errors: []
-    };
-
-    // Extract content ID and new slug from paths
-    const oldId = extractContentIdFromPath(oldPath, type);
-    const newSlug = extractSlugFromPath(newPath, type);
-
-    if (!oldId || !newSlug) {
-      return {
-        success: false,
-        message: `Could not extract content ID or new slug from paths. Old: ${oldPath}, New: ${newPath}`,
-        type: type
-      };
-    }
-
-    // Update based on type
-    switch (type) {
-      case 'product':
-        const [productUpdate] = await connection.query(
-          'UPDATE products SET slug = ? WHERE id = ?',
-          [newSlug, oldId]
-        );
-        if (productUpdate.affectedRows > 0) {
-          result.updated.push(`Product ID ${oldId} slug updated to: ${newSlug}`);
-        } else {
-          result.errors.push(`Product ID ${oldId} not found or no update needed`);
-        }
-        break;
-
-      case 'blog':
-        const [blogUpdate] = await connection.query(
-          'UPDATE blogs SET slug = ? WHERE id = ?',
-          [newSlug, oldId]
-        );
-        if (blogUpdate.affectedRows > 0) {
-          result.updated.push(`Blog ID ${oldId} slug updated to: ${newSlug}`);
-        } else {
-          result.errors.push(`Blog ID ${oldId} not found or no update needed`);
-        }
-        break;
-
-      case 'category':
-        const [categoryUpdate] = await connection.query(
-          'UPDATE categories SET slug = ? WHERE id = ?',
-          [newSlug, oldId]
-        );
-        if (categoryUpdate.affectedRows > 0) {
-          result.updated.push(`Category ID ${oldId} slug updated to: ${newSlug}`);
-        } else {
-          result.errors.push(`Category ID ${oldId} not found or no update needed`);
-        }
-        break;
-
-      case 'static':
-        // For static pages, no database update needed - just sitemap
-        result.updated.push(`Static page URL updated: ${oldPath} → ${newPath}`);
-        break;
-
-      default:
-        result.errors.push(`Unknown sitemap entry type: ${type}`);
-    }
-
-    // If there were errors but also successes, mark as partial success
-    if (result.errors.length > 0 && result.updated.length > 0) {
-      result.success = true;
-      result.message = 'URL synchronization completed with some warnings';
-    } else if (result.errors.length > 0) {
-      result.success = false;
-      result.message = 'URL synchronization failed';
-    }
-
-    return result;
-  } catch (error) {
-    return {
-      success: false,
-      message: 'URL synchronization error: ' + error.message,
-      error: error
-    };
-  }
-}
-
-// Helper function to extract content ID from path
-function extractContentIdFromPath(path, type) {
-  const patterns = {
-    product: /^\/products\/(\d+)(?:\/|$)/,
-    blog: /^\/blog\/(\d+)(?:\/|$)/,
-    category: /^\/category\/(\d+)(?:\/|$)/
-  };
-
-  const pattern = patterns[type];
-  if (!pattern) return null;
-
-  const match = path.match(pattern);
-  return match ? parseInt(match[1]) : null;
-}
-
-// Helper function to extract slug from path
-function extractSlugFromPath(path, type) {
-  const patterns = {
-    product: /^\/products\/\d+\/?([^\/]*)$/,
-    blog: /^\/blog\/\d+\/?([^\/]*)$/,
-    category: /^\/category\/\d+\/?([^\/]*)$/
-  };
-
-  const pattern = patterns[type];
-  if (!pattern) return null;
-
-  const match = path.match(pattern);
-  return match && match[1] ? match[1] : '';
-}
-
 // Get all sitemap entries (Public for generation script)
 app.get('/api/sitemap/entries', async (req, res) => {
   let connection;
@@ -9615,6 +9475,20 @@ app.get('/api/sitemap/entries', async (req, res) => {
   } catch (error) {
     if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to fetch sitemap entries' });
+  }
+});
+
+// Get all sitemap entries including inactive ones (Public - matches WHERE 1)
+app.get('/api/sitemap/entries/all', async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [rows] = await connection.query('SELECT id, path, priority, changefreq, type, is_active, created_at, updated_at FROM sitemap_entries WHERE 1');
+    connection.release();
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to fetch all sitemap entries' });
   }
 });
 
@@ -9765,6 +9639,50 @@ app.put('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Entry not found' });
     }
 
+    await connection.query(
+      'UPDATE sitemap_entries SET path = ?, priority = ?, changefreq = ?, type = ?, is_active = ?, updated_at = NOW() WHERE id = ?',
+      [path, priority, changefreq, type, is_active, id]
+    );
+
+    // Record revision
+    await connection.query(
+      'INSERT INTO sitemap_revisions (action, entry_id, old_data, new_data, admin_id) VALUES (?, ?, ?, ?, ?)',
+      ['UPDATE', id, JSON.stringify(oldRows[0]), JSON.stringify(req.body), ADMIN_ID]
+    );
+
+    await connection.commit();
+    connection.release();
+
+    // Trigger regeneration
+    regenerateSitemap().catch(err => console.error('Regeneration error after UPDATE:', err));
+
+    res.json({ success: true, message: 'Sitemap entry updated successfully' });
+  } catch (error) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    res.status(500).json({ success: false, message: 'Failed to update sitemap entry: ' + error.message });
+  }
+});
+
+// Update sitemap entry with URL synchronization
+app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { id } = req.params;
+    const { path, priority, changefreq, type, is_active, syncRelated = true } = req.body;
+    connection = await pool.getConnection();
+    
+    await connection.beginTransaction();
+
+    // Get old data
+    const [oldRows] = await connection.query('SELECT * FROM sitemap_entries WHERE id = ?', [id]);
+    if (oldRows.length === 0) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Entry not found' });
+    }
+
     const oldEntry = oldRows[0];
     const oldPath = oldEntry.path;
     const newPath = path;
@@ -9775,36 +9693,133 @@ app.put('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
       [path, priority, changefreq, type, is_active, id]
     );
 
-    // URL Synchronization: Update corresponding content if path changed
-    if (oldPath !== newPath) {
-      const syncResult = await synchronizeUrlChange(connection, oldPath, newPath, type);
-      if (!syncResult.success) {
-        await connection.rollback();
-        connection.release();
-        return res.status(400).json({ 
-          success: false, 
-          message: 'URL synchronization failed: ' + syncResult.message,
-          syncDetails: syncResult
-        });
+    let syncResults = [];
+
+    // If URL changed and sync is requested, update related entries
+    if (syncRelated && oldPath !== newPath) {
+      // Helper to extract ID from URL patterns
+      const extractIdFromPath = (pathStr, prefix) => {
+        const match = pathStr.match(new RegExp(`^${prefix}/(\\d+)`));
+        return match ? parseInt(match[1]) : null;
+      };
+
+      // Helper to generate new path with same ID but new structure
+      const generateNewPath = (oldPath, newPath, id) => {
+        const oldParts = oldPath.split('/');
+        const newParts = newPath.split('/');
+        
+        // Keep the ID and any trailing slug parts
+        const idIndex = oldParts.findIndex(part => part === id.toString());
+        if (idIndex !== -1) {
+          return newParts.slice(0, idIndex + 1).concat(oldParts.slice(idIndex + 1)).join('/');
+        }
+        return newPath;
+      };
+
+      // Update related sitemap entries based on type
+      if (oldEntry.type === 'product' || oldPath.startsWith('/products/')) {
+        const productId = extractIdFromPath(oldPath, '/products');
+        if (productId) {
+          // Find all related product URLs
+          const [relatedEntries] = await connection.query(
+            'SELECT * FROM sitemap_entries WHERE path LIKE ? AND id != ?',
+            [`/products/${productId}/%`, id]
+          );
+          
+          for (const entry of relatedEntries) {
+            const newRelatedPath = generateNewPath(entry.path, newPath, productId);
+            await connection.query(
+              'UPDATE sitemap_entries SET path = ?, updated_at = NOW() WHERE id = ?',
+              [newRelatedPath, entry.id]
+            );
+            syncResults.push({
+              type: 'product',
+              id: entry.id,
+              oldPath: entry.path,
+              newPath: newRelatedPath
+            });
+          }
+        }
+      }
+
+      if (oldEntry.type === 'blog' || oldPath.startsWith('/blogs/')) {
+        const blogId = extractIdFromPath(oldPath, '/blogs');
+        if (blogId) {
+          // Find all related blog URLs with the same blog ID (more specific pattern)
+          const [relatedEntries] = await connection.query(
+            'SELECT * FROM sitemap_entries WHERE path LIKE ? AND id != ? AND type = ?',
+            [`/blogs/${blogId}/%`, id, 'blog']
+          );
+          
+          for (const entry of relatedEntries) {
+            const newRelatedPath = generateNewPath(entry.path, newPath, blogId);
+            await connection.query(
+              'UPDATE sitemap_entries SET path = ?, updated_at = NOW() WHERE id = ?',
+              [newRelatedPath, entry.id]
+            );
+            syncResults.push({
+              type: 'blog',
+              id: entry.id,
+              oldPath: entry.path,
+              newPath: newRelatedPath
+            });
+          }
+        }
+      }
+
+      if (oldEntry.type === 'category' || oldPath.startsWith('/category/')) {
+        const categoryId = extractIdFromPath(oldPath, '/category');
+        if (categoryId) {
+          // Find all related category URLs
+          const [relatedEntries] = await connection.query(
+            'SELECT * FROM sitemap_entries WHERE path LIKE ? AND id != ?',
+            [`/category/${categoryId}%`, id]
+          );
+          
+          for (const entry of relatedEntries) {
+            const newRelatedPath = generateNewPath(entry.path, newPath, categoryId);
+            await connection.query(
+              'UPDATE sitemap_entries SET path = ?, updated_at = NOW() WHERE id = ?',
+              [newRelatedPath, entry.id]
+            );
+            syncResults.push({
+              type: 'category',
+              id: entry.id,
+              oldPath: entry.path,
+              newPath: newRelatedPath
+            });
+          }
+        }
       }
     }
 
     // Record revision
     await connection.query(
       'INSERT INTO sitemap_revisions (action, entry_id, old_data, new_data, admin_id) VALUES (?, ?, ?, ?, ?)',
-      ['UPDATE', id, JSON.stringify(oldEntry), JSON.stringify(req.body), ADMIN_ID]
+      ['UPDATE_SYNC', id, JSON.stringify(oldEntry), JSON.stringify({...req.body, syncResults}), ADMIN_ID]
     );
 
     await connection.commit();
     connection.release();
 
+    // Emit WebSocket event for real-time client updates
+    io.emit('sitemap_url_updated', {
+      type: 'url_sync',
+      entryId: id,
+      oldPath,
+      newPath,
+      syncResults,
+      timestamp: new Date().toISOString()
+    });
+
     // Trigger regeneration
-    regenerateSitemap().catch(err => console.error('Regeneration error after UPDATE:', err));
+    regenerateSitemap().catch(err => console.error('Regeneration error after UPDATE_SYNC:', err));
 
     res.json({ 
       success: true, 
-      message: 'Sitemap entry updated successfully',
-      urlSynced: oldPath !== newPath
+      message: 'Sitemap entry updated successfully with URL synchronization',
+      syncResults: syncResults,
+      syncedCount: syncResults.length
     });
   } catch (error) {
     if (connection) {
@@ -9976,6 +9991,117 @@ app.post('/api/admin/sitemap/regenerate', requireAdminAuth, async (req, res) => 
     res.json({ success: true, message: 'Sitemap regenerated successfully', ...result });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Sitemap regeneration failed: ' + error.message });
+  }
+});
+
+// Sync XML files to database
+app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    
+    // Get all XML files in client/public directory
+    const fs = require('fs');
+    const path = require('path');
+    const publicDir = path.join(__dirname, '..', 'client', 'public');
+    const xmlFiles = fs.readdirSync(publicDir).filter(file => file.endsWith('-sitemap.xml') && file !== 'sitemap.xml');
+    
+    let totalSynced = 0;
+    const baseUrl = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
+    
+    for (const xmlFile of xmlFiles) {
+      const xmlPath = path.join(publicDir, xmlFile);
+      const xmlContent = fs.readFileSync(xmlPath, 'utf8');
+      
+      // Extract URLs from XML
+      const urlRegex = /<loc>(.*?)<\/loc>/g;
+      const urls = [];
+      let match;
+      while ((match = urlRegex.exec(xmlContent)) !== null) {
+        urls.push(match[1]);
+      }
+      
+      // Extract other metadata
+      const lastmodRegex = /<lastmod>(.*?)<\/lastmod>/g;
+      const changefreqRegex = /<changefreq>(.*?)<\/changefreq>/g;
+      const priorityRegex = /<priority>(.*?)<\/priority>/g;
+      
+      const lastmods = [];
+      const changefreqs = [];
+      const priorities = [];
+      
+      while ((match = lastmodRegex.exec(xmlContent)) !== null) {
+        lastmods.push(match[1]);
+      }
+      while ((match = changefreqRegex.exec(xmlContent)) !== null) {
+        changefreqs.push(match[1]);
+      }
+      while ((match = priorityRegex.exec(xmlContent)) !== null) {
+        priorities.push(match[1]);
+      }
+      
+      // Determine type from filename
+      let type = 'static';
+      if (xmlFile.includes('category')) type = 'category';
+      else if (xmlFile.includes('product')) type = 'product';
+      else if (xmlFile.includes('blog')) type = 'blog';
+      else if (xmlFile.includes('page')) type = 'static';
+      
+      // Insert or update each URL in database
+      for (let i = 0; i < urls.length; i++) {
+        const url = urls[i];
+        let path = url.startsWith(baseUrl) ? url.substring(baseUrl.length) : url;
+        // Decode HTML entities
+        path = path.replace(/&amp;/g, '&');
+        
+        const lastmod = lastmods[i] || new Date().toISOString().slice(0, 10);
+        const changefreq = changefreqs[i] || 'weekly';
+        const priority = priorities[i] || '0.6';
+        
+        // Check if entry already exists
+        const [existing] = await connection.query(
+          'SELECT id FROM sitemap_entries WHERE path = ?',
+          [path]
+        );
+        
+        if (existing.length === 0) {
+          // Insert new entry
+          const [result] = await connection.query(
+            `INSERT INTO sitemap_entries (path, priority, changefreq, type, is_active, created_at, updated_at)
+             VALUES (?, ?, ?, ?, TRUE, ?, ?)`,
+            [path, priority, changefreq, type, lastmod, lastmod]
+          );
+          
+          // Log the action in revisions
+          await connection.query(
+            `INSERT INTO sitemap_revisions (entry_id, action, new_data, admin_id)
+             VALUES (?, 'ADD', ?, 1)`,
+            [result.insertId, JSON.stringify({ path, priority, changefreq, type })]
+          );
+          
+          totalSynced++;
+        } else {
+          // Update existing entry
+          await connection.query(
+            `UPDATE sitemap_entries 
+             SET priority = ?, changefreq = ?, type = ?, is_active = TRUE, updated_at = ?
+             WHERE id = ?`,
+            [priority, changefreq, type, lastmod, existing[0].id]
+          );
+        }
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      message: `XML files synced successfully. ${totalSynced} new entries added.`, 
+      synced: totalSynced 
+    });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'XML sync failed: ' + error.message });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
