@@ -86,6 +86,16 @@ app.use('/uploads', express.static('uploads', {
   lastModified: true
 }));
 
+// Set proper MIME types for ES modules
+app.use((req, res, next) => {
+  if (req.path.endsWith('.mjs')) {
+    res.setHeader('Content-Type', 'application/javascript');
+  } else if (req.path.endsWith('.js')) {
+    res.setHeader('Content-Type', 'application/javascript');
+  }
+  next();
+});
+
 // Version endpoint for cache-busting/version detection on the client
 app.get('/version.json', (req, res) => {
   res.setHeader('Content-Type', 'application/json');
@@ -9326,7 +9336,7 @@ try {
     // SPA fallback with Dynamic SEO for product pages
     app.get([
       '/',
-      /^\/(?!api|uploads|sitemap\.xml|robots\.txt|health|debug\/email-preview).*/
+      /^\/(?!api|uploads|assets|sitemap\.xml|robots\.txt|health|debug\/email-preview|.*\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$).*/
     ], async (req, res) => {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
