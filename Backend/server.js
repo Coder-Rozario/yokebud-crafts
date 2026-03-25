@@ -9637,7 +9637,7 @@ app.put('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
   let connection;
   try {
     const { id } = req.params;
-    const { path, priority, changefreq, type, is_active } = req.body;
+    const { path: newPath, priority, changefreq, type, is_active } = req.body;
     connection = await pool.getConnection();
     
     await connection.beginTransaction();
@@ -9648,16 +9648,31 @@ app.put('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
       connection.release();
       return res.status(404).json({ success: false, message: 'Entry not found' });
     }
+    const oldEntry = oldRows[0];
 
     await connection.query(
       'UPDATE sitemap_entries SET path = ?, priority = ?, changefreq = ?, type = ?, is_active = ?, updated_at = NOW() WHERE id = ?',
-      [path, priority, changefreq, type, is_active, id]
+      [newPath, priority, changefreq, type, is_active, id]
     );
+
+    // If it's a product URL, update the slug in the products table
+    const oldProductId = getProductIdFromPath(oldEntry.path);
+    const newProductId = getProductIdFromPath(newPath);
+    
+    if (oldProductId && newProductId && oldProductId === newProductId && oldEntry.path !== newPath) {
+        const newSlug = newPath.split('/').pop();
+        if (newSlug) {
+            await connection.query(
+                'UPDATE products SET slug = ? WHERE id = ?',
+                [newSlug, newProductId]
+            );
+        }
+    }
 
     // Record revision
     await connection.query(
       'INSERT INTO sitemap_revisions (action, entry_id, old_data, new_data, admin_id) VALUES (?, ?, ?, ?, ?)',
-      ['UPDATE', id, JSON.stringify(oldRows[0]), JSON.stringify(req.body), ADMIN_ID]
+      ['UPDATE', id, JSON.stringify(oldEntry), JSON.stringify(req.body), ADMIN_ID]
     );
 
     await connection.commit();
@@ -9666,7 +9681,7 @@ app.put('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
     // Trigger regeneration
     regenerateSitemap().catch(err => console.error('Regeneration error after UPDATE:', err));
 
-    res.json({ success: true, message: 'Sitemap entry updated successfully' });
+    res.json({ success: true, message: 'Sitemap entry updated and product slug synced successfully' });
   } catch (error) {
     if (connection) {
       await connection.rollback();
