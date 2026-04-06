@@ -5079,11 +5079,10 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
         `SELECT uc.user_id, uc.email, uc.firebase_uid, 
                 up.first_name, up.last_name, up.phone,
                 up.house_number, up.apartment, up.landmark,
-                up.address, up.city, up.state, up.zip_code, up.country,
-                up.date_of_birth, up.gender
-         FROM user_credentials uc
-         LEFT JOIN user_profiles up ON uc.user_id = up.user_id
-         WHERE uc.user_id = ? AND uc.is_active = TRUE`,
+                up.address, up.city, up.state, up.zip_code, up.country
+       FROM user_credentials uc 
+       LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
+       WHERE uc.user_id = ? AND uc.is_active = TRUE`,
         [userId]
       );
 
@@ -5320,9 +5319,9 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
               up.first_name, up.last_name, up.phone,
               up.house_number, up.apartment, up.landmark,
               up.address, up.city, up.state, up.zip_code, up.country,
-              up.date_of_birth, up.gender
-       FROM user_credentials uc
-       LEFT JOIN user_profiles up ON uc.user_id = up.user_id
+              up.date_of_birth
+       FROM user_credentials uc 
+       LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
        WHERE uc.email = ? AND uc.is_active = TRUE`,
       [email]
     );
@@ -5523,8 +5522,7 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
       `SELECT uc.user_id, uc.email, uc.firebase_uid, 
               up.first_name, up.last_name, up.phone,
               up.house_number, up.apartment, up.landmark,
-              up.address, up.city, up.state, up.zip_code, up.country,
-              up.date_of_birth, up.gender
+              up.address, up.city, up.state, up.zip_code, up.country
        FROM user_credentials uc 
        LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
        WHERE uc.firebase_uid = ? OR uc.email = ?`,
@@ -5603,8 +5601,7 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
       `SELECT uc.user_id, uc.email, uc.firebase_uid, 
               up.first_name, up.last_name, up.phone,
               up.house_number, up.apartment, up.landmark,
-              up.address, up.city, up.state, up.zip_code, up.country,
-              up.date_of_birth, up.gender
+              up.address, up.city, up.state, up.zip_code, up.country
        FROM user_credentials uc
        LEFT JOIN user_profiles up ON uc.user_id = up.user_id
        WHERE uc.user_id = ? AND uc.is_active = TRUE`,
@@ -5678,8 +5675,7 @@ app.get('/api/user/profile', async (req, res) => {
       `SELECT uc.user_id, uc.email, uc.firebase_uid, 
               up.first_name, up.last_name, up.phone,
               up.house_number, up.apartment, up.landmark,
-              up.address, up.city, up.state, up.zip_code, up.country,
-              up.date_of_birth, up.gender
+              up.address, up.city, up.state, up.zip_code, up.country
        FROM user_credentials uc
        LEFT JOIN user_profiles up ON uc.user_id = up.user_id
        WHERE uc.user_id = ? AND uc.is_active = TRUE`,
@@ -5746,8 +5742,6 @@ app.put('/api/user/profile', async (req, res) => {
           state = COALESCE(?, state),
           zip_code = COALESCE(?, zip_code),
           country = COALESCE(?, country),
-          date_of_birth = COALESCE(?, date_of_birth),
-          gender = COALESCE(?, gender),
           updated_at = NOW()
        WHERE user_id = ?`,
       [
@@ -5762,8 +5756,6 @@ app.put('/api/user/profile', async (req, res) => {
         userData.state === undefined ? null : userData.state,
         userData.zip_code === undefined ? null : userData.zip_code,
         userData.country === undefined ? null : userData.country,
-        userData.date_of_birth === undefined ? null : userData.date_of_birth,
-        userData.gender === undefined ? null : userData.gender,
         userId
       ]
     );
@@ -5781,8 +5773,7 @@ app.put('/api/user/profile', async (req, res) => {
       `SELECT uc.user_id, uc.email, uc.firebase_uid, 
               up.first_name, up.last_name, up.phone,
               up.house_number, up.apartment, up.landmark,
-              up.address, up.city, up.state, up.zip_code, up.country,
-              up.date_of_birth, up.gender
+              up.address, up.city, up.state, up.zip_code, up.country
        FROM user_credentials uc
        LEFT JOIN user_profiles up ON uc.user_id = up.user_id
        WHERE uc.user_id = ? AND uc.is_active = TRUE`,
@@ -5953,7 +5944,7 @@ app.get('/api/user/wishlist', async (req, res) => {
         }
       } catch {}
       const image = firstImage
-        ? (String(firstImage).startsWith('http') ? firstImage : `https://api.yokebud.fi${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
+        ? (String(firstImage).startsWith('http') ? firstImage : `http://localhost:5000${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
         : null;
       return { _id: r._id, product_name: r.product_name, price: r.price, image };
     });
@@ -7718,7 +7709,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
 
     const p = rows[0];
     const siteBase = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
-    const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
+    const backendBase = process.env.PUBLIC_API_BASE || 'http://localhost:5000';
 
     function toSlug(str) {
       try {
@@ -9366,7 +9357,7 @@ try {
               const images = JSON.parse(product.images || product.product_photos || '[]');
               if (images.length > 0) {
                 const firstImg = images[0];
-                imageUrl = firstImg.startsWith('http') ? firstImg : `https://api.yokebud.fi${firstImg.startsWith('/') ? '' : '/'}${firstImg}`;
+                imageUrl = firstImg.startsWith('http') ? firstImg : `http://localhost:5000${firstImg.startsWith('/') ? '' : '/'}${firstImg}`;
               }
             } catch (e) {}
 
