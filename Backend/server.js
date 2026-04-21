@@ -506,21 +506,30 @@ async function regenerateSitemap() {
       `xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`;
 
     // Helpers to build XML from a list
+    const escapeXml = (unsafe) => {
+      return String(unsafe || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    };
+
     const buildXml = (items) => {
       const nodes = items.map(d => {
         const parts = [];
         parts.push('  <url>');
-        parts.push(`    <loc>${d.loc}</loc>`);
-        parts.push(`    <lastmod>${d.lastmod}</lastmod>`);
-        parts.push(`    <changefreq>${d.changefreq}</changefreq>`);
-        parts.push(`    <priority>${d.priority}</priority>`);
+        parts.push(`    <loc>${escapeXml(d.loc)}</loc>`);
+        parts.push(`    <lastmod>${escapeXml(d.lastmod)}</lastmod>`);
+        parts.push(`    <changefreq>${escapeXml(d.changefreq)}</changefreq>`);
+        parts.push(`    <priority>${escapeXml(d.priority)}</priority>`);
         if (d.category) {
-          parts.push(`    <category>${d.category}</category>`);
+          parts.push(`    <category>${escapeXml(d.category)}</category>`);
         }
         for (const img of d.images || []) {
           if (!img) continue;
           parts.push('    <image:image>');
-          parts.push(`      <image:loc>${img}</image:loc>`);
+          parts.push(`      <image:loc>${escapeXml(img)}</image:loc>`);
           parts.push('    </image:image>');
         }
         parts.push('  </url>');
