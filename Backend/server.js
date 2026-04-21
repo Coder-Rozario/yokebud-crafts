@@ -523,9 +523,6 @@ async function regenerateSitemap() {
         parts.push(`    <lastmod>${escapeXml(d.lastmod)}</lastmod>`);
         parts.push(`    <changefreq>${escapeXml(d.changefreq)}</changefreq>`);
         parts.push(`    <priority>${escapeXml(d.priority)}</priority>`);
-        if (d.category) {
-          parts.push(`    <category>${escapeXml(d.category)}</category>`);
-        }
         for (const img of d.images || []) {
           if (!img) continue;
           parts.push('    <image:image>');
