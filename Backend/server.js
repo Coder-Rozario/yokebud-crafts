@@ -2510,7 +2510,6 @@ async function generateSitemapXmlFromDb({ type = 'all' } = {}) {
         `    <lastmod>${lastmod}</lastmod>\n` +
         `    <changefreq>${changefreq}</changefreq>\n` +
         `    <priority>${priority}</priority>\n` +
-        `    <category>${category}</category>\n` +
         `  </url>`
       );
     }).join('\n');
@@ -2623,7 +2622,6 @@ app.get('/product-sitemap.xml', async (req, res) => {
           `    <lastmod>${lastmod}</lastmod>`,
           `    <changefreq>${changefreq}</changefreq>`,
           `    <priority>${priority}</priority>`,
-          `    <category>Products</category>`,
           '  </url>'
         ].join('\n');
       })
@@ -2817,7 +2815,6 @@ app.get('/blog-sitemap.xml', async (req, res) => {
         `    <lastmod>${today}</lastmod>\n` +
         `    <changefreq>${mainFreq}</changefreq>\n` +
         `    <priority>${mainPriority}</priority>\n` +
-        `    <category>Blog</category>\n` +
         `  </url>`
       );
     }
@@ -2841,7 +2838,6 @@ app.get('/blog-sitemap.xml', async (req, res) => {
         `    <lastmod>${lastmod}</lastmod>\n` +
         `    <changefreq>${freq}</changefreq>\n` +
         `    <priority>${priority}</priority>\n` +
-        `    <category>Blog</category>\n` +
         `  </url>`
       );
     }
