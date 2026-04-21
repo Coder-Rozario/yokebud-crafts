@@ -9232,6 +9232,30 @@ app.get('/api/geo', async (req, res) => {
 });
 
 // ==================== FRONTEND STATIC (PRODUCTION) ====================
+// Public dynamic sitemap endpoints so Hostinger frontend can delegate XML to this API.
+// These always regenerate from DB and then stream fresh XML, so sitemap URLs
+// stay in sync with AdminSitemap changes without redeploying the dist.
+app.get(['/sitemap.xml', '/product-sitemap.xml', '/category-sitemap.xml', '/page-sitemap.xml', '/blog-sitemap.xml'], async (req, res) => {
+  try {
+    const result = await regenerateSitemap();
+
+    const mapPath = (() => {
+      if (req.path === '/product-sitemap.xml') return result.productPath;
+      if (req.path === '/category-sitemap.xml') return result.categoryPath;
+      if (req.path === '/page-sitemap.xml') return result.pagePath;
+      if (req.path === '/blog-sitemap.xml') return result.blogPath;
+      return result.path;
+    })();
+
+    const xml = fs.readFileSync(mapPath, 'utf8');
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.status(200).send(xml);
+  } catch (error) {
+    console.error('Dynamic sitemap endpoint error:', error);
+    res.status(500).send('Sitemap generation failed');
+  }
+});
+
 // If the React production build exists, serve it with strict cache headers:
 // - HTML (index.html): no-cache, no-store, must-revalidate
 // - Hashed assets under /assets: public, max-age=31536000, immutable
@@ -10165,30 +10189,6 @@ app.post('/api/admin/sitemap/revert/:id', requireAdminAuth, async (req, res) => 
     // But we need to check if this is actually a valid product or needs to be served by React
     next(); 
   });
-
-// Public dynamic sitemap endpoints so Hostinger frontend can delegate XML to this API.
-// These always regenerate from DB and then stream fresh XML, so sitemap URLs
-// stay in sync with AdminSitemap changes without redeploying the dist.
-app.get(['/sitemap.xml', '/product-sitemap.xml', '/category-sitemap.xml', '/page-sitemap.xml', '/blog-sitemap.xml'], async (req, res) => {
-  try {
-    const result = await regenerateSitemap();
-
-    const mapPath = (() => {
-      if (req.path === '/product-sitemap.xml') return result.productPath;
-      if (req.path === '/category-sitemap.xml') return result.categoryPath;
-      if (req.path === '/page-sitemap.xml') return result.pagePath;
-      if (req.path === '/blog-sitemap.xml') return result.blogPath;
-      return result.path;
-    })();
-
-    const xml = fs.readFileSync(mapPath, 'utf8');
-    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    res.status(200).send(xml);
-  } catch (error) {
-    console.error('Dynamic sitemap endpoint error:', error);
-    res.status(500).send('Sitemap generation failed');
-  }
-});
 
 app.use('*', (req, res) => {
   res.status(404).json({ 
