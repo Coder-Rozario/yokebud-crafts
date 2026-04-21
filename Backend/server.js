@@ -118,6 +118,38 @@ app.use(fileUpload({
   useTempFiles: true
 }));
 
+// URL Redirection Middleware
+app.use(async (req, res, next) => {
+  // Only handle GET requests for potential redirects
+  if (req.method !== 'GET') return next();
+  
+  // Skip API, static files, and sitemap XMLs
+  if (req.path.startsWith('/api') || 
+      req.path.includes('.') || 
+      req.path.endsWith('sitemap.xml')) {
+    return next();
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [rows] = await connection.query(
+      'SELECT new_path FROM url_redirects WHERE old_path = ? LIMIT 1',
+      [req.path]
+    );
+    
+    if (rows.length > 0) {
+      console.log(`Redirecting old path ${req.path} to ${rows[0].new_path}`);
+      return res.redirect(301, rows[0].new_path);
+    }
+  } catch (err) {
+    console.error('Redirect middleware error:', err.message);
+  } finally {
+    if (connection) connection.release();
+  }
+  next();
+});
+
 const ADMIN_ID = parseInt(process.env.ADMIN_ID || '1', 10);
 const adminFailedAttempts = new Map();
 
@@ -293,11 +325,23 @@ async function ensureSitemapSchema() {
         path VARCHAR(255) NOT NULL UNIQUE,
         priority VARCHAR(10) DEFAULT '0.6',
         changefreq VARCHAR(20) DEFAULT 'weekly',
-        type VARCHAR(50) DEFAULT 'static', -- 'static', 'category', 'product_exclude'
+        type VARCHAR(50) DEFAULT 'static', -- 'static', 'category', 'product', 'blog'
         is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (id)
+      )`
+    );
+
+    // URL Redirects table
+    await connection.query(
+      `CREATE TABLE IF NOT EXISTS url_redirects (
+        id INT NOT NULL AUTO_INCREMENT,
+        old_path VARCHAR(255) NOT NULL UNIQUE,
+        new_path VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        INDEX idx_old_path (old_path)
       )`
     );
 
@@ -489,6 +533,7 @@ async function regenerateSitemap() {
     const productUrls = [];
     const categoryUrls = [];
     const pageUrls = [];
+    const blogUrls = [];
 
     // Build from sitemap_entries table
     for (const e of entries) {
@@ -513,6 +558,8 @@ async function regenerateSitemap() {
             ? 'Categories'
             : type === 'product'
             ? 'Products'
+            : type === 'blog'
+            ? 'Blog'
             : 'Other',
         images: []
       };
@@ -524,6 +571,8 @@ async function regenerateSitemap() {
         productUrls.push(base);
       } else if (type === 'category') {
         categoryUrls.push(base);
+      } else if (type === 'blog') {
+        blogUrls.push(base);
       }
     }
 
@@ -539,6 +588,8 @@ async function regenerateSitemap() {
     sortUrls(allUrls);
     sortUrls(productUrls);
     sortUrls(categoryUrls);
+    sortUrls(pageUrls);
+    sortUrls(blogUrls);
 
     // Write main sitemap
     const mainXml = buildXml(allUrls);
@@ -560,127 +611,13 @@ async function regenerateSitemap() {
     const pagePath = path.join(__dirname, '..', 'client', 'public', 'page-sitemap.xml');
     fs.writeFileSync(pagePath, pageXml, 'utf8');
 
-    // Build and write blog sitemap XML from blogs table
-    // NOTE: do NOT select slug here so it works even if legacy DB is missing the column.
-    // We select all blogs instead of filtering by is_published so that sitemap always lists blog posts,
-    // even if the legacy schema/values for is_published are inconsistent.
-    const [blogs] = await connection.query(
-      'SELECT id, title, excerpt, updated_at, created_at, is_published FROM blogs ORDER BY created_at DESC'
-    );
-
-    const createBlogSlug = (title, excerpt) => {
-      try {
-        if (!title) return '';
-        const base = String(title)
-          .toLowerCase()
-          .replace(/[^\w\s-]/g, '')
-          .replace(/[\s_]+/g, '-')
-          .replace(/^-+|-+$/g, '');
-
-        if (!excerpt) return base;
-        const kw = String(excerpt)
-          .toLowerCase()
-          .replace(/[^\w\s-]/g, '')
-          .replace(/[\s_]+/g, '-')
-          .replace(/^-+|-+$/g, '');
-
-        return kw ? `${base}-${kw}` : base;
-      } catch {
-        return '';
-      }
-    };
-
-    const blogHeader =
-      `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
-      `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`;
-
-    const blogNodes = [];
-
-    // Load any existing blog sitemap entries so that admin edits are preserved
-    const [existingBlogEntries] = await connection.query(
-      "SELECT path, priority, changefreq, is_active, type FROM sitemap_entries WHERE path = '/blog' OR path LIKE '/blogs/%' OR type = 'blog'"
-    );
-    const existingBlogByPath = new Map(
-      (existingBlogEntries || []).map((e) => [e.path, e])
-    );
-
-    // Main blog listing page
-    const mainBlogPath = '/blog';
-    const mainCfg = existingBlogByPath.get(mainBlogPath);
-    const mainPriority = (mainCfg && mainCfg.priority) || '0.6';
-    const mainFreq = (mainCfg && mainCfg.changefreq) || 'weekly';
-    blogNodes.push(
-      `  <url>\n` +
-      `    <loc>${PUBLIC_SITE_URL}${mainBlogPath}</loc>\n` +
-      `    <lastmod>${today}</lastmod>\n` +
-      `    <changefreq>${mainFreq}</changefreq>\n` +
-      `    <priority>${mainPriority}</priority>\n` +
-      `    <category>Blog</category>\n` +
-      `  </url>`
-    );
-
-    const blogEntriesToUpsert = [];
-    // Ensure main blog entry exists in sitemap_entries as type "blog"
-    blogEntriesToUpsert.push({
-      path: mainBlogPath,
-      priority: mainPriority,
-      changefreq: mainFreq,
-      type: 'blog'
-    });
-
-    // Individual blog posts
-    for (const b of blogs || []) {
-      const slugFromTitle = createBlogSlug(b.title, b.excerpt);
-      const pathPart = slugFromTitle ? `/blogs/${slugFromTitle}` : `/blogs/${b.slug || ''}`;
-      const loc = `${PUBLIC_SITE_URL}${pathPart}`;
-      const lastmodSource = b.updated_at || b.created_at || new Date();
-      const lastmod =
-        lastmodSource instanceof Date
-          ? lastmodSource.toISOString().slice(0, 10)
-          : new Date(lastmodSource).toISOString().slice(0, 10);
-
-      const cfg = existingBlogByPath.get(pathPart);
-      const priority = (cfg && cfg.priority) || '0.5';
-      const freq = (cfg && cfg.changefreq) || 'weekly';
-
-      blogNodes.push(
-        `  <url>\n` +
-        `    <loc>${loc}</loc>\n` +
-        `    <lastmod>${lastmod}</lastmod>\n` +
-        `    <changefreq>${freq}</changefreq>\n` +
-        `    <priority>${priority}</priority>\n` +
-        `    <category>Blog</category>\n` +
-        `  </url>`
-      );
-
-      blogEntriesToUpsert.push({
-        path: pathPart,
-        priority,
-        changefreq: freq,
-        type: 'blog'
-      });
-    }
-
-    const blogXml = `${blogHeader}\n${blogNodes.join('\n')}\n</urlset>\n`;
+    // Write blog-only sitemap
+    const blogXml = buildXml(blogUrls);
     const blogPath = path.join(__dirname, '..', 'client', 'public', 'blog-sitemap.xml');
     fs.writeFileSync(blogPath, blogXml, 'utf8');
 
-    // Upsert blog entries into sitemap_entries so AdminSitemap can edit them
-    for (const entry of blogEntriesToUpsert) {
-      await connection.query(
-        `INSERT INTO sitemap_entries (path, priority, changefreq, type, is_active)
-         VALUES (?, ?, ?, ?, TRUE)
-         ON DUPLICATE KEY UPDATE
-           priority = COALESCE(sitemap_entries.priority, VALUES(priority)),
-           changefreq = COALESCE(sitemap_entries.changefreq, VALUES(changefreq)),
-           type = VALUES(type),
-           is_active = COALESCE(sitemap_entries.is_active, TRUE)`,
-        [entry.path, entry.priority, entry.changefreq, entry.type]
-      );
-    }
-
     console.log(
-      `✅ Sitemap regenerated: all=${allUrls.length}, products=${productUrls.length}, categories=${categoryUrls.length}, pages=${pageUrls.length}, blogs=${blogs.length}`
+      `✅ Sitemap regenerated: all=${allUrls.length}, products=${productUrls.length}, categories=${categoryUrls.length}, pages=${pageUrls.length}, blogs=${blogUrls.length}`
     );
     return {
       success: true,
@@ -692,7 +629,7 @@ async function regenerateSitemap() {
       categoryPath,
       pageCount: pageUrls.length,
       pagePath,
-      blogCount: blogs.length,
+      blogCount: blogUrls.length,
       blogPath
     };
   } catch (error) {
@@ -5944,7 +5881,7 @@ app.get('/api/user/wishlist', async (req, res) => {
         }
       } catch {}
       const image = firstImage
-        ? (String(firstImage).startsWith('http') ? firstImage : `http://localhost:5000${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
+        ? (String(firstImage).startsWith('http') ? firstImage : `https://api.yokebud.fi${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
         : null;
       return { _id: r._id, product_name: r.product_name, price: r.price, image };
     });
@@ -7709,7 +7646,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
 
     const p = rows[0];
     const siteBase = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
-    const backendBase = process.env.PUBLIC_API_BASE || 'http://localhost:5000';
+    const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
 
     function toSlug(str) {
       try {
@@ -9327,7 +9264,7 @@ try {
     // SPA fallback with Dynamic SEO for product pages
     app.get([
       '/',
-      /^\/(?!api|uploads|assets|sitemap\.xml|robots\.txt|health|debug\/email-preview|.*\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$).*/
+      /^\/(?!api|uploads|assets|.*sitemap.*\.xml|sitemap\.xsl|robots\.txt|health|debug\/email-preview|.*\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|xsl)$).*/
     ], async (req, res) => {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
@@ -9357,7 +9294,7 @@ try {
               const images = JSON.parse(product.images || product.product_photos || '[]');
               if (images.length > 0) {
                 const firstImg = images[0];
-                imageUrl = firstImg.startsWith('http') ? firstImg : `http://localhost:5000${firstImg.startsWith('/') ? '' : '/'}${firstImg}`;
+                imageUrl = firstImg.startsWith('http') ? firstImg : `https://api.yokebud.fi${firstImg.startsWith('/') ? '' : '/'}${firstImg}`;
               }
             } catch (e) {}
 
@@ -9640,6 +9577,23 @@ app.put('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Entry not found' });
     }
     const oldEntry = oldRows[0];
+
+    // Record redirect if path changed
+    if (newPath && oldEntry.path !== newPath) {
+      try {
+        // First delete any existing redirect from old_path to avoid duplicates
+        await connection.query('DELETE FROM url_redirects WHERE old_path = ?', [oldEntry.path]);
+        // Insert new redirect
+        await connection.query(
+          'INSERT INTO url_redirects (old_path, new_path) VALUES (?, ?) ON DUPLICATE KEY UPDATE new_path = VALUES(new_path)',
+          [oldEntry.path, newPath]
+        );
+        // Also update any existing redirects that point to the old path
+        await connection.query('UPDATE url_redirects SET new_path = ? WHERE new_path = ?', [newPath, oldEntry.path]);
+      } catch (redirectErr) {
+        console.warn('Failed to record URL redirect:', redirectErr.message);
+      }
+    }
 
     await connection.query(
       'UPDATE sitemap_entries SET path = ?, priority = ?, changefreq = ?, type = ?, is_active = ?, updated_at = NOW() WHERE id = ?',
