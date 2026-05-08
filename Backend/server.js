@@ -281,6 +281,60 @@ async function ensureProductCustomizableSchema() {
 
 ensureProductCustomizableSchema();
 
+async function ensureProductPreorderSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [cols] = await connection.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products'`,
+      [process.env.DB_NAME]
+    );
+
+    const columnNames = new Set((cols || []).map(c => c.COLUMN_NAME));
+
+    if (!columnNames.has('is_preorder')) {
+      await connection.query(
+        'ALTER TABLE products ADD COLUMN is_preorder BOOLEAN DEFAULT FALSE'
+      );
+      console.log('Added is_preorder column to products table');
+    }
+  } catch (e) {
+    console.warn('Product preorder schema check failed:', e.message || e);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureProductPreorderSchema();
+
+async function ensureProductStockStatusSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [cols] = await connection.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products'`,
+      [process.env.DB_NAME]
+    );
+
+    const columnNames = new Set((cols || []).map(c => c.COLUMN_NAME));
+
+    if (!columnNames.has('stock_status')) {
+      await connection.query(
+        "ALTER TABLE products ADD COLUMN stock_status VARCHAR(50) DEFAULT 'In Stock'"
+      );
+      console.log('Added stock_status column to products table');
+    }
+  } catch (e) {
+    console.warn('Product stock_status schema check failed:', e.message || e);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureProductStockStatusSchema();
+
 async function ensureSeoContentSchema() {
   let connection;
   try {
@@ -2452,13 +2506,20 @@ const validateProductPayload = (payload) => {
     stock,
     sku,
     imageUrls,
-    images
+    images,
+    is_preorder,
+    stock_status
   } = payload || {};
   if (!name || typeof name !== 'string') return { valid: false, message: 'Invalid name' };
   if (!description || typeof description !== 'string') return { valid: false, message: 'Invalid description' };
   if (price == null || isNaN(Number(price)) || Number(price) <= 0) return { valid: false, message: 'Invalid price' };
   if (!Array.isArray(categories) || categories.length === 0) return { valid: false, message: 'Invalid categories' };
-  if (stock == null || isNaN(parseInt(stock))) return { valid: false, message: 'Invalid stock' };
+  
+  // Only validate stock if not a preorder
+  if (!is_preorder && stock_status !== 'Pre-order') {
+    if (stock == null || isNaN(parseInt(stock))) return { valid: false, message: 'Invalid stock' };
+  }
+  
   if (!sku || typeof sku !== 'string') return { valid: false, message: 'Invalid SKU' };
   const hasImages = (Array.isArray(imageUrls) && imageUrls.length > 0) || (Array.isArray(images) && images.length > 0);
   if (!hasImages) return { valid: false, message: 'At least one image is required' };
@@ -6147,15 +6208,18 @@ app.post('/api/user/logout', async (req, res) => {
         const pid = it && it.id != null ? Number(it.id) : null;
         const qty = it && it.quantity != null ? Number(it.quantity) : 0;
         if (!pid || qty <= 0) continue;
-        const [prodRows] = await connection.query('SELECT stock FROM products WHERE id = ? FOR UPDATE', [pid]);
+        const [prodRows] = await connection.query('SELECT stock, stock_status, is_preorder FROM products WHERE id = ? FOR UPDATE', [pid]);
         if (!prodRows || prodRows.length === 0) throw new Error('Product not found');
+        
+        const isPreorder = prodRows[0].stock_status === 'Pre-order' || prodRows[0].is_preorder === 1;
         const currentStock = Number(prodRows[0].stock || 0);
-        if (currentStock < qty) throw new Error('Insufficient stock');
+
+        if (!isPreorder && currentStock < qty) throw new Error('Insufficient stock');
 
         const [variantRows] = await connection.query('SELECT color, size, quantity FROM product_variants WHERE product_id = ? FOR UPDATE', [pid]);
         const units = Array.isArray(it.units) ? it.units : [];
         const hasVariants = Array.isArray(variantRows) && variantRows.length > 0;
-        if (hasVariants && units.length > 0) {
+        if (!isPreorder && hasVariants && units.length > 0) {
           const map = new Map();
           for (const u of units) {
             const c = u && u.color != null ? String(u.color) : null;
@@ -6181,7 +6245,9 @@ app.post('/api/user/logout', async (req, res) => {
             );
           }
         }
-        await connection.query('UPDATE products SET stock = stock - ? WHERE id = ?', [qty, pid]);
+        if (!isPreorder) {
+          await connection.query('UPDATE products SET stock = stock - ? WHERE id = ?', [qty, pid]);
+        }
       }
     } catch (e) {
       try { await connection.rollback(); } catch {}
@@ -6610,7 +6676,9 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       images,
       metadata,
       rating,
-      is_customizable
+      is_customizable,
+      is_preorder,
+      stock_status
     } = req.body;
     
     const validation = validateProductPayload(req.body);
@@ -6676,15 +6744,17 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         images,
         metadata,
         rating,
-        is_customizable
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        is_customizable,
+        is_preorder,
+        stock_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
         finalPrice,
         finalDiscountedPrice,
         JSON.stringify(categories),
-        parseInt(stock),
+        (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
         material,
         care,
         sku,
@@ -6703,7 +6773,9 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         imagesJson,
         metadataJson,
         rating || 0,
-        is_customizable ? 1 : 0
+        is_customizable ? 1 : 0,
+        (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 1 : 0,
+        stock_status || (is_preorder === true || is_preorder === 1 || is_preorder === 'true' ? 'Pre-order' : 'In Stock')
       ]
     );
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
@@ -6760,7 +6832,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       features,
       imageUrls,
       imagesToDelete = [],
-      is_customizable
+      is_customizable,
+      is_preorder,
+      stock_status
     } = req.body;
 
     const validation = validateProductPayload({
@@ -6770,7 +6844,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       categories,
       stock,
       sku,
-      imageUrls
+      imageUrls,
+      is_preorder,
+      stock_status
     });
     if (!validation.valid) {
       return res.status(400).json({ 
@@ -6864,6 +6940,8 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         metadata = ?,
         rating = ?,
         is_customizable = ?,
+        is_preorder = ?,
+        stock_status = ?,
         updated_at = NOW()
       WHERE id = ?`,
       [
@@ -6872,7 +6950,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         finalPrice,
         finalDiscountedPrice,
         JSON.stringify(categories),
-        parseInt(stock),
+        (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
         material,
         care,
         sku,
@@ -6892,6 +6970,8 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         metadataJson,
         0,
         is_customizable ? 1 : 0,
+        (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 1 : 0,
+        stock_status || (is_preorder === true || is_preorder === 1 || is_preorder === 'true' ? 'Pre-order' : 'In Stock'),
         productId
       ]
     );
@@ -7003,6 +7083,8 @@ app.get('/api/products/:id', async (req, res) => {
       images: product.images ? JSON.parse(product.images) : null,
       metadata: meta,
       is_customizable: product.is_customizable ? 1 : 0,
+      is_preorder: product.is_preorder ? 1 : 0,
+      stock_status: product.stock_status || (product.is_preorder ? 'Pre-order' : 'In Stock'),
       created_at: product.created_at,
       updated_at: product.updated_at,
       rating: avgRating,
@@ -7090,6 +7172,8 @@ app.get('/api/products', async (req, res) => {
         status: product.status,
         featured: !!product.featured,
         is_customizable: product.is_customizable ? 1 : 0,
+        is_preorder: product.is_preorder ? 1 : 0,
+        stock_status: product.stock_status || (product.is_preorder ? 'Pre-order' : 'In Stock'),
         thumbnail: product.thumbnail,
         stock: product.stock,
         sku: product.sku,
