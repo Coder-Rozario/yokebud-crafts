@@ -1149,10 +1149,7 @@ const renderThemedEmail = ({
         }
         
         .cta-grid {
-          display: flex;
-          gap: 15px;
-          justify-content: center;
-          flex-wrap: wrap;
+          text-align: center;
         }
         
         .primary-cta {
@@ -1197,11 +1194,11 @@ const renderThemedEmail = ({
         
         /* Footer Styles */
         .email-footer {
-          background: ${EMAIL_THEME.secondary};
-          color: rgba(255, 255, 255, 0.8);
+          background: ${EMAIL_THEME.white};
+          color: ${EMAIL_THEME.dark};
           padding: 30px;
           text-align: center;
-          border-top: 1px solid rgba(255, 255, 255, 0.1);
+          border-top: 1px solid ${EMAIL_THEME.border};
         }
         
         .footer-content {
@@ -1216,11 +1213,8 @@ const renderThemedEmail = ({
         }
         
         .social-links {
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          gap: 12px;
-          margin: 20px 0;
+          text-align: center;
+          margin: 18px 0 10px 0;
         }
         
         .social-link {
@@ -1230,7 +1224,7 @@ const renderThemedEmail = ({
           transition: transform 0.2s ease;
           background: transparent !important;
           border-radius: 0 !important;
-          margin: 0 6px;
+          margin: 0 6px 10px 6px;
         }
         
         .social-link:hover {
@@ -1257,9 +1251,9 @@ const renderThemedEmail = ({
         .copyright {
           margin-top: 25px;
           padding-top: 20px;
-          border-top: 1px solid rgba(255, 255, 255, 0.1);
+          border-top: 1px solid ${EMAIL_THEME.border};
           font-size: 12px;
-          color: rgba(255, 255, 255, 0.6);
+          color: ${EMAIL_THEME.textLight};
         }
         
         /* Responsive Styles */
@@ -1284,20 +1278,12 @@ const renderThemedEmail = ({
             font-size: 22px;
           }
           
-          .cta-grid {
-            flex-direction: column;
-            align-items: center;
-          }
-          
           .primary-cta,
           .secondary-cta {
             width: 100%;
             max-width: 300px;
           }
-          
-          .social-links {
-            gap: 15px;
-          }
+          .social-link { margin: 0 6px 10px 6px; }
         }
         
         /* Print Styles */
@@ -1337,13 +1323,13 @@ const renderThemedEmail = ({
           <div class="cta-section">
             <div class="cta-grid">
               ${primaryCtaText && primaryCtaUrl ? `
-                <a href="${primaryCtaUrl}" class="primary-cta">
+                <a href="${primaryCtaUrl}" class="primary-cta" style="display:inline-block;margin:0 6px 12px 6px;">
                   ${primaryCtaText}
                 </a>
               ` : ''}
               
               ${secondaryCtaText && secondaryCtaUrl ? `
-                <a href="${secondaryCtaUrl}" class="secondary-cta">
+                <a href="${secondaryCtaUrl}" class="secondary-cta" style="display:inline-block;margin:0 6px 12px 6px;">
                   ${secondaryCtaText}
                 </a>
               ` : ''}
@@ -1366,28 +1352,37 @@ const renderThemedEmail = ({
           <div class="footer-content">
             ${includeSocial ? `
             <div class="social-links">
-              <a href="https://www.facebook.com/share/1D9o7CoZB7/" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px;">
+              <a href="https://www.facebook.com/share/1D9o7CoZB7/" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/124/124010.png" alt="Facebook" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
-              <a href="https://wa.me/+358440328124" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px;">
+              <a href="https://wa.me/+358440328124" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/733/733585.png" alt="WhatsApp" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
-              <a href="https://www.youtube.com/@yokebud" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px;">
+              <a href="https://www.youtube.com/@yokebud" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/1384/1384060.png" alt="YouTube" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
-              <a href="https://www.instagram.com/yokebud/" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px;">
+              <a href="https://www.instagram.com/yokebud/" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/174/174855.png" alt="Instagram" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
-              <a href="https://www.tiktok.com/@yokebud" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px;">
+              <a href="https://www.tiktok.com/@yokebud" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/3046/3046122.png" alt="TikTok" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
+              </a>
+              <a href="https://fi.pinterest.com/yokebud/" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
+                <img src="https://cdn-icons-png.flaticon.com/512/174/174863.png" alt="Pinterest" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
+              </a>
+              <a href="https://www.linkedin.com/company/yokebudcraft/" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
+                <img src="https://cdn-icons-png.flaticon.com/512/3955/3955056.png" alt="LinkedIn" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
+              </a>
+              <a href="https://yokebudcraft.etsy.com" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
+                <img src="https://cdn-icons-png.flaticon.com/512/825/825513.png" alt="Etsy" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
             </div>
             ` : ''}
             
             <div class="contact-info">
               <p>Yokebud Crafts</p>
-              <p>Pukinmäenaukio 4, 00720 Helsinki, Finland</p>
-              <p>Email: yokebud@gmail.com | Phone: +358 440 328 124</p>
+              <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
+              <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
             </div>
             
             <div class="copyright">
@@ -1560,21 +1555,25 @@ const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
   const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
   const downloadUrl = `${PUBLIC_SITE_URL}/Checkout?orderId=${encodeURIComponent(orderId)}&download=invoice`;
   
-  const itemsHtml = items.map(item => `
-    <div style="display: flex; align-items: center; padding: 15px; border-bottom: 1px solid ${EMAIL_THEME.border};">
-      <div style="flex: 1;">
-        <strong>${item.product_name || item.name}</strong>
-        <div style="color: ${EMAIL_THEME.textLight}; font-size: 14px;">
-          Quantity: ${item.quantity} × $${Number(item.discounted_price || item.price || 0).toFixed(2)}
-          ${item.size ? ` • Size: ${item.size}` : ''}
-          ${item.color ? ` • Color: ${item.color}` : ''}
-        </div>
-      </div>
-      <div style="font-weight: 600;">
-        $${(Number(item.quantity) * Number(item.discounted_price || item.price || 0)).toFixed(2)}
-      </div>
-    </div>
-  `).join('');
+  const itemsHtml = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+      ${items.map(item => `
+        <tr>
+          <td style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+            <strong>${item.product_name || item.name}</strong>
+            <div style="color: ${EMAIL_THEME.textLight}; font-size: 14px; line-height: 1.6;">
+              Quantity: ${item.quantity} × $${Number(item.discounted_price || item.price || 0).toFixed(2)}
+              ${item.size ? ` • Size: ${item.size}` : ''}
+              ${item.color ? ` • Color: ${item.color}` : ''}
+            </div>
+          </td>
+          <td align="right" style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border}; font-weight: 600; white-space: nowrap;">
+            $${(Number(item.quantity) * Number(item.discounted_price || item.price || 0)).toFixed(2)}
+          </td>
+        </tr>
+      `).join('')}
+    </table>
+  `;
   
   const contentHtml = `
     <div class="content-section">
@@ -1589,20 +1588,28 @@ const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
         <h3 class="card-title">Order Summary</h3>
         ${itemsHtml}
         <div style="padding: 15px;">
-          <div style="display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid ${EMAIL_THEME.border};">
-            <span>Subtotal:</span>
-            <span>$${Number(totals.subtotal || 0).toFixed(2)}</span>
-          </div>
-          ${totals.shipping ? `
-          <div style="display: flex; justify-content: space-between; padding: 10px 0;">
-            <span>Shipping:</span>
-            <span>$${Number(totals.shipping).toFixed(2)}</span>
-          </div>
-          ` : ''}
-          <div style="display: flex; justify-content: space-between; padding: 10px 0; font-size: 18px; font-weight: 700; border-top: 2px solid ${EMAIL_THEME.border};">
-            <span>Total:</span>
-            <span style="color: ${EMAIL_THEME.primary};">$${Number(totals.total || 0).toFixed(2)}</span>
-          </div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+            <tr>
+              <td style="padding: 10px 0; border-top: 1px solid ${EMAIL_THEME.border};">Subtotal:</td>
+              <td align="right" style="padding: 10px 0; border-top: 1px solid ${EMAIL_THEME.border}; white-space: nowrap;">
+                $${Number(totals.subtotal || 0).toFixed(2)}
+              </td>
+            </tr>
+            ${totals.shipping ? `
+              <tr>
+                <td style="padding: 10px 0;">Shipping:</td>
+                <td align="right" style="padding: 10px 0; white-space: nowrap;">
+                  $${Number(totals.shipping).toFixed(2)}
+                </td>
+              </tr>
+            ` : ''}
+            <tr>
+              <td style="padding: 10px 0; font-size: 18px; font-weight: 700; border-top: 2px solid ${EMAIL_THEME.border};">Total:</td>
+              <td align="right" style="padding: 10px 0; font-size: 18px; font-weight: 700; border-top: 2px solid ${EMAIL_THEME.border}; white-space: nowrap;">
+                <span style="color: ${EMAIL_THEME.primary};">$${Number(totals.total || 0).toFixed(2)}</span>
+              </td>
+            </tr>
+          </table>
         </div>
       </div>
       
@@ -1641,21 +1648,25 @@ const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
 
 // 2a. ADMIN NEW ORDER EMAIL
 const renderAdminNewOrderEmail = (orderId, customerInfo, items, totals) => {
-  const itemsHtml = items.map(item => `
-    <div style="display: flex; align-items: center; padding: 15px; border-bottom: 1px solid ${EMAIL_THEME.border};">
-      <div style="flex: 1;">
-        <strong>${item.product_name || item.name}</strong>
-        <div style="color: ${EMAIL_THEME.textLight}; font-size: 14px;">
-          Quantity: ${item.quantity} × $${Number(item.discounted_price || item.price || 0).toFixed(2)}
-          ${item.size ? ` • Size: ${item.size}` : ''}
-          ${item.color ? ` • Color: ${item.color}` : ''}
-        </div>
-      </div>
-      <div style="font-weight: 600;">
-        $${(Number(item.quantity) * Number(item.discounted_price || item.price || 0)).toFixed(2)}
-      </div>
-    </div>
-  `).join('');
+  const itemsHtml = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+      ${items.map(item => `
+        <tr>
+          <td style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+            <strong>${item.product_name || item.name}</strong>
+            <div style="color: ${EMAIL_THEME.textLight}; font-size: 14px; line-height: 1.6;">
+              Quantity: ${item.quantity} × $${Number(item.discounted_price || item.price || 0).toFixed(2)}
+              ${item.size ? ` • Size: ${item.size}` : ''}
+              ${item.color ? ` • Color: ${item.color}` : ''}
+            </div>
+          </td>
+          <td align="right" style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border}; font-weight: 600; white-space: nowrap;">
+            $${(Number(item.quantity) * Number(item.discounted_price || item.price || 0)).toFixed(2)}
+          </td>
+        </tr>
+      `).join('')}
+    </table>
+  `;
   
   const contentHtml = `
     <div class="content-section">
@@ -1670,20 +1681,28 @@ const renderAdminNewOrderEmail = (orderId, customerInfo, items, totals) => {
         <h3 class="card-title">Order Summary</h3>
         ${itemsHtml}
         <div style="padding: 15px;">
-          <div style="display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid ${EMAIL_THEME.border};">
-            <span>Subtotal:</span>
-            <span>$${Number(totals.subtotal || 0).toFixed(2)}</span>
-          </div>
-          ${totals.shipping ? `
-          <div style="display: flex; justify-content: space-between; padding: 10px 0;">
-            <span>Shipping:</span>
-            <span>$${Number(totals.shipping).toFixed(2)}</span>
-          </div>
-          ` : ''}
-          <div style="display: flex; justify-content: space-between; padding: 10px 0; font-size: 18px; font-weight: 700; border-top: 2px solid ${EMAIL_THEME.border};">
-            <span>Total:</span>
-            <span style="color: ${EMAIL_THEME.primary};">$${Number(totals.total || 0).toFixed(2)}</span>
-          </div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+            <tr>
+              <td style="padding: 10px 0; border-top: 1px solid ${EMAIL_THEME.border};">Subtotal:</td>
+              <td align="right" style="padding: 10px 0; border-top: 1px solid ${EMAIL_THEME.border}; white-space: nowrap;">
+                $${Number(totals.subtotal || 0).toFixed(2)}
+              </td>
+            </tr>
+            ${totals.shipping ? `
+              <tr>
+                <td style="padding: 10px 0;">Shipping:</td>
+                <td align="right" style="padding: 10px 0; white-space: nowrap;">
+                  $${Number(totals.shipping).toFixed(2)}
+                </td>
+              </tr>
+            ` : ''}
+            <tr>
+              <td style="padding: 10px 0; font-size: 18px; font-weight: 700; border-top: 2px solid ${EMAIL_THEME.border};">Total:</td>
+              <td align="right" style="padding: 10px 0; font-size: 18px; font-weight: 700; border-top: 2px solid ${EMAIL_THEME.border}; white-space: nowrap;">
+                <span style="color: ${EMAIL_THEME.primary};">$${Number(totals.total || 0).toFixed(2)}</span>
+              </td>
+            </tr>
+          </table>
         </div>
       </div>
       
@@ -1760,37 +1779,37 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
       <div class="email-card">
         <h3 class="card-title">Subscriber Details</h3>
         <div style="padding: 15px;">
-          <div style="display: flex; align-items: center; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid ${EMAIL_THEME.border};">
-            <div style="flex: 1;">
-              <strong style="display: block; color: ${EMAIL_THEME.text};">Email Address</strong>
-              <span style="color: ${EMAIL_THEME.textLight};">${subscriberEmail}</span>
-            </div>
-            <div style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
-              ✅ Active
-            </div>
-          </div>
-          
-          <div style="display: flex; align-items: center; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid ${EMAIL_THEME.border};">
-            <div style="flex: 1;">
-              <strong style="display: block; color: ${EMAIL_THEME.text};">Subscription Date</strong>
-              <span style="color: ${EMAIL_THEME.textLight};">
-                ${new Date().toLocaleDateString('en-US', { 
-                  year: 'numeric', 
-                  month: 'long', 
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
-              </span>
-            </div>
-          </div>
-          
-          <div style="display: flex; align-items: center;">
-            <div style="flex: 1;">
-              <strong style="display: block; color: ${EMAIL_THEME.text};">Total Active Subscribers</strong>
-              <span style="color: ${EMAIL_THEME.textLight}; font-size: 24px; font-weight: 700;">+1</span>
-            </div>
-          </div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+            <tr>
+              <td style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+                <strong style="display: block; color: ${EMAIL_THEME.text};">Email Address</strong>
+                <span style="color: ${EMAIL_THEME.textLight};">${subscriberEmail}</span>
+              </td>
+              <td align="right" style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border}; white-space: nowrap; color: ${EMAIL_THEME.accent}; font-weight: 600;">
+                ✅ Active
+              </td>
+            </tr>
+            <tr>
+              <td colspan="2" style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+                <strong style="display: block; color: ${EMAIL_THEME.text};">Subscription Date</strong>
+                <span style="color: ${EMAIL_THEME.textLight};">
+                  ${new Date().toLocaleDateString('en-US', { 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td colspan="2" style="padding: 15px 0 0 0;">
+                <strong style="display: block; color: ${EMAIL_THEME.text};">Total Active Subscribers</strong>
+                <span style="color: ${EMAIL_THEME.textLight}; font-size: 24px; font-weight: 700;">+1</span>
+              </td>
+            </tr>
+          </table>
         </div>
       </div>
     </div>
@@ -1807,77 +1826,107 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
 };
 
 // 4. WEEKLY NEWSLETTER EMAIL
-const renderWeeklyNewsletterEmail = (subscriber, products, token) => {
+const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
   const unsubscribeLink = `${PUBLIC_SITE_URL}/UnsubscribePage?token=${token}`;
   
-  const productGrid = products.map(product => {
-    const productLink = `${PUBLIC_SITE_URL}/products/${product.id}`;
-    const imageUrl = product.firstImage || product.product_photos?.[0] || '';
-    const price = product.min_price !== product.max_price 
-      ? `$${product.min_price} - $${product.max_price}`
-      : `$${product.min_price}`;
+  const renderProductCards = (products) => {
+    return products.map(product => {
+      const slug = String(product.product_name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const productLink = `${PUBLIC_SITE_URL}/products/${slug}-${product.id}`;
+      const imageUrl = product.firstImage || '';
+      
+      const hasDiscount = product.discounted_price && product.discounted_price < product.price;
+      const displayPrice = hasDiscount 
+        ? `<span style="text-decoration: line-through; color: #999; font-size: 14px;">€${product.price}</span> <span style="color: ${EMAIL_THEME.primary};">€${product.discounted_price}</span>`
+        : `<span>€${product.price}</span>`;
 
-    return `
-      <div style="border: 1px solid ${EMAIL_THEME.border}; border-radius: 12px; overflow: hidden; margin-bottom: 20px; background: white; transition: all 0.3s ease;">
-        <div style="position: relative; width: 100%; height: 200px; overflow: hidden;">
-          <img src="${imageUrl}" 
-               alt="${product.product_name}" 
-               style="width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s ease;"
-               onerror="this.style.display='none'">
+      return `
+        <div style="border: 1px solid ${EMAIL_THEME.border}; border-radius: 12px; overflow: hidden; margin-bottom: 20px; background: white; width: 100%;">
+          <div style="position: relative; width: 100%; height: 200px; overflow: hidden; background-color: #f8f8f8;">
+            <img src="${imageUrl}" 
+                 alt="${product.product_name}" 
+                 style="width: 100%; height: 100%; object-fit: cover;"
+                 onerror="this.style.display='none'">
+            ${hasDiscount ? `
+              <div style="position: absolute; top: 10px; right: 10px; background: ${EMAIL_THEME.danger}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold;">
+                OFFER
+              </div>
+            ` : ''}
+          </div>
+          <div style="padding: 15px;">
+            <h3 style="margin: 0 0 8px 0; font-size: 15px; color: ${EMAIL_THEME.dark}; font-weight: 600; line-height: 1.3; height: 38px; overflow: hidden;">
+              ${product.product_name}
+            </h3>
+            <p style="margin: 0 0 12px 0; font-size: 16px; font-weight: 700;">
+              ${displayPrice}
+            </p>
+            <a href="${productLink}" 
+               style="display: block; text-align: center; background: #000000; color: #ffffff; padding: 10px; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 600;">
+              View Details
+            </a>
+          </div>
         </div>
-        <div style="padding: 20px;">
-          <h3 style="margin: 0 0 10px 0; font-size: 16px; color: ${EMAIL_THEME.text}; font-weight: 600; line-height: 1.4;">
-            ${product.product_name}
-          </h3>
-          <p style="margin: 0 0 10px 0; font-size: 18px; color: ${EMAIL_THEME.primary}; font-weight: 700;">
-            ${price}
-          </p>
-          <p style="margin: 0 0 15px 0; font-size: 12px; color: ${EMAIL_THEME.textLight}; line-height: 1.4; height: 40px; overflow: hidden;">
-            ${product.product_details ? product.product_details.substring(0, 80) + '...' : 'Premium quality product'}
-          </p>
-          <a href="${productLink}" 
-             style="display: inline-block; background: linear-gradient(135deg, ${EMAIL_THEME.primary}, #FFD700); color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 600; transition: all 0.3s ease;">
-            View Product
-          </a>
-        </div>
+      `;
+    }).join('');
+  };
+
+  const newArrivalsHtml = collections.newArrivals && collections.newArrivals.length > 0 ? `
+    <div style="margin-top: 30px;">
+      <h2 style="font-size: 20px; color: ${EMAIL_THEME.dark}; border-bottom: 2px solid ${EMAIL_THEME.primary}; padding-bottom: 8px; margin-bottom: 20px;">
+        ✨ New Arrivals
+      </h2>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+        ${renderProductCards(collections.newArrivals)}
       </div>
-    `;
-  }).join('');
+    </div>
+  ` : '';
+
+  const discountedHtml = collections.discounted && collections.discounted.length > 0 ? `
+    <div style="margin-top: 40px;">
+      <h2 style="font-size: 20px; color: ${EMAIL_THEME.dark}; border-bottom: 2px solid ${EMAIL_THEME.danger}; padding-bottom: 8px; margin-bottom: 20px;">
+        🔥 Exclusive Deals
+      </h2>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+        ${renderProductCards(collections.discounted)}
+      </div>
+    </div>
+  ` : '';
   
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
-        <h2 class="content-title">This Week's Featured Products 🚀</h2>
-        <p class="content-text">
+        <h2 class="content-title">Your Weekly Yokebud Update 🚀</h2>
+        <p class="content-text" style="text-align: center;">
           ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
         </p>
       </div>
       
       <p class="content-text">
-        Discover our latest wholesale fashion pieces carefully selected for your business. 
-        From trendy designs to classic essentials, we've got everything you need.
+        Hello! Here are the latest handpicked products and exclusive discounts from Yokebud Crafts. 
+        Whether you're looking for custom laser engraved gifts or premium handmade art, we've got something special for you this week.
       </p>
       
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 30px 0;">
-        ${productGrid}
+      ${newArrivalsHtml}
+      ${discountedHtml}
+      
+      <div style="margin-top: 30px; padding: 20px; background: #fff8eb; border-radius: 12px; border: 1px dashed ${EMAIL_THEME.primary};">
+        <p style="margin: 0; font-size: 14px; color: ${EMAIL_THEME.dark}; text-align: center;">
+          <strong>Pro Tip:</strong> Most of our products can be personalized! 
+          Contact us for custom laser engraving requests.
+        </p>
       </div>
-      
-      <p class="content-text">
-        Don't miss out on these exclusive wholesale opportunities. All products are available 
-        in various sizes and colors to meet your business needs.
-      </p>
     </div>
   `;
   
   return renderThemedEmail({
-    title: 'Weekly Product Update',
-    subtitle: 'Fresh arrivals just for you',
+    title: 'Weekly Crafts Update',
+    subtitle: 'Fresh arrivals & exclusive deals',
     contentHtml,
-    primaryCtaText: 'Browse All Products',
-    primaryCtaUrl: PUBLIC_SITE_URL,
-    secondaryCtaText: 'Unsubscribe',
-    secondaryCtaUrl: unsubscribeLink,
-    footerNote: 'Prices shown are wholesale prices. Minimum order quantities may apply.'
+    primaryCtaText: 'Shop All Products',
+    primaryCtaUrl: `${PUBLIC_SITE_URL}/shop`,
+    secondaryCtaText: 'Visit Our Blog',
+    secondaryCtaUrl: `${PUBLIC_SITE_URL}/blog`,
+    footerNote: 'Handmade with precision in Finland. Worldwide shipping available.'
   });
 };
 
@@ -2026,10 +2075,11 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
           font-size: 14px;
         }
         .email-footer {
-          background: #2D3748;
-          color: rgba(255, 255, 255, 0.8);
+          background: #FFFFFF;
+          color: #1A202C;
           padding: 30px;
           text-align: center;
+          border-top: 1px solid #E2E8F0;
         }
         .contact-info {
           font-size: 12px;
@@ -2042,9 +2092,9 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
         .copyright {
           margin-top: 20px;
           padding-top: 20px;
-          border-top: 1px solid rgba(255, 255, 255, 0.1);
+          border-top: 1px solid #E2E8F0;
           font-size: 12px;
-          color: rgba(255, 255, 255, 0.6);
+          color: #718096;
         }
         @media (max-width: 600px) {
           .email-header { padding: 30px 20px; }
@@ -2079,10 +2129,36 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
         </div>
         
         <div class="email-footer">
+          <div style="text-align: center; margin-bottom: 12px;">
+            <a href="https://www.facebook.com/share/1D9o7CoZB7/" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+              <img src="https://cdn-icons-png.flaticon.com/512/124/124010.png" alt="Facebook" style="width:22px;height:22px;display:block;border:0;outline:none;">
+            </a>
+            <a href="https://wa.me/+358440328124" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+              <img src="https://cdn-icons-png.flaticon.com/512/733/733585.png" alt="WhatsApp" style="width:22px;height:22px;display:block;border:0;outline:none;">
+            </a>
+            <a href="https://www.youtube.com/@yokebud" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+              <img src="https://cdn-icons-png.flaticon.com/512/1384/1384060.png" alt="YouTube" style="width:22px;height:22px;display:block;border:0;outline:none;">
+            </a>
+            <a href="https://www.instagram.com/yokebud/" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+              <img src="https://cdn-icons-png.flaticon.com/512/174/174855.png" alt="Instagram" style="width:22px;height:22px;display:block;border:0;outline:none;">
+            </a>
+            <a href="https://www.tiktok.com/@yokebud" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+              <img src="https://cdn-icons-png.flaticon.com/512/3046/3046122.png" alt="TikTok" style="width:22px;height:22px;display:block;border:0;outline:none;">
+            </a>
+            <a href="https://fi.pinterest.com/yokebud/" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+              <img src="https://cdn-icons-png.flaticon.com/512/174/174863.png" alt="Pinterest" style="width:22px;height:22px;display:block;border:0;outline:none;">
+            </a>
+            <a href="https://www.linkedin.com/company/yokebudcraft/" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+              <img src="https://cdn-icons-png.flaticon.com/512/3955/3955056.png" alt="LinkedIn" style="width:22px;height:22px;display:block;border:0;outline:none;">
+            </a>
+            <a href="https://yokebudcraft.etsy.com" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+              <img src="https://cdn-icons-png.flaticon.com/512/825/825513.png" alt="Etsy" style="width:22px;height:22px;display:block;border:0;outline:none;">
+            </a>
+          </div>
           <div class="contact-info">
             <p><strong>Yokebud Crafts</strong></p>
-            <p>Pukinmäenaukio 4, 00720 Helsinki, Finland</p>
-            <p>Email: yokebud@gmail.com | Phone: +358 440 328 124</p>
+            <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
+            <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
           </div>
           <div class="copyright">
             &copy; ${new Date().getFullYear()} Yokebud Crafts. All rights reserved.
@@ -2096,7 +2172,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
 
 // 7. ORDER STATUS UPDATE EMAIL
 const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNumber = null) => {
-  const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
+  const viewOrdersUrl = `${PUBLIC_SITE_URL}/userprofile/order/${encodeURIComponent(String(orderId || ''))}`;
   
   const statusConfig = {
     'processing': { color: EMAIL_THEME.primary, icon: '🔄', title: 'Order Processing' },
@@ -2119,43 +2195,43 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
       <div class="email-card">
         <h3 class="card-title">Status Details</h3>
         <div style="padding: 15px;">
-          <div style="display: flex; align-items: center; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid ${EMAIL_THEME.border};">
-            <div style="flex: 1;">
-              <strong style="display: block; color: ${EMAIL_THEME.text};">Order Status</strong>
-              <span style="color: ${config.color}; font-weight: 600;">
-                ${status.charAt(0).toUpperCase() + status.slice(1)}
-              </span>
-            </div>
-            <div style="font-size: 24px;">
-              ${config.icon}
-            </div>
-          </div>
-          
-          ${trackingNumber ? `
-          <div style="display: flex; align-items: center; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid ${EMAIL_THEME.border};">
-            <div style="flex: 1;">
-              <strong style="display: block; color: ${EMAIL_THEME.text};">Tracking Number</strong>
-              <span style="color: ${EMAIL_THEME.textLight}; font-family: monospace;">
-                ${trackingNumber}
-              </span>
-            </div>
-          </div>
-          ` : ''}
-          
-          <div style="display: flex; align-items: center;">
-            <div style="flex: 1;">
-              <strong style="display: block; color: ${EMAIL_THEME.text};">Update Date</strong>
-              <span style="color: ${EMAIL_THEME.textLight};">
-                ${new Date().toLocaleDateString('en-US', { 
-                  year: 'numeric', 
-                  month: 'long', 
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
-              </span>
-            </div>
-          </div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+            <tr>
+              <td style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+                <strong style="display: block; color: ${EMAIL_THEME.text};">Order Status</strong>
+                <span style="color: ${config.color}; font-weight: 600;">
+                  ${status.charAt(0).toUpperCase() + status.slice(1)}
+                </span>
+              </td>
+              <td align="right" style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border}; white-space: nowrap; font-size: 24px;">
+                ${config.icon}
+              </td>
+            </tr>
+            ${trackingNumber ? `
+              <tr>
+                <td colspan="2" style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+                  <strong style="display: block; color: ${EMAIL_THEME.text};">Tracking Number</strong>
+                  <span style="color: ${EMAIL_THEME.textLight}; font-family: monospace;">
+                    ${trackingNumber}
+                  </span>
+                </td>
+              </tr>
+            ` : ''}
+            <tr>
+              <td colspan="2" style="padding: 15px 0 0 0;">
+                <strong style="display: block; color: ${EMAIL_THEME.text};">Update Date</strong>
+                <span style="color: ${EMAIL_THEME.textLight};">
+                  ${new Date().toLocaleDateString('en-US', { 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </span>
+              </td>
+            </tr>
+          </table>
         </div>
       </div>
       
@@ -6615,7 +6691,6 @@ app.post('/api/user/logout', async (req, res) => {
 
 // Upload design files for checkout
 app.post('/api/checkout/upload-design', async (req, res) => {
-  let connection;
   try {
     if (!req.files || Object.keys(req.files).length === 0) {
       return res.status(400).json({ success: false, message: 'No files were uploaded.' });
@@ -6625,30 +6700,51 @@ app.post('/api/checkout/upload-design', async (req, res) => {
     const uploadResults = [];
 
     for (const file of files) {
-      const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
       if (!allowedTypes.includes(file.mimetype)) {
-        return res.status(400).json({ success: false, message: 'Invalid file type. Only images are allowed.' });
+        return res.status(400).json({ success: false, message: 'Invalid file type. Only images and PDFs are allowed.' });
       }
 
       try {
         const result = await new Promise((resolve, reject) => {
-          const uploadStream = cloudinary.uploader.upload_stream(
-            { folder: 'yokebud crafts/checkout/designs', public_id: `design_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, resource_type: 'auto' },
-            (error, result) => { if (error) reject(error); else resolve(result); }
-          );
-          uploadStream.end(file.data);
+          const uploadOptions = { 
+            folder: 'yokebud-crafts/checkout/designs', 
+            public_id: `design_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, 
+            resource_type: 'auto' 
+          };
+
+          // If useTempFiles is true, use the temp file path
+          if (file.tempFilePath) {
+            cloudinary.uploader.upload(file.tempFilePath, uploadOptions, (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            });
+          } else {
+            const uploadStream = cloudinary.uploader.upload_stream(uploadOptions, (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            });
+            uploadStream.end(file.data);
+          }
         });
 
-        uploadResults.push({ url: result.secure_url, public_id: result.public_id, name: file.name, type: file.mimetype, size: file.size });
+        uploadResults.push({ 
+          url: result.secure_url, 
+          public_id: result.public_id, 
+          name: file.name, 
+          type: file.mimetype, 
+          size: file.size 
+        });
       } catch (e) {
-        return res.status(500).json({ success: false, message: 'Failed to upload file', error: e.message });
+        console.error('Cloudinary upload error:', e);
+        return res.status(500).json({ success: false, message: 'Failed to upload file to storage', error: e.message });
       }
     }
 
     res.json({ success: true, files: uploadResults });
   } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to upload files', error: error.message });
+    console.error('Checkout upload error:', error);
+    res.status(500).json({ success: false, message: 'Failed to process upload', error: error.message });
   }
 });
 
@@ -9539,37 +9635,59 @@ const sendWeeklyNewsletters = async () => {
       return;
     }
 
-    // Get latest products (limit to 6 for newsletter)
-    const [products] = await connection.query(`
+    // Get New Arrival products (added in last 14 days, max 4)
+    const [newArrivals] = await connection.query(`
       SELECT p.*, 
              JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
       FROM products p 
-      WHERE p.stock > 0 
+      WHERE p.stock > 0 AND p.status = 'active'
+      AND p.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
       ORDER BY p.created_at DESC 
-      LIMIT 6
+      LIMIT 4
     `);
 
-    if (products.length === 0) {
-      console.log('ℹ️ No products found for weekly newsletter');
+    // Get Discounted products (max 4)
+    const [discountedProducts] = await connection.query(`
+      SELECT p.*, 
+             JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
+      FROM products p 
+      WHERE p.stock > 0 AND p.status = 'active'
+      AND p.discounted_price IS NOT NULL AND p.discounted_price < p.price
+      ORDER BY (p.price - p.discounted_price) DESC 
+      LIMIT 4
+    `);
+
+    if (newArrivals.length === 0 && discountedProducts.length === 0) {
+      console.log('ℹ️ No new or discounted products found for weekly newsletter');
       connection.release();
       return;
     }
 
-    // Process product data for email
-    const processedProducts = products.map(product => {
-      const photos = typeof product.images === 'string' 
-        ? JSON.parse(product.images) 
-        : product.images || typeof product.product_photos === 'string'
-        ? JSON.parse(product.product_photos)
-        : product.product_photos || [];
-      
-      return {
-        ...product,
-        firstImage: photos.length > 0 ? photos[0] : null,
-        min_price: product.min_price || product.price,
-        max_price: product.max_price || product.price
-      };
-    });
+    // Helper to process products
+    const processProducts = (productList) => {
+      return productList.map(product => {
+        let photos = [];
+        try {
+          photos = typeof product.images === 'string' 
+            ? JSON.parse(product.images) 
+            : product.images || typeof product.product_photos === 'string'
+            ? JSON.parse(product.product_photos)
+            : product.product_photos || [];
+        } catch (e) {
+          photos = [];
+        }
+        
+        return {
+          ...product,
+          firstImage: photos.length > 0 ? photos[0] : null,
+          min_price: product.discounted_price || product.price,
+          max_price: product.price
+        };
+      });
+    };
+
+    const processedNewArrivals = processProducts(newArrivals);
+    const processedDiscounted = processProducts(discountedProducts);
 
     let successCount = 0;
     let errorCount = 0;
@@ -9577,7 +9695,10 @@ const sendWeeklyNewsletters = async () => {
     // Send newsletter to each subscriber
     for (const subscriber of subscribers) {
       try {
-        const success = await sendWeeklyNewsletter(subscriber, processedProducts);
+        const success = await sendWeeklyNewsletter(subscriber, {
+          newArrivals: processedNewArrivals,
+          discounted: processedDiscounted
+        });
         if (success) {
           successCount++;
         } else {
