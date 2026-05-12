@@ -143,15 +143,25 @@ app.use(async (req, res, next) => {
       return res.redirect(301, rows[0].new_path);
     }
 
-    // Dynamic ID-to-Slug Redirects for Products
+    // Dynamic ID-to-Slug Redirects for Products (Old pattern: /products/:id)
     const productMatch = req.path.match(/^\/products\/(\d+)$/);
     if (productMatch) {
       const productId = productMatch[1];
-      const [pRows] = await connection.query('SELECT slug FROM products WHERE id = ? LIMIT 1', [productId]);
-      if (pRows.length > 0 && pRows[0].slug) {
-        const newPath = `/products/${productId}/${pRows[0].slug}`;
+      const [pRows] = await connection.query('SELECT slug, product_name FROM products WHERE id = ? LIMIT 1', [productId]);
+      if (pRows.length > 0) {
+        const slug = pRows[0].slug || toSlug(pRows[0].product_name);
+        const newPath = `/products/${slug}-${productId}`;
         return res.redirect(301, newPath);
       }
+    }
+
+    // Handle old pattern: /products/:id/:slug
+    const productMatchOld = req.path.match(/^\/products\/(\d+)\/([^\/]+)$/);
+    if (productMatchOld) {
+      const productId = productMatchOld[1];
+      const oldSlug = productMatchOld[2];
+      const newPath = `/products/${oldSlug}-${productId}`;
+      return res.redirect(301, newPath);
     }
 
     // Dynamic ID-to-Slug Redirects for Blogs
@@ -640,9 +650,13 @@ const { exec } = require('child_process');
 // Public site URL for SEO
 const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
 
-// Helper: extract productId from a sitemap path like `/products/123/slug...`
+// Helper: extract productId from a sitemap path like `/products/slug-id`
 function getProductIdFromPath(pathStr) {
   try {
+    const parts = String(pathStr || '').split('-');
+    const lastPart = parts[parts.length - 1];
+    if (/^\d+$/.test(lastPart)) return lastPart;
+    // Support legacy pattern /products/123/slug
     const m = String(pathStr || '').match(/^\/products\/(\d+)\//);
     return m ? m[1] : null;
   } catch {
@@ -674,9 +688,10 @@ async function regenerateSitemap() {
     console.log(`Fetched ${entries.length} sitemap entries from database.`);
 
     // Auto-sync products into sitemap_entries if missing
-    const [allProducts] = await connection.query('SELECT id, slug FROM products WHERE status = "active" OR status IS NULL');
+    const [allProducts] = await connection.query('SELECT id, slug, product_name FROM products WHERE status = "active" OR status IS NULL');
     for (const p of allProducts) {
-      const pPath = `/products/${p.id}/${p.slug}`;
+      const slug = p.slug || toSlug(p.product_name);
+      const pPath = `/products/${slug}-${p.id}`;
       const exists = entries.some(e => e.path === pPath);
       if (!exists) {
         await connection.query(
