@@ -142,6 +142,28 @@ app.use(async (req, res, next) => {
       console.log(`Redirecting old path ${req.path} to ${rows[0].new_path}`);
       return res.redirect(301, rows[0].new_path);
     }
+
+    // Dynamic ID-to-Slug Redirects for Products
+    const productMatch = req.path.match(/^\/products\/(\d+)$/);
+    if (productMatch) {
+      const productId = productMatch[1];
+      const [pRows] = await connection.query('SELECT slug FROM products WHERE id = ? LIMIT 1', [productId]);
+      if (pRows.length > 0 && pRows[0].slug) {
+        const newPath = `/products/${productId}/${pRows[0].slug}`;
+        return res.redirect(301, newPath);
+      }
+    }
+
+    // Dynamic ID-to-Slug Redirects for Blogs
+    const blogMatch = req.path.match(/^\/blogs\/(\d+)$/);
+    if (blogMatch) {
+      const blogId = blogMatch[1];
+      const [bRows] = await connection.query('SELECT slug FROM blogs WHERE id = ? LIMIT 1', [blogId]);
+      if (bRows.length > 0 && bRows[0].slug) {
+        const newPath = `/blogs/${bRows[0].slug}`;
+        return res.redirect(301, newPath);
+      }
+    }
   } catch (err) {
     console.error('Redirect middleware error:', err.message);
   } finally {
@@ -251,6 +273,171 @@ async function ensureAdminOtpSchema() {
 }
 
 ensureAdminOtpSchema();
+
+async function ensureCategoriesExtendedSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    
+    // Check and add missing columns to categories table
+    const [categoryCols] = await connection.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'categories'`,
+      [process.env.DB_NAME]
+    );
+    const categoryColNames = new Set((categoryCols || []).map(c => c.COLUMN_NAME));
+
+    if (!categoryColNames.has('type')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN type VARCHAR(50) DEFAULT "crafts"');
+    }
+    if (!categoryColNames.has('image_url')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN image_url TEXT NULL');
+    }
+    if (!categoryColNames.has('slug')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN slug VARCHAR(255) NULL');
+    }
+    if (!categoryColNames.has('updated_at')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+    }
+    
+    // Ensure all categories have a slug if missing
+    const [rows] = await connection.query('SELECT id, name FROM categories WHERE slug IS NULL OR slug = ""');
+    for (const row of rows) {
+      const slug = row.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      await connection.query('UPDATE categories SET slug = ? WHERE id = ?', [slug, row.id]);
+    }
+
+    console.log('✅ Categories schema updated successfully.');
+  } catch (e) {
+    console.warn('Categories schema update failed:', e.message || e);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureCategoriesExtendedSchema();
+
+async function ensureSeoSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    
+    // Check and add SEO columns to products table
+    const [productCols] = await connection.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products'`,
+      [process.env.DB_NAME]
+    );
+    const productColNames = new Set((productCols || []).map(c => c.COLUMN_NAME));
+
+    if (!productColNames.has('seo_title')) {
+      await connection.query('ALTER TABLE products ADD COLUMN seo_title VARCHAR(255) NULL');
+    }
+    if (!productColNames.has('seo_description')) {
+      await connection.query('ALTER TABLE products ADD COLUMN seo_description TEXT NULL');
+    }
+    if (!productColNames.has('seo_keywords')) {
+      await connection.query('ALTER TABLE products ADD COLUMN seo_keywords TEXT NULL');
+    }
+    if (!productColNames.has('schema_json')) {
+      await connection.query('ALTER TABLE products ADD COLUMN schema_json JSON NULL');
+    }
+
+    // Check and add SEO columns to categories table
+    const [categoryCols] = await connection.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'categories'`,
+      [process.env.DB_NAME]
+    );
+    const categoryColNames = new Set((categoryCols || []).map(c => c.COLUMN_NAME));
+
+    if (!categoryColNames.has('seo_title')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN seo_title VARCHAR(255) NULL');
+    }
+    if (!categoryColNames.has('seo_description')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN seo_description TEXT NULL');
+    }
+    if (!categoryColNames.has('seo_keywords')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN seo_keywords TEXT NULL');
+    }
+    if (!categoryColNames.has('seo_content')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN seo_content TEXT NULL');
+    }
+
+    // Add default home page SEO content if it doesn't exist
+    const [homeSeo] = await connection.query('SELECT 1 FROM seo_content WHERE page_name = "home" LIMIT 1');
+    if (homeSeo.length === 0) {
+      const defaultHomeTitle = 'Laser Engraving, Custom Apparel & Resin Art | Personalized Gifts Finland';
+      const defaultHomeContent = `
+        <p>Welcome to <strong>Yokebud Crafts</strong>, your premier destination for high-quality <strong>laser engraving Finland</strong>, <strong>custom apparel</strong>, and <strong>resin art</strong>. We specialize in precision <strong>laser cutting services</strong>, professional engraving, and unique handcrafted creations that transform everyday objects into meaningful treasures.</p>
+        
+        <h3>Expert Laser Engraving & Custom Apparel in Finland</h3>
+        <p>Our state-of-the-art technology allows us to provide the finest <strong>laser engraving Helsinki</strong> has to offer, alongside premium <strong>customized hoodies</strong> and <strong>t-shirts</strong>. Whether you're looking for corporate branding, personalized wedding gifts, or custom streetwear, our team ensures every detail is captured with perfection.</p>
+        
+        <h3>Resin Art & Handcrafted Jewelry</h3>
+        <p>Explore our stunning collection of <strong>resin art</strong> and <strong>handcrafted jewelry</strong>. Each piece is uniquely designed and made with care in our Finnish studio, combining traditional craftsmanship with modern artistic techniques. From <strong>engraved wood gifts</strong> to <strong>personalized leather accessories</strong>, we have something for everyone.</p>
+        
+        <h3>Why Choose Yokebud Crafts?</h3>
+        <ul>
+          <li><strong>Precision and Quality:</strong> Advanced laser systems and high-quality apparel materials.</li>
+          <li><strong>Local Expertise:</strong> Proudly based in Helsinki, serving all of Finland.</li>
+          <li><strong>Customization:</strong> We can personalize almost anything to fit your vision.</li>
+          <li><strong>Unique Designs:</strong> One-of-a-kind products you won't find anywhere else.</li>
+        </ul>
+      `;
+      await connection.query(
+        'INSERT INTO seo_content (page_name, title, content) VALUES ("home", ?, ?)',
+        [defaultHomeTitle, defaultHomeContent]
+      );
+    }
+
+    // Add default laser-engraving category SEO content if it doesn't exist
+    const [laserSeo] = await connection.query('SELECT 1 FROM seo_content WHERE page_name = "laser-engraving" LIMIT 1');
+    if (laserSeo.length === 0) {
+      const laserTitle = 'Premium Laser Engraving Services in Finland';
+      const laserContent = `
+        <p>Yokebud Crafts is the leading provider of <strong>laser engraving Finland</strong>, offering unparalleled precision and artistic flair for all your customization needs. Our <strong>laser cutting products</strong> and engraving services are designed to meet the highest standards of quality, whether you're looking for a single personalized gift or large-scale corporate branding solutions.</p>
+        
+        <h3>Why Laser Engraving?</h3>
+        <p>Laser engraving is a permanent, high-precision method of marking materials. Unlike traditional printing, <strong>engraved gifts</strong> do not fade or wear off over time. At Yokebud Crafts, we use state-of-the-art CO2 and Fiber lasers to work with wood, leather, acrylic, metal, and more. Our <strong>laser cutting services</strong> allow us to create intricate shapes and designs that were once thought impossible.</p>
+        
+        <h3>Our Laser Engraving Capabilities in Helsinki</h3>
+        <p>Based in the heart of <strong>Helsinki</strong>, we serve clients across Finland with fast turnaround times and exceptional attention to detail. Our services include:</p>
+        <ul>
+          <li><strong>Wood Engraving:</strong> Perfect for kitchenware, signs, and photo frames.</li>
+          <li><strong>Leather Engraving:</strong> Ideal for wallets, belts, and personalized accessories.</li>
+          <li><strong>Metal Marking:</strong> High-contrast marking on stainless steel, aluminum, and more.</li>
+          <li><strong>Custom Laser Cutting:</strong> Precision cutting for prototypes, models, and decor.</li>
+        </ul>
+        
+        <h3>Personalized Engraving for Every Story</h3>
+        <p>Every piece we create is a collaboration between our technology and your vision. From <strong>personalized engraving</strong> on jewelry to <strong>custom engraved gifts</strong> for weddings and anniversaries, we help you make every moment memorable. Our <strong>laser engraving Finland</strong> service is trusted by thousands of customers for its reliability and beauty.</p>
+        
+        <h3>Frequently Asked Questions (FAQ)</h3>
+        <div class="seo-faq">
+          <p><strong>Q: What materials can be laser engraved?</strong><br/>A: We can engrave on wood, leather, glass, acrylic, stone, and various metals. Each material requires specific settings for the best results.</p>
+          <p><strong>Q: How long does laser engraving take?</strong><br/>A: Most individual orders are completed within 2-4 business days. Bulk orders may take longer depending on the quantity.</p>
+          <p><strong>Q: Can I provide my own item for engraving?</strong><br/>A: Yes, we offer engraving services for customer-provided items, provided the material is compatible with our laser systems.</p>
+          <p><strong>Q: Do you offer laser cutting services in Finland?</strong><br/>A: Yes, we provide precision laser cutting for wood, acrylic, and paper products up to certain thicknesses.</p>
+        </div>
+        
+        <p>Ready to start your next project? Browse our <a href="/products">latest products</a> or <a href="/contact">contact us</a> for a custom quote on <strong>laser engraving Helsinki</strong> services.</p>
+      `;
+      await connection.query(
+        'INSERT INTO seo_content (page_name, title, content) VALUES ("laser-engraving", ?, ?)',
+        [laserTitle, laserContent]
+      );
+    }
+    
+    console.log('✅ SEO schema updated successfully.');
+  } catch (e) {
+    console.warn('SEO schema update failed:', e.message || e);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureSeoSchema();
 
 // Using existing 'user_wishlist' table provisioned in the database
 
@@ -466,8 +653,10 @@ function getProductIdFromPath(pathStr) {
 async function regenerateSitemap() {
   const toSlug = (str) => {
     try {
-      const s = String(str || '').toLowerCase().trim();
-      return s.replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').slice(0, 80);
+      return String(str || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
     } catch { return ''; }
   };
 
@@ -483,6 +672,52 @@ async function regenerateSitemap() {
       'SELECT id, path, priority, changefreq, type, is_active, created_at, updated_at FROM sitemap_entries WHERE 1'
     );
     console.log(`Fetched ${entries.length} sitemap entries from database.`);
+
+    // Auto-sync products into sitemap_entries if missing
+    const [allProducts] = await connection.query('SELECT id, slug FROM products WHERE status = "active" OR status IS NULL');
+    for (const p of allProducts) {
+      const pPath = `/products/${p.id}/${p.slug}`;
+      const exists = entries.some(e => e.path === pPath);
+      if (!exists) {
+        await connection.query(
+          'INSERT INTO sitemap_entries (path, priority, changefreq, type, is_active) VALUES (?, "0.7", "weekly", "product", TRUE)',
+          [pPath]
+        );
+      }
+    }
+
+    // Auto-sync blogs into sitemap_entries if missing
+    const [allBlogs] = await connection.query('SELECT slug FROM blogs WHERE is_published = TRUE');
+    for (const b of allBlogs) {
+      if (!b.slug) continue;
+      const bPath = `/blogs/${b.slug}`;
+      const exists = entries.some(e => e.path === bPath);
+      if (!exists) {
+        await connection.query(
+          'INSERT INTO sitemap_entries (path, priority, changefreq, type, is_active) VALUES (?, "0.6", "weekly", "blog", TRUE)',
+          [bPath]
+        );
+      }
+    }
+
+    // Auto-sync categories into sitemap_entries if missing
+    const [allCats] = await connection.query('SELECT slug FROM categories');
+    for (const c of allCats) {
+      if (!c.slug) continue;
+      const cPath = `/shop/${c.slug}`;
+      const exists = entries.some(e => e.path === cPath);
+      if (!exists) {
+        await connection.query(
+          'INSERT INTO sitemap_entries (path, priority, changefreq, type, is_active) VALUES (?, "0.8", "weekly", "category", TRUE)',
+          [cPath]
+        );
+      }
+    }
+
+    // Refetch entries after sync
+    [entries] = await connection.query(
+      'SELECT id, path, priority, changefreq, type, is_active, created_at, updated_at FROM sitemap_entries WHERE 1'
+    );
 
     // If there are no category-type entries yet but an existing category-sitemap.xml
     // file is present (legacy static sitemap), import those URLs as initial
@@ -2487,11 +2722,42 @@ const slugify = (str) => String(str || '')
   .replace(/[^a-z0-9]+/g, '-')
   .replace(/^-+|-+$/g, '');
 
-const ensureUniqueSlug = async (connection, baseSlug) => {
+const generateProductSEO = (name, description, price, imageUrls) => {
+  const seo_title = `Personalized Laser Engraved ${name} – Finland Handmade Gift`;
+  
+  // Create a description focusing on laser engraving
+  const baseDescription = description || '';
+  const seo_description = `Discover this exquisite ${name}, a premium handmade custom gift from Finland. Our professional laser engraving service ensures each piece is a unique masterpiece of personalization. Perfect for those seeking high-quality engraved treasures in Finland. This handcrafted item showcases the precision of modern laser engraving technology while maintaining the charm of a traditional handmade gift. Experience the best of Finnish craftsmanship with our custom engraving options, tailored specifically for your special occasions. Each ${name} is carefully processed to meet our high standards of excellence. ${baseDescription.slice(0, 300)}...`;
+
+  const seo_keywords = `laser engraving Finland, engraved ${name}, custom engraving, personalized gift Finland, handmade ${name}, laser cutting services, custom personalized gifts`;
+
+  const schema_json = {
+    "@context": "https://schema.org/",
+    "@type": "Product",
+    "name": name,
+    "description": seo_description,
+    "image": imageUrls || [],
+    "brand": {
+      "@type": "Brand",
+      "name": "Yokebud Crafts"
+    },
+    "offers": {
+      "@type": "Offer",
+      "priceCurrency": "EUR",
+      "price": price,
+      "availability": "https://schema.org/InStock",
+      "url": `${process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi'}/products/${slugify(name)}`
+    }
+  };
+
+  return { seo_title, seo_description, seo_keywords, schema_json };
+};
+
+const ensureUniqueSlug = async (connection, baseSlug, table = 'products') => {
   let slug = baseSlug;
   let suffix = 1;
   while (true) {
-    const [rows] = await connection.query('SELECT id FROM products WHERE slug = ? LIMIT 1', [slug]);
+    const [rows] = await connection.query(`SELECT id FROM ${table} WHERE slug = ? LIMIT 1`, [slug]);
     if (!rows || rows.length === 0) return slug;
     slug = `${baseSlug}-${suffix++}`;
   }
@@ -6713,6 +6979,13 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     const imageArray = Array.isArray(images) ? images : (Array.isArray(imageUrls) ? imageUrls : []);
     const thumb = thumbnail || (imageArray[0] || null);
 
+    // Auto-generate SEO fields if not provided
+    const seo = generateProductSEO(name, description, finalPrice, imageArray);
+    const finalSeoTitle = req.body.seo_title || seo.seo_title;
+    const finalSeoDescription = req.body.seo_description || seo.seo_description;
+    const finalSeoKeywords = req.body.seo_keywords || seo.seo_keywords;
+    const finalSchemaJson = req.body.schema_json ? JSON.stringify(req.body.schema_json) : JSON.stringify(seo.schema_json);
+
     // Insert product into database
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageArray);
@@ -6746,8 +7019,12 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         rating,
         is_customizable,
         is_preorder,
-        stock_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        stock_status,
+        seo_title,
+        seo_description,
+        seo_keywords,
+        schema_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
@@ -6775,7 +7052,11 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         rating || 0,
         is_customizable ? 1 : 0,
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 1 : 0,
-        stock_status || (is_preorder === true || is_preorder === 1 || is_preorder === 'true' ? 'Pre-order' : 'In Stock')
+        stock_status || (is_preorder === true || is_preorder === 1 || is_preorder === 'true' ? 'Pre-order' : 'In Stock'),
+        finalSeoTitle,
+        finalSeoDescription,
+        finalSeoKeywords,
+        finalSchemaJson
       ]
     );
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
@@ -6913,6 +7194,13 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const imagesJson = JSON.stringify(imageUrls);
     const metadataJson = JSON.stringify({ tags, features, shipping, warranty, bulk_discount });
 
+    // Auto-generate SEO fields if not provided
+    const seo = generateProductSEO(name, description, finalPrice, imageUrls);
+    const finalSeoTitle = req.body.seo_title || seo.seo_title;
+    const finalSeoDescription = req.body.seo_description || seo.seo_description;
+    const finalSeoKeywords = req.body.seo_keywords || seo.seo_keywords;
+    const finalSchemaJson = req.body.schema_json ? JSON.stringify(req.body.schema_json) : JSON.stringify(seo.schema_json);
+
     const [result] = await connection.query(
       `UPDATE products SET 
         product_name = ?,
@@ -6942,6 +7230,10 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         is_customizable = ?,
         is_preorder = ?,
         stock_status = ?,
+        seo_title = ?,
+        seo_description = ?,
+        seo_keywords = ?,
+        schema_json = ?,
         updated_at = NOW()
       WHERE id = ?`,
       [
@@ -6972,6 +7264,10 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         is_customizable ? 1 : 0,
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 1 : 0,
         stock_status || (is_preorder === true || is_preorder === 1 || is_preorder === 'true' ? 'Pre-order' : 'In Stock'),
+        finalSeoTitle,
+        finalSeoDescription,
+        finalSeoKeywords,
+        finalSchemaJson,
         productId
       ]
     );
@@ -7085,6 +7381,10 @@ app.get('/api/products/:id', async (req, res) => {
       is_customizable: product.is_customizable ? 1 : 0,
       is_preorder: product.is_preorder ? 1 : 0,
       stock_status: product.stock_status || (product.is_preorder ? 'Pre-order' : 'In Stock'),
+      seo_title: product.seo_title,
+      seo_description: product.seo_description,
+      seo_keywords: product.seo_keywords,
+      schema_json: product.schema_json ? (typeof product.schema_json === 'string' ? JSON.parse(product.schema_json) : product.schema_json) : null,
       created_at: product.created_at,
       updated_at: product.updated_at,
       rating: avgRating,
@@ -7174,6 +7474,10 @@ app.get('/api/products', async (req, res) => {
         is_customizable: product.is_customizable ? 1 : 0,
         is_preorder: product.is_preorder ? 1 : 0,
         stock_status: product.stock_status || (product.is_preorder ? 'Pre-order' : 'In Stock'),
+        seo_title: product.seo_title,
+        seo_description: product.seo_description,
+        seo_keywords: product.seo_keywords,
+        schema_json: product.schema_json ? (typeof product.schema_json === 'string' ? JSON.parse(product.schema_json) : product.schema_json) : null,
         thumbnail: product.thumbnail,
         stock: product.stock,
         sku: product.sku,
@@ -7474,7 +7778,7 @@ app.get('/api/categories', async (req, res) => {
       }
     }
 
-    const [rows] = await connection.query('SELECT * FROM categories ORDER BY name ASC');
+    const [rows] = await connection.query('SELECT id, name, type, image_url, created_at, updated_at, parent_id, slug, seo_title, seo_description, seo_keywords, seo_content FROM categories ORDER BY id ASC');
     connection.release();
     res.json({ success: true, categories: rows });
   } catch (error) {
@@ -7487,17 +7791,19 @@ app.get('/api/categories', async (req, res) => {
 app.post('/api/categories', requireAdminAuth, async (req, res) => {
   let connection;
   try {
-    const { name, parent_id } = req.body;
+    const { name, parent_id, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content } = req.body;
     if (!name) return res.status(400).json({ success: false, message: 'Name is required' });
     
+    const finalSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
     connection = await pool.getConnection();
     const [result] = await connection.query(
-      'INSERT INTO categories (name, parent_id) VALUES (?, ?)',
-      [name, parent_id || null]
+      'INSERT INTO categories (name, parent_id, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, parent_id || null, type || 'crafts', image_url || null, finalSlug, seo_title || null, seo_description || null, seo_keywords || null, seo_content || null]
     );
     
     connection.release();
-    res.json({ success: true, message: 'Category created', category: { id: result.insertId, name, parent_id } });
+    res.json({ success: true, message: 'Category created', category: { id: result.insertId, name, parent_id, type, image_url, slug: finalSlug } });
   } catch (error) {
     if (connection) connection.release();
     console.error('Create category error:', error);
@@ -8014,11 +8320,41 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
         const result = await new Promise((resolve, reject) => {
           const isVideo = String(file.mimetype || '').toLowerCase().startsWith('video/');
           const rtype = isVideo ? 'video' : 'image';
+          
+          // Generate SEO-friendly public_id for images
+          let publicId;
+          if (!isVideo) {
+            const cleanHint = (productNameHint || 'yokebud-crafts')
+              .toLowerCase()
+              .replace(/[^a-z0-9]/g, '-')
+              .replace(/-+/g, '-')
+              .replace(/^-|-$/g, '');
+            
+            // Add SEO keywords like "custom", "handmade", "finland" if not present
+            let seoBase = cleanHint;
+            if (!seoBase.includes('laser') && !seoBase.includes('engraved')) {
+              seoBase = `custom-laser-engraved-${seoBase}`;
+            }
+            if (!seoBase.includes('finland')) {
+              seoBase = `${seoBase}-finland`;
+            }
+            
+            publicId = `${seoBase}-${uuidv4().slice(0, 8)}`;
+          } else {
+            publicId = uuidv4();
+          }
+
           const uploadStream = cloudinary.uploader.upload_stream(
             {
               folder: targetFolder,
-              public_id: uuidv4(),
-              resource_type: rtype
+              public_id: publicId,
+              resource_type: rtype,
+              format: isVideo ? undefined : 'webp', // Force WebP for images
+              quality: 'auto:good', // Optimized compression
+              fetch_format: 'auto',
+              transformation: isVideo ? undefined : [
+                { width: 1200, height: 1200, crop: 'limit' }
+              ]
             },
             (error, result) => {
               if (error) {
@@ -8912,6 +9248,49 @@ async function ensureBlogsSchema() {
       // Ignore if index already exists
     }
 
+    // Add priority blog topics if table is empty
+    const [blogCount] = await connection.query('SELECT COUNT(*) as count FROM blogs');
+    if (blogCount[0].count === 0) {
+      const priorityBlogs = [
+        {
+          title: 'Best Laser Engraving Gift Ideas in Finland',
+          excerpt: 'Discover the most unique and thoughtful personalized gift ideas using professional laser engraving technology in Finland.',
+          content: '<p>Looking for the perfect gift? <strong>Laser engraving Finland</strong> offers a unique way to personalize gifts for your loved ones. From <strong>custom engraved wood</strong> frames to <strong>personalized leather wallets</strong>, the possibilities are endless. At Yokebud Crafts, we specialize in creating one-of-a-kind treasures that are both beautiful and durable. Learn more about our <a href="/?category=laser-engraving">laser engraving services</a> today.</p>',
+          category: 'Gift Ideas',
+          slug: 'best-laser-engraving-gift-ideas-finland'
+        },
+        {
+          title: 'How Laser Engraving Works for Custom Gifts',
+          excerpt: 'A deep dive into the technology behind precision laser engraving and why it is the best choice for high-quality custom gifts.',
+          content: '<p>Ever wondered how we achieve such incredible detail on our products? Our <strong>laser cutting services</strong> and engraving systems use high-powered beams of light to precisely mark materials. This process ensures that every <strong>custom personalized gift</strong> we create is a masterpiece of precision. Whether it is metal, wood, or stone, laser engraving provides a permanent finish that never fades. Explore our <a href="/?category=laser-engraving">engraved gifts collection</a>.</p>',
+          category: 'Technology',
+          slug: 'how-laser-engraving-works-for-custom-gifts'
+        },
+        {
+          title: 'Laser Cutting vs Traditional Crafting',
+          excerpt: 'Comparing modern laser cutting technology with traditional handcrafted methods for creating custom wood and leather products.',
+          content: '<p>While traditional crafting methods have their charm, <strong>laser cutting Helsinki</strong> brings a level of precision and consistency that is hard to match. By combining <strong>handmade in Finland</strong> quality with modern laser technology, Yokebud Crafts delivers the best of both worlds. Our <strong>laser-cut wooden crafts</strong> showcase intricate designs that are durable and perfectly finished. Check out our <a href="/?category=laser-cutting-products">laser cutting products</a>.</p>',
+          category: 'Craftsmanship',
+          slug: 'laser-cutting-vs-traditional-crafting'
+        },
+        {
+          title: 'Personalized Engraved Gift Trends Finland',
+          excerpt: 'Stay up to date with the latest trends in personalized and engraved gifts in the Finnish market for 2026.',
+          content: '<p>Personalization is more popular than ever in Finland. The latest trends show a high demand for <strong>custom engraved gifts</strong> that focus on sustainability and local craftsmanship. From <strong>engraved stone decor</strong> to <strong>personalized apparel</strong>, Finnish consumers value quality and uniqueness. Stay ahead of the curve with Yokebud Crafts, your hub for <strong>laser engraving Finland</strong>. Discover our <a href="/?category=laser-engraving">latest arrivals</a>.</p>',
+          category: 'Trends',
+          slug: 'personalized-engraved-gift-trends-finland'
+        }
+      ];
+
+      for (const b of priorityBlogs) {
+        await connection.query(
+          'INSERT INTO blogs (title, excerpt, content, category, slug, author, is_published) VALUES (?, ?, ?, ?, ?, "Admin", TRUE)',
+          [b.title, b.excerpt, b.content, b.category, b.slug]
+        );
+      }
+      console.log('✅ Priority blog topics added.');
+    }
+
     console.log('✅ Blogs table checked/created successfully');
   } catch (e) {
     console.warn('⚠️ Blogs schema check failed:', e.message);
@@ -9002,9 +9381,9 @@ app.post('/api/blogs', requireAdminAuth, async (req, res) => {
       }
     }
     
-    const slug = slugify(title);
-    
     connection = await pool.getConnection();
+    const slug = await ensureUniqueSlug(connection, slugify(title), 'blogs');
+    
     const [result] = await connection.query(
       'INSERT INTO blogs (title, slug, excerpt, content, category, author, image_url, is_published) VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)',
       [title, slug, excerpt || '', content, category || null, author || 'Admin', imageUrl]
@@ -9075,7 +9454,7 @@ app.put('/api/blogs/:id', requireAdminAuth, async (req, res) => {
       }
     }
     
-    const slug = slugify(title);
+    const slug = await ensureUniqueSlug(connection, slugify(title), 'blogs');
     
     await connection.query(
       'UPDATE blogs SET title = ?, slug = ?, excerpt = ?, content = ?, category = ?, author = ?, image_url = ?, updated_at = NOW() WHERE id = ?',
@@ -9364,11 +9743,37 @@ try {
 
     app.get('/robots.txt', (req, res) => {
       res.type('text/plain');
-      res.sendFile(path.join(distDir, 'robots.txt'), (err) => {
-        if (err) {
-          res.sendFile(path.join(__dirname, '..', 'client', 'public', 'robots.txt'));
-        }
-      });
+      const robotsTxt = `User-agent: *
+Allow: /
+Allow: /shop
+Allow: /products/
+Allow: /blogs/
+Allow: /about
+Allow: /contact
+Allow: /policy
+Allow: /shipping
+Allow: /return
+
+# Block Admin and Private Routes
+Disallow: /admin/
+Disallow: /api/
+Disallow: /Checkout
+Disallow: /UserProfile
+Disallow: /cart
+Disallow: /MessagesPage
+Disallow: /UnsubscribePage
+Disallow: /forgot-password
+Disallow: /signup
+Disallow: /*?*
+
+# Sitemaps
+Sitemap: https://www.yokebud.fi/sitemap.xml
+Sitemap: https://www.yokebud.fi/product-sitemap.xml
+Sitemap: https://www.yokebud.fi/category-sitemap.xml
+Sitemap: https://www.yokebud.fi/blog-sitemap.xml
+Sitemap: https://www.yokebud.fi/page-sitemap.xml
+`;
+      res.send(robotsTxt);
     });
 
     // SPA fallback with Dynamic SEO for product pages
