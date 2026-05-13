@@ -1819,8 +1819,8 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
     title: 'New Subscriber Alert',
     subtitle: 'Yokebud Crafts Newsletter System',
     contentHtml,
-    primaryCtaText: 'visite Website',
-    primaryCtaUrl: `${process.env.ADMIN_URL || 'https://www.yokebud.fi'}`,
+    primaryCtaText: 'View Subscriber Dashboard',
+    primaryCtaUrl: `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}`,
     footerNote: 'This is an automated notification from Yokebud Crafts Newsletter System'
   });
 };
@@ -1828,12 +1828,20 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
 // 4. WEEKLY NEWSLETTER EMAIL
 const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
   const unsubscribeLink = `${PUBLIC_SITE_URL}/UnsubscribePage?token=${token}`;
+  const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
   
   const renderProductCards = (products) => {
     return products.map(product => {
       const slug = String(product.product_name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
       const productLink = `${PUBLIC_SITE_URL}/products/${slug}-${product.id}`;
-      const imageUrl = product.firstImage || '';
+      const imageUrl = (() => {
+        const raw = product.firstImage || '';
+        if (!raw) return '';
+        const s = String(raw);
+        if (s.startsWith('http')) return s;
+        const clean = s.startsWith('/') ? s : `/${s}`;
+        return `${backendBase}${clean}`;
+      })();
       
       const hasDiscount = product.discounted_price && product.discounted_price < product.price;
       const displayPrice = hasDiscount 
@@ -1843,10 +1851,12 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
       return `
         <div style="border: 1px solid ${EMAIL_THEME.border}; border-radius: 12px; overflow: hidden; margin-bottom: 20px; background: white; width: 100%;">
           <div style="position: relative; width: 100%; height: 200px; overflow: hidden; background-color: #f8f8f8;">
-            <img src="${imageUrl}" 
-                 alt="${product.product_name}" 
-                 style="width: 100%; height: 100%; object-fit: cover;"
-                 onerror="this.style.display='none'">
+            <a href="${productLink}" style="display:block; width:100%; height:100%; text-decoration:none;">
+              <img src="${imageUrl}" 
+                   alt="${product.product_name}" 
+                   style="width: 100%; height: 100%; object-fit: cover;"
+                   onerror="this.style.display='none'">
+            </a>
             ${hasDiscount ? `
               <div style="position: absolute; top: 10px; right: 10px; background: ${EMAIL_THEME.danger}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold;">
                 OFFER
@@ -1854,9 +1864,11 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
             ` : ''}
           </div>
           <div style="padding: 15px;">
-            <h3 style="margin: 0 0 8px 0; font-size: 15px; color: ${EMAIL_THEME.dark}; font-weight: 600; line-height: 1.3; height: 38px; overflow: hidden;">
-              ${product.product_name}
-            </h3>
+            <a href="${productLink}" style="text-decoration:none; color: inherit;">
+              <h3 style="margin: 0 0 8px 0; font-size: 15px; color: ${EMAIL_THEME.dark}; font-weight: 600; line-height: 1.3; height: 38px; overflow: hidden;">
+                ${product.product_name}
+              </h3>
+            </a>
             <p style="margin: 0 0 12px 0; font-size: 16px; font-weight: 700;">
               ${displayPrice}
             </p>
@@ -1924,9 +1936,9 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
     contentHtml,
     primaryCtaText: 'Shop All Products',
     primaryCtaUrl: `${PUBLIC_SITE_URL}/shop`,
-    secondaryCtaText: 'Visit Our Blog',
-    secondaryCtaUrl: `${PUBLIC_SITE_URL}/blog`,
-    footerNote: 'Handmade with precision in Finland. Worldwide shipping available.'
+    secondaryCtaText: 'Unsubscribe',
+    secondaryCtaUrl: unsubscribeLink,
+    footerNote: `Prefer reading first? Visit our blog: <a href="${PUBLIC_SITE_URL}/blog" style="color:${EMAIL_THEME.primary}; text-decoration:none;">${PUBLIC_SITE_URL}/blog</a>`
   });
 };
 
@@ -2459,7 +2471,7 @@ const sendWelcomeEmail = async (email, token) => {
   const mailOptions = {
     from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
     to: email,
-    subject: '🎉 Welcome to Yokebud Crafts Newsletter - Thank You for Subscribing!',
+    subject: '✅ Subscription Confirmed — Yokebud Crafts Newsletter',
     html,
     priority: 'high'
   };
@@ -8973,6 +8985,13 @@ const generateSubscriptionToken = () => {
   return require('crypto').randomBytes(32).toString('hex');
 };
 
+const sendThisWeeksNewsletterToSubscriber = async (email, subscriptionToken) => {
+  const collections = await fetchWeeklyNewsletterCollections();
+  const hasAny = (collections.newArrivals && collections.newArrivals.length > 0) || (collections.discounted && collections.discounted.length > 0);
+  if (!hasAny) return false;
+  return await sendWeeklyNewsletter({ email, subscription_token: subscriptionToken }, collections);
+};
+
 // Subscribe to newsletter endpoint
 app.post('/api/subscribe', async (req, res) => {
   let connection;
@@ -9029,6 +9048,13 @@ app.post('/api/subscribe', async (req, res) => {
         try {
           await sendWelcomeEmail(email, token);
           await sendNewSubscriberNotification(email);
+          setTimeout(async () => {
+            try {
+              await sendThisWeeksNewsletterToSubscriber(email, token);
+            } catch (e) {
+              console.error(`❌ Initial newsletter send failed for ${email}:`, e);
+            }
+          }, 1500);
         } catch (emailError) {
           console.error(`Error sending emails for reactivation: ${emailError.message}`);
           // We'll still return success since the DB was updated
@@ -9089,6 +9115,14 @@ app.post('/api/subscribe', async (req, res) => {
         }
       }, 3000);
     }
+
+    setTimeout(async () => {
+      try {
+        await sendThisWeeksNewsletterToSubscriber(email, subscriptionToken);
+      } catch (e) {
+        console.error(`❌ Initial newsletter send failed for ${email}:`, e);
+      }
+    }, 1500);
 
     // Always return success if the email was saved to the database
     res.json({ 
@@ -9617,6 +9651,76 @@ app.delete('/api/blogs/:id', requireAdminAuth, async (req, res) => {
 
 // ==================== WEEKLY NEWSLETTER CRON JOB ====================
 
+const normalizeNewsletterProducts = (productList) => {
+  return (productList || []).map(product => {
+    let photos = [];
+    try {
+      photos = typeof product.images === 'string' 
+        ? JSON.parse(product.images) 
+        : product.images || typeof product.product_photos === 'string'
+        ? JSON.parse(product.product_photos)
+        : product.product_photos || [];
+    } catch (e) {
+      photos = [];
+    }
+    
+    return {
+      ...product,
+      firstImage: photos.length > 0 ? photos[0] : null,
+      min_price: product.discounted_price || product.price,
+      max_price: product.price
+    };
+  });
+};
+
+const getWeeklyNewsletterCollections = async (connection) => {
+  let [newArrivals] = await connection.query(`
+      SELECT p.*, 
+             JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
+      FROM products p 
+      WHERE p.stock > 0 AND p.status = 'active'
+      AND p.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
+      ORDER BY p.created_at DESC 
+      LIMIT 4
+    `);
+
+  if (!newArrivals || newArrivals.length === 0) {
+    [newArrivals] = await connection.query(`
+      SELECT p.*, 
+             JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
+      FROM products p 
+      WHERE p.stock > 0 AND p.status = 'active'
+      ORDER BY p.created_at DESC 
+      LIMIT 4
+    `);
+  }
+
+  const [discountedProducts] = await connection.query(`
+      SELECT p.*, 
+             JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
+      FROM products p 
+      WHERE p.stock > 0 AND p.status = 'active'
+      AND p.discounted_price IS NOT NULL AND p.discounted_price < p.price
+      ORDER BY (p.price - p.discounted_price) DESC 
+      LIMIT 4
+    `);
+
+  return {
+    newArrivals: normalizeNewsletterProducts(newArrivals),
+    discounted: normalizeNewsletterProducts(discountedProducts)
+  };
+};
+
+const fetchWeeklyNewsletterCollections = async () => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    return await getWeeklyNewsletterCollections(connection);
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
 const sendWeeklyNewsletters = async () => {
   let connection;
   try {
@@ -9635,59 +9739,13 @@ const sendWeeklyNewsletters = async () => {
       return;
     }
 
-    // Get New Arrival products (added in last 14 days, max 4)
-    const [newArrivals] = await connection.query(`
-      SELECT p.*, 
-             JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
-      FROM products p 
-      WHERE p.stock > 0 AND p.status = 'active'
-      AND p.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
-      ORDER BY p.created_at DESC 
-      LIMIT 4
-    `);
-
-    // Get Discounted products (max 4)
-    const [discountedProducts] = await connection.query(`
-      SELECT p.*, 
-             JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
-      FROM products p 
-      WHERE p.stock > 0 AND p.status = 'active'
-      AND p.discounted_price IS NOT NULL AND p.discounted_price < p.price
-      ORDER BY (p.price - p.discounted_price) DESC 
-      LIMIT 4
-    `);
-
-    if (newArrivals.length === 0 && discountedProducts.length === 0) {
+    const collections = await getWeeklyNewsletterCollections(connection);
+    const hasAny = (collections.newArrivals && collections.newArrivals.length > 0) || (collections.discounted && collections.discounted.length > 0);
+    if (!hasAny) {
       console.log('ℹ️ No new or discounted products found for weekly newsletter');
       connection.release();
       return;
     }
-
-    // Helper to process products
-    const processProducts = (productList) => {
-      return productList.map(product => {
-        let photos = [];
-        try {
-          photos = typeof product.images === 'string' 
-            ? JSON.parse(product.images) 
-            : product.images || typeof product.product_photos === 'string'
-            ? JSON.parse(product.product_photos)
-            : product.product_photos || [];
-        } catch (e) {
-          photos = [];
-        }
-        
-        return {
-          ...product,
-          firstImage: photos.length > 0 ? photos[0] : null,
-          min_price: product.discounted_price || product.price,
-          max_price: product.price
-        };
-      });
-    };
-
-    const processedNewArrivals = processProducts(newArrivals);
-    const processedDiscounted = processProducts(discountedProducts);
 
     let successCount = 0;
     let errorCount = 0;
@@ -9695,10 +9753,7 @@ const sendWeeklyNewsletters = async () => {
     // Send newsletter to each subscriber
     for (const subscriber of subscribers) {
       try {
-        const success = await sendWeeklyNewsletter(subscriber, {
-          newArrivals: processedNewArrivals,
-          discounted: processedDiscounted
-        });
+        const success = await sendWeeklyNewsletter(subscriber, collections);
         if (success) {
           successCount++;
         } else {
@@ -9726,20 +9781,25 @@ const sendWeeklyNewsletters = async () => {
 // Schedule weekly newsletter (every Monday at 10:00 AM)
 const scheduleWeeklyNewsletter = () => {
   const now = new Date();
-  const nextMonday = new Date(now);
-  nextMonday.setDate(now.getDate() + ((1 + 7 - now.getDay()) % 7 || 7));
-  nextMonday.setHours(10, 0, 0, 0);
+  const nextRun = new Date(now);
+  nextRun.setHours(10, 0, 0, 0);
+  const isMonday = now.getDay() === 1;
+  if (!(isMonday && now.getTime() < nextRun.getTime())) {
+    const daysUntilMonday = (1 + 7 - now.getDay()) % 7;
+    nextRun.setDate(now.getDate() + (daysUntilMonday === 0 ? 7 : daysUntilMonday));
+    nextRun.setHours(10, 0, 0, 0);
+  }
 
-  const timeUntilNextMonday = nextMonday.getTime() - now.getTime();
+  const timeUntilNextRun = Math.max(0, nextRun.getTime() - now.getTime());
 
-  console.log(`📅 Weekly newsletter scheduled for: ${nextMonday}`);
+  console.log(`📅 Weekly newsletter scheduled for: ${nextRun}`);
 
   // Schedule first run
   setTimeout(() => {
     sendWeeklyNewsletters();
     // Set up recurring weekly interval
     setInterval(sendWeeklyNewsletters, 7 * 24 * 60 * 60 * 1000);
-  }, timeUntilNextMonday);
+  }, timeUntilNextRun);
 };
 
 // Start the scheduler when server starts
