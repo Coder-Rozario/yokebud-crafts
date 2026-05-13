@@ -1819,8 +1819,8 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
     title: 'New Subscriber Alert',
     subtitle: 'Yokebud Crafts Newsletter System',
     contentHtml,
-    primaryCtaText: 'View Subscriber Dashboard',
-    primaryCtaUrl: `${process.env.ADMIN_URL || 'https://www.yokebud.com/admin'}`,
+    primaryCtaText: 'visite Website',
+    primaryCtaUrl: `${process.env.ADMIN_URL || 'https://www.yokebud.fi'}`,
     footerNote: 'This is an automated notification from Yokebud Crafts Newsletter System'
   });
 };
@@ -2172,7 +2172,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
 
 // 7. ORDER STATUS UPDATE EMAIL
 const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNumber = null) => {
-  const viewOrdersUrl = `${PUBLIC_SITE_URL}/userprofile/order/${encodeURIComponent(String(orderId || ''))}`;
+  const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
   
   const statusConfig = {
     'processing': { color: EMAIL_THEME.primary, icon: '🔄', title: 'Order Processing' },
@@ -2256,7 +2256,7 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
 
 // 8. CONTACT FORM NOTIFICATION EMAIL (ADMIN)
 const renderContactFormNotificationEmail = (name, email, whatsapp, message) => {
-  const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.com/admin'}/messages`;
+  const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}/messages`;
   
   const contentHtml = `
     <div class="content-section">
@@ -3342,8 +3342,8 @@ const checkUnreadMessageReminders = async () => {
         const subject = 'Reminder: Unviewed message in your conversation';
         const preview = String(msg.message || '').trim().slice(0, 140);
         const content = `<p style="margin:0 0 12px 0;color:${EMAIL_THEME.textLight};">A new message has remained unviewed for over 1 hour in your conversation about <span style="color:${EMAIL_THEME.text};font-weight:700;">${product.product_name || 'your product'}</span>.</p><div style="background:#0D0D0D;border:1px solid #1a1a1a;border-radius:12px;padding:16px;margin-top:8px;"><div style="color:${EMAIL_THEME.textLight};font-size:12px;margin-bottom:6px;">Message preview</div><div style="color:${EMAIL_THEME.text};line-height:1.6;">${preview || 'No text'}</div></div>`;
-        const clientUrl = `${process.env.CLIENT_URL || 'https://www.yokebud.com'}/messages`;
-        const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.com/admin/inquiries'}`;
+        const clientUrl = `${process.env.CLIENT_URL || 'https://www.yokebud.fi'}/messages`;
+        const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin/inquiries'}`;
         const userHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
         const adminHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
         const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
@@ -5177,7 +5177,7 @@ app.get('/debug/email-preview', (req, res) => {
     subtitle: 'Template Preview',
     contentHtml: sampleContent,
     primaryCtaText: 'Visit Website',
-    primaryCtaUrl: process.env.CLIENT_URL || 'https://www.yokebud.com'
+    primaryCtaUrl: process.env.CLIENT_URL || 'https://www.yokebud.fi'
   });
   res.header('Content-Type', 'text/html');
   res.send(html);
