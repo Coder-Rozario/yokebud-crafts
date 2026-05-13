@@ -954,6 +954,40 @@ async function regenerateSitemap() {
 const brevoClient = SibApiV3Sdk.ApiClient.instance;
 brevoClient.authentications['api-key'].apiKey = process.env.BREVO_API_KEY || '';
 const brevoEmailApi = new SibApiV3Sdk.TransactionalEmailsApi();
+const nodemailer = require('nodemailer');
+
+const isSmtpConfigured = () => {
+  return !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+};
+
+let smtpTransport = null;
+const getSmtpTransport = () => {
+  if (smtpTransport) return smtpTransport;
+  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
+  const secure = String(process.env.SMTP_SECURE || '').toLowerCase() === 'true' || port === 465;
+  smtpTransport = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port,
+    secure,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS
+    }
+  });
+  return smtpTransport;
+};
+
+const getBrevoErrorDetails = (error) => {
+  const details = {
+    name: error?.name,
+    message: error?.message,
+    code: error?.code,
+    status: error?.status
+  };
+  const body = error?.response?.body ?? error?.body ?? null;
+  if (body) details.body = body;
+  return details;
+};
 
 const parseAddress = (input) => {
   if (!input) return { email: '', name: '' };
@@ -972,6 +1006,12 @@ const sendMail = async (mailOptions) => {
   const sender = parseAddress(mailOptions.from || process.env.EMAIL_FROM);
   const toListRaw = Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to];
   const toList = toListRaw.filter(Boolean).map(parseAddress).map(({ email, name }) => ({ email, name }));
+  if (!sender.email) {
+    throw new Error('Email sender is missing. Set EMAIL_FROM.');
+  }
+  if (!toList || toList.length === 0 || !toList[0]?.email) {
+    throw new Error('Email recipient is missing.');
+  }
   const payload = {
     sender,
     to: toList,
@@ -980,7 +1020,37 @@ const sendMail = async (mailOptions) => {
     textContent: mailOptions.text || undefined,
     replyTo: mailOptions.replyTo ? parseAddress(mailOptions.replyTo) : undefined
   };
-  return brevoEmailApi.sendTransacEmail(payload);
+
+  const canUseBrevo = !!(process.env.BREVO_API_KEY && String(process.env.BREVO_API_KEY).trim());
+  let lastError = null;
+
+  if (canUseBrevo) {
+    try {
+      const res = await brevoEmailApi.sendTransacEmail(payload);
+      return { ok: true, provider: 'brevo', res };
+    } catch (error) {
+      lastError = error;
+      console.error('❌ Brevo send error:', getBrevoErrorDetails(error));
+    }
+  } else {
+    lastError = new Error('BREVO_API_KEY is missing');
+  }
+
+  if (isSmtpConfigured()) {
+    const transport = getSmtpTransport();
+    const smtpTo = toList.map(t => t.email).join(', ');
+    const smtpMail = {
+      from: `${sender.name} <${sender.email}>`,
+      to: smtpTo,
+      subject: payload.subject,
+      html: payload.htmlContent,
+      text: payload.textContent
+    };
+    const res = await transport.sendMail(smtpMail);
+    return { ok: true, provider: 'smtp', res };
+  }
+
+  throw lastError || new Error('Email send failed');
 };
 
 const EMAIL_THEME = {
@@ -2477,11 +2547,11 @@ const sendWelcomeEmail = async (email, token) => {
   };
   
   try {
-    await sendMail(mailOptions);
-    console.log(`📧 Welcome email sent to ${email}`);
+    const result = await sendMail(mailOptions);
+    console.log(`📧 Welcome email sent to ${email} via ${result?.provider || 'provider'}`);
     return true;
   } catch (error) {
-    console.error('❌ Welcome email error:', error);
+    console.error('❌ Welcome email error:', error?.message || error);
     return false;
   }
 };
@@ -2560,11 +2630,11 @@ const sendWeeklyNewsletter = async (subscriber, products) => {
   };
   
   try {
-    await sendMail(mailOptions);
-    console.log(`📧 Weekly newsletter sent to ${subscriber.email}`);
+    const result = await sendMail(mailOptions);
+    console.log(`📧 Weekly newsletter sent to ${subscriber.email} via ${result?.provider || 'provider'}`);
     return true;
   } catch (error) {
-    console.error('❌ Weekly newsletter error:', error);
+    console.error('❌ Weekly newsletter error:', error?.message || error);
     return false;
   }
 };
@@ -9046,15 +9116,25 @@ app.post('/api/subscribe', async (req, res) => {
 
         // Send welcome email
         try {
-          await sendWelcomeEmail(email, token);
+          const welcomeOk = await sendWelcomeEmail(email, token);
           await sendNewSubscriberNotification(email);
           setTimeout(async () => {
             try {
-              await sendThisWeeksNewsletterToSubscriber(email, token);
+              const sent = await sendThisWeeksNewsletterToSubscriber(email, token);
+              if (!sent) {
+                console.error(`❌ Initial newsletter send returned false for ${email}`);
+              }
             } catch (e) {
               console.error(`❌ Initial newsletter send failed for ${email}:`, e);
             }
           }, 1500);
+          if (!welcomeOk) {
+            setTimeout(async () => {
+              try {
+                await sendWelcomeEmail(email, token);
+              } catch {}
+            }, 3000);
+          }
         } catch (emailError) {
           console.error(`Error sending emails for reactivation: ${emailError.message}`);
           // We'll still return success since the DB was updated
@@ -9082,16 +9162,22 @@ app.post('/api/subscribe', async (req, res) => {
     let emailSent = false;
     try {
       console.log(`Sending confirmation email to: ${email}`);
-      await sendWelcomeEmail(email, subscriptionToken);
-      console.log(`Confirmation email sent successfully to: ${email}`);
-      emailSent = true;
+      const ok = await sendWelcomeEmail(email, subscriptionToken);
+      if (ok) {
+        console.log(`Confirmation email sent successfully to: ${email}`);
+        emailSent = true;
+      } else {
+        console.error(`Confirmation email returned false for: ${email}`);
+      }
     } catch (emailError) {
       console.error(`Failed to send confirmation email to ${email}:`, emailError);
-      // Retry once after a short delay
+    }
+
+    if (!emailSent) {
       setTimeout(async () => {
         try {
-          await sendWelcomeEmail(email, subscriptionToken);
-          console.log(`Retry: Confirmation email sent successfully to: ${email}`);
+          const ok = await sendWelcomeEmail(email, subscriptionToken);
+          if (ok) console.log(`Retry: Confirmation email sent successfully to: ${email}`);
         } catch (retryError) {
           console.error(`Retry failed for confirmation email to ${email}:`, retryError);
         }
@@ -9118,7 +9204,10 @@ app.post('/api/subscribe', async (req, res) => {
 
     setTimeout(async () => {
       try {
-        await sendThisWeeksNewsletterToSubscriber(email, subscriptionToken);
+        const sent = await sendThisWeeksNewsletterToSubscriber(email, subscriptionToken);
+        if (!sent) {
+          console.error(`❌ Initial newsletter send returned false for ${email}`);
+        }
       } catch (e) {
         console.error(`❌ Initial newsletter send failed for ${email}:`, e);
       }
