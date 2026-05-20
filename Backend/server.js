@@ -447,7 +447,40 @@ async function ensureSeoSchema() {
   }
 }
 
-ensureSeoSchema();
+async function ensureCustomizationSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    
+    // Check and add customization columns to products table
+    const [productCols] = await connection.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products'`,
+      [process.env.DB_NAME]
+    );
+    const productColNames = new Set((productCols || []).map(c => c.COLUMN_NAME));
+
+    if (!productColNames.has('customization_type')) {
+      await connection.query('ALTER TABLE products ADD COLUMN customization_type VARCHAR(50) DEFAULT "Apparels"');
+    }
+    if (!productColNames.has('customization_images')) {
+      await connection.query('ALTER TABLE products ADD COLUMN customization_images JSON NULL');
+    }
+    if (!productColNames.has('customization_dimensions')) {
+      await connection.query('ALTER TABLE products ADD COLUMN customization_dimensions JSON NULL');
+    }
+
+    console.log('✅ Customization schema updated successfully.');
+  } catch (e) {
+    console.warn('Customization schema update failed:', e.message || e);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureSeoSchema().then(() => {
+  ensureCustomizationSchema();
+});
 
 // Using existing 'user_wishlist' table provisioned in the database
 
@@ -648,7 +681,7 @@ ensureSitemapSchema();
 const { exec } = require('child_process');
 
 // Public site URL for SEO
-const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
+const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'http://localhost:5000';
 
 // Helper: extract productId from a sitemap path like `/products/slug-id`
 function getProductIdFromPath(pathStr) {
@@ -1890,7 +1923,7 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
     subtitle: 'Yokebud Crafts Newsletter System',
     contentHtml,
     primaryCtaText: 'View Subscriber Dashboard',
-    primaryCtaUrl: `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}`,
+    primaryCtaUrl: `${process.env.ADMIN_URL || 'http://localhost:5000/admin'}`,
     footerNote: 'This is an automated notification from Yokebud Crafts Newsletter System'
   });
 };
@@ -2338,7 +2371,7 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
 
 // 8. CONTACT FORM NOTIFICATION EMAIL (ADMIN)
 const renderContactFormNotificationEmail = (name, email, whatsapp, message) => {
-  const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}/messages`;
+  const adminUrl = `${process.env.ADMIN_URL || 'http://localhost:5000/admin'}/messages`;
   
   const contentHtml = `
     <div class="content-section">
@@ -2919,7 +2952,7 @@ const generateProductSEO = (name, description, price, imageUrls) => {
       "priceCurrency": "EUR",
       "price": price,
       "availability": "https://schema.org/InStock",
-      "url": `${process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi'}/products/${slugify(name)}`
+      "url": `${process.env.PUBLIC_SITE_URL || 'http://localhost:5000'}/products/${slugify(name)}`
     }
   };
 
@@ -3424,8 +3457,8 @@ const checkUnreadMessageReminders = async () => {
         const subject = 'Reminder: Unviewed message in your conversation';
         const preview = String(msg.message || '').trim().slice(0, 140);
         const content = `<p style="margin:0 0 12px 0;color:${EMAIL_THEME.textLight};">A new message has remained unviewed for over 1 hour in your conversation about <span style="color:${EMAIL_THEME.text};font-weight:700;">${product.product_name || 'your product'}</span>.</p><div style="background:#0D0D0D;border:1px solid #1a1a1a;border-radius:12px;padding:16px;margin-top:8px;"><div style="color:${EMAIL_THEME.textLight};font-size:12px;margin-bottom:6px;">Message preview</div><div style="color:${EMAIL_THEME.text};line-height:1.6;">${preview || 'No text'}</div></div>`;
-        const clientUrl = `${process.env.CLIENT_URL || 'https://www.yokebud.fi'}/messages`;
-        const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin/inquiries'}`;
+        const clientUrl = `${process.env.CLIENT_URL || 'http://localhost:5000'}/messages`;
+        const adminUrl = `${process.env.ADMIN_URL || 'http://localhost:5000/admin/inquiries'}`;
         const userHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
         const adminHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
         const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
@@ -5259,7 +5292,7 @@ app.get('/debug/email-preview', (req, res) => {
     subtitle: 'Template Preview',
     contentHtml: sampleContent,
     primaryCtaText: 'Visit Website',
-    primaryCtaUrl: process.env.CLIENT_URL || 'https://www.yokebud.fi'
+    primaryCtaUrl: process.env.CLIENT_URL || 'http://localhost:5000'
   });
   res.header('Content-Type', 'text/html');
   res.send(html);
@@ -7137,7 +7170,10 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       rating,
       is_customizable,
       is_preorder,
-      stock_status
+      stock_status,
+      customization_type,
+      customization_images,
+      customization_dimensions
     } = req.body;
     
     const validation = validateProductPayload(req.body);
@@ -7216,8 +7252,11 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         seo_title,
         seo_description,
         seo_keywords,
-        schema_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        schema_json,
+        customization_type,
+        customization_images,
+        customization_dimensions
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
@@ -7249,7 +7288,10 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         finalSeoTitle,
         finalSeoDescription,
         finalSeoKeywords,
-        finalSchemaJson
+        finalSchemaJson,
+        customization_type || 'Apparels',
+        customization_images ? JSON.stringify(customization_images) : null,
+        customization_dimensions ? JSON.stringify(customization_dimensions) : null
       ]
     );
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
@@ -7308,7 +7350,10 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       imagesToDelete = [],
       is_customizable,
       is_preorder,
-      stock_status
+      stock_status,
+      customization_type,
+      customization_images,
+      customization_dimensions
     } = req.body;
 
     const validation = validateProductPayload({
@@ -7427,6 +7472,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         seo_description = ?,
         seo_keywords = ?,
         schema_json = ?,
+        customization_type = ?,
+        customization_images = ?,
+        customization_dimensions = ?,
         updated_at = NOW()
       WHERE id = ?`,
       [
@@ -7461,6 +7509,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         finalSeoDescription,
         finalSeoKeywords,
         finalSchemaJson,
+        customization_type || 'Apparels',
+        customization_images ? JSON.stringify(customization_images) : null,
+        customization_dimensions ? JSON.stringify(customization_dimensions) : null,
         productId
       ]
     );
@@ -7574,6 +7625,9 @@ app.get('/api/products/:id', async (req, res) => {
       is_customizable: product.is_customizable ? 1 : 0,
       is_preorder: product.is_preorder ? 1 : 0,
       stock_status: product.stock_status || (product.is_preorder ? 'Pre-order' : 'In Stock'),
+      customization_type: product.customization_type,
+      customization_images: product.customization_images ? (typeof product.customization_images === 'string' ? JSON.parse(product.customization_images) : product.customization_images) : null,
+      customization_dimensions: product.customization_dimensions ? (typeof product.customization_dimensions === 'string' ? JSON.parse(product.customization_dimensions) : product.customization_dimensions) : null,
       seo_title: product.seo_title,
       seo_description: product.seo_description,
       seo_keywords: product.seo_keywords,
@@ -8230,7 +8284,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     }
 
     const p = rows[0];
-    const siteBase = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
+    const siteBase = process.env.PUBLIC_SITE_URL || 'http://localhost:5000';
     const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
 
     function toSlug(str) {
@@ -8255,7 +8309,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     }
 
     function absoluteImageUrl(path) {
-      if (!path) return 'https://www.yokebud.fi/src/assades/LOGO.png';
+      if (!path) return 'http://localhost:5000/src/assades/LOGO.png';
       const s = String(path);
       if (s.startsWith('http')) return s;
       const clean = s.startsWith('/') ? s : `/${s}`;
@@ -10052,11 +10106,11 @@ Disallow: /signup
 Disallow: /*?*
 
 # Sitemaps
-Sitemap: https://www.yokebud.fi/sitemap.xml
-Sitemap: https://www.yokebud.fi/product-sitemap.xml
-Sitemap: https://www.yokebud.fi/category-sitemap.xml
-Sitemap: https://www.yokebud.fi/blog-sitemap.xml
-Sitemap: https://www.yokebud.fi/page-sitemap.xml
+Sitemap: http://localhost:5000/sitemap.xml
+Sitemap: http://localhost:5000/product-sitemap.xml
+Sitemap: http://localhost:5000/category-sitemap.xml
+Sitemap: http://localhost:5000/blog-sitemap.xml
+Sitemap: http://localhost:5000/page-sitemap.xml
 `;
       res.send(robotsTxt);
     });
@@ -10089,7 +10143,7 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
             const name = product.product_name || 'Product';
             const desc = (product.product_description || '').replace(/<[^>]*>?/gm, '').slice(0, 160);
             
-            let imageUrl = 'https://www.yokebud.fi/logo.jpg';
+            let imageUrl = 'http://localhost:5000/logo.jpg';
             try {
               const images = JSON.parse(product.images || product.product_photos || '[]');
               if (images.length > 0) {
@@ -10098,7 +10152,7 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
               }
             } catch (e) {}
 
-            const url = `https://www.yokebud.fi${req.originalUrl}`;
+            const url = `http://localhost:5000${req.originalUrl}`;
 
             // Inject Meta Tags
             const metaTags = `
@@ -10777,7 +10831,7 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
     const xmlFiles = fs.readdirSync(publicDir).filter(file => file.endsWith('-sitemap.xml') && file !== 'sitemap.xml');
     
     let totalSynced = 0;
-    const baseUrl = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
+    const baseUrl = process.env.PUBLIC_SITE_URL || 'http://localhost:5000';
     
     for (const xmlFile of xmlFiles) {
       const xmlPath = path.join(publicDir, xmlFile);
