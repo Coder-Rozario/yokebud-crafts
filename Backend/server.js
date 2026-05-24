@@ -681,7 +681,7 @@ ensureSitemapSchema();
 const { exec } = require('child_process');
 
 // Public site URL for SEO
-const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'http://localhost:5000';
+const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
 
 // Helper: extract productId from a sitemap path like `/products/slug-id`
 function getProductIdFromPath(pathStr) {
@@ -1582,7 +1582,7 @@ const renderWelcomeEmail = (email, token) => {
   
   const contentHtml = `
     <div class="content-section">
-      <h2 class="content-title">Welcome to Yokebud Crafts! 🎉</h2>
+      <h2 class="content-title">Welcome to Yokebud Crafts! </h2>
       <p class="content-text">
         Thank you for joining our exclusive community of fashion enthusiasts and wholesale buyers. 
         We're thrilled to have you on board!
@@ -1758,13 +1758,13 @@ const renderAdminNewOrderEmail = (orderId, customerInfo, items, totals) => {
           <td style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
             <strong>${item.product_name || item.name}</strong>
             <div style="color: ${EMAIL_THEME.textLight}; font-size: 14px; line-height: 1.6;">
-              Quantity: ${item.quantity} × $${Number(item.discounted_price || item.price || 0).toFixed(2)}
+              Quantity: ${item.quantity} × €${Number(item.discounted_price || item.price || 0).toFixed(2)}
               ${item.size ? ` • Size: ${item.size}` : ''}
               ${item.color ? ` • Color: ${item.color}` : ''}
             </div>
           </td>
           <td align="right" style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border}; font-weight: 600; white-space: nowrap;">
-            $${(Number(item.quantity) * Number(item.discounted_price || item.price || 0)).toFixed(2)}
+            €${(Number(item.quantity) * Number(item.discounted_price || item.price || 0)).toFixed(2)}
           </td>
         </tr>
       `).join('')}
@@ -1774,7 +1774,7 @@ const renderAdminNewOrderEmail = (orderId, customerInfo, items, totals) => {
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
-        <h2 class="content-title">New Order Received! 🚀</h2>
+        <h2 class="content-title">New Order Received! </h2>
         <p class="content-text" style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
           Order #${orderId}
         </p>
@@ -1788,21 +1788,21 @@ const renderAdminNewOrderEmail = (orderId, customerInfo, items, totals) => {
             <tr>
               <td style="padding: 10px 0; border-top: 1px solid ${EMAIL_THEME.border};">Subtotal:</td>
               <td align="right" style="padding: 10px 0; border-top: 1px solid ${EMAIL_THEME.border}; white-space: nowrap;">
-                $${Number(totals.subtotal || 0).toFixed(2)}
+                €${Number(totals.subtotal || 0).toFixed(2)}
               </td>
             </tr>
             ${totals.shipping ? `
               <tr>
                 <td style="padding: 10px 0;">Shipping:</td>
                 <td align="right" style="padding: 10px 0; white-space: nowrap;">
-                  $${Number(totals.shipping).toFixed(2)}
+                  €${Number(totals.shipping).toFixed(2)}
                 </td>
               </tr>
             ` : ''}
             <tr>
               <td style="padding: 10px 0; font-size: 18px; font-weight: 700; border-top: 2px solid ${EMAIL_THEME.border};">Total:</td>
               <td align="right" style="padding: 10px 0; font-size: 18px; font-weight: 700; border-top: 2px solid ${EMAIL_THEME.border}; white-space: nowrap;">
-                <span style="color: ${EMAIL_THEME.primary};">$${Number(totals.total || 0).toFixed(2)}</span>
+                <span style="color: ${EMAIL_THEME.primary};">€${Number(totals.total || 0).toFixed(2)}</span>
               </td>
             </tr>
           </table>
@@ -1840,7 +1840,7 @@ const renderManualNotificationEmail = (orderId, customerInfo) => {
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
-        <h2 class="content-title">Hello ${customerInfo.firstName}! 👋</h2>
+        <h2 class="content-title">Hello ${customerInfo.firstName}! </h2>
         <p class="content-text">
           We just wanted to send a quick note about your order.
         </p>
@@ -1873,7 +1873,7 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
-        <h2 class="content-title">New Newsletter Subscriber! 🎯</h2>
+        <h2 class="content-title">New Newsletter Subscriber! </h2>
         <p class="content-text">
           Someone just subscribed to your newsletter
         </p>
@@ -1908,7 +1908,6 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
             </tr>
             <tr>
               <td colspan="2" style="padding: 15px 0 0 0;">
-                <strong style="display: block; color: ${EMAIL_THEME.text};">Total Active Subscribers</strong>
                 <span style="color: ${EMAIL_THEME.textLight}; font-size: 24px; font-weight: 700;">+1</span>
               </td>
             </tr>
@@ -1923,7 +1922,7 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
     subtitle: 'Yokebud Crafts Newsletter System',
     contentHtml,
     primaryCtaText: 'View Subscriber Dashboard',
-    primaryCtaUrl: `${process.env.ADMIN_URL || 'http://localhost:5000/admin'}`,
+    primaryCtaUrl: `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}`,
     footerNote: 'This is an automated notification from Yokebud Crafts Newsletter System'
   });
 };
@@ -2010,7 +2009,7 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
-        <h2 class="content-title">Your Weekly Yokebud Update 🚀</h2>
+        <h2 class="content-title">Your Weekly Yokebud Update</h2>
         <p class="content-text" style="text-align: center;">
           ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
         </p>
@@ -2371,7 +2370,7 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
 
 // 8. CONTACT FORM NOTIFICATION EMAIL (ADMIN)
 const renderContactFormNotificationEmail = (name, email, whatsapp, message) => {
-  const adminUrl = `${process.env.ADMIN_URL || 'http://localhost:5000/admin'}/messages`;
+  const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}/messages`;
   
   const contentHtml = `
     <div class="content-section">
@@ -2952,7 +2951,7 @@ const generateProductSEO = (name, description, price, imageUrls) => {
       "priceCurrency": "EUR",
       "price": price,
       "availability": "https://schema.org/InStock",
-      "url": `${process.env.PUBLIC_SITE_URL || 'http://localhost:5000'}/products/${slugify(name)}`
+      "url": `${process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi'}/products/${slugify(name)}`
     }
   };
 
@@ -3457,8 +3456,8 @@ const checkUnreadMessageReminders = async () => {
         const subject = 'Reminder: Unviewed message in your conversation';
         const preview = String(msg.message || '').trim().slice(0, 140);
         const content = `<p style="margin:0 0 12px 0;color:${EMAIL_THEME.textLight};">A new message has remained unviewed for over 1 hour in your conversation about <span style="color:${EMAIL_THEME.text};font-weight:700;">${product.product_name || 'your product'}</span>.</p><div style="background:#0D0D0D;border:1px solid #1a1a1a;border-radius:12px;padding:16px;margin-top:8px;"><div style="color:${EMAIL_THEME.textLight};font-size:12px;margin-bottom:6px;">Message preview</div><div style="color:${EMAIL_THEME.text};line-height:1.6;">${preview || 'No text'}</div></div>`;
-        const clientUrl = `${process.env.CLIENT_URL || 'http://localhost:5000'}/messages`;
-        const adminUrl = `${process.env.ADMIN_URL || 'http://localhost:5000/admin/inquiries'}`;
+        const clientUrl = `${process.env.CLIENT_URL || 'https://www.yokebud.fi'}/messages`;
+        const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin/inquiries'}`;
         const userHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
         const adminHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
         const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
@@ -5292,7 +5291,7 @@ app.get('/debug/email-preview', (req, res) => {
     subtitle: 'Template Preview',
     contentHtml: sampleContent,
     primaryCtaText: 'Visit Website',
-    primaryCtaUrl: process.env.CLIENT_URL || 'http://localhost:5000'
+    primaryCtaUrl: process.env.CLIENT_URL || 'https://www.yokebud.fi'
   });
   res.header('Content-Type', 'text/html');
   res.send(html);
@@ -8284,7 +8283,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     }
 
     const p = rows[0];
-    const siteBase = process.env.PUBLIC_SITE_URL || 'http://localhost:5000';
+    const siteBase = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
     const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
 
     function toSlug(str) {
@@ -8309,7 +8308,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     }
 
     function absoluteImageUrl(path) {
-      if (!path) return 'http://localhost:5000/src/assades/LOGO.png';
+      if (!path) return 'https://www.yokebud.fi/src/assades/LOGO.png';
       const s = String(path);
       if (s.startsWith('http')) return s;
       const clean = s.startsWith('/') ? s : `/${s}`;
@@ -10106,11 +10105,11 @@ Disallow: /signup
 Disallow: /*?*
 
 # Sitemaps
-Sitemap: http://localhost:5000/sitemap.xml
-Sitemap: http://localhost:5000/product-sitemap.xml
-Sitemap: http://localhost:5000/category-sitemap.xml
-Sitemap: http://localhost:5000/blog-sitemap.xml
-Sitemap: http://localhost:5000/page-sitemap.xml
+Sitemap: https://www.yokebud.fi/sitemap.xml
+Sitemap: https://www.yokebud.fi/product-sitemap.xml
+Sitemap: https://www.yokebud.fi/category-sitemap.xml
+Sitemap: https://www.yokebud.fi/blog-sitemap.xml
+Sitemap: https://www.yokebud.fi/page-sitemap.xml
 `;
       res.send(robotsTxt);
     });
@@ -10143,7 +10142,7 @@ Sitemap: http://localhost:5000/page-sitemap.xml
             const name = product.product_name || 'Product';
             const desc = (product.product_description || '').replace(/<[^>]*>?/gm, '').slice(0, 160);
             
-            let imageUrl = 'http://localhost:5000/logo.jpg';
+            let imageUrl = 'https://www.yokebud.fi/logo.jpg';
             try {
               const images = JSON.parse(product.images || product.product_photos || '[]');
               if (images.length > 0) {
@@ -10152,7 +10151,7 @@ Sitemap: http://localhost:5000/page-sitemap.xml
               }
             } catch (e) {}
 
-            const url = `http://localhost:5000${req.originalUrl}`;
+            const url = `https://www.yokebud.fi${req.originalUrl}`;
 
             // Inject Meta Tags
             const metaTags = `
@@ -10831,7 +10830,7 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
     const xmlFiles = fs.readdirSync(publicDir).filter(file => file.endsWith('-sitemap.xml') && file !== 'sitemap.xml');
     
     let totalSynced = 0;
-    const baseUrl = process.env.PUBLIC_SITE_URL || 'http://localhost:5000';
+    const baseUrl = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
     
     for (const xmlFile of xmlFiles) {
       const xmlPath = path.join(publicDir, xmlFile);
