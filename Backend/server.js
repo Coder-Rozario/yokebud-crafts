@@ -1930,7 +1930,7 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
 // 4. WEEKLY NEWSLETTER EMAIL
 const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
   const unsubscribeLink = `${PUBLIC_SITE_URL}/UnsubscribePage?token=${token}`;
-  const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
+  const backendBase = process.env.PUBLIC_API_BASE || 'http://localhost:5000';
   
   const renderProductCards = (products) => {
     return products.map(product => {
@@ -5051,6 +5051,8 @@ app.put('/api/inquiries/:inquiryId/status', async (req, res) => {
 
     connection = await pool.getConnection();
 
+    // Debug: log customization_mode for incoming update
+    console.log('UPDATE product - customization_mode:', req.body.customization_mode);
     const [result] = await connection.query(
       'UPDATE inquiry_conversations SET status = ?, updated_at = NOW() WHERE id = ?',
       [status, inquiryId]
@@ -6415,7 +6417,7 @@ app.get('/api/user/wishlist', async (req, res) => {
         }
       } catch {}
       const image = firstImage
-        ? (String(firstImage).startsWith('http') ? firstImage : `https://api.yokebud.fi${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
+        ? (String(firstImage).startsWith('http') ? firstImage : `http://localhost:5000${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
         : null;
       return { _id: r._id, product_name: r.product_name, price: r.price, image };
     });
@@ -7219,6 +7221,8 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     const imagesJson = JSON.stringify(imageArray);
     const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount });
 
+    // Debug: log customization_mode for incoming create
+    console.log('CREATE product - customization_mode:', req.body.customization_mode);
     const [result] = await connection.query(
       `INSERT INTO products (
         product_name,
@@ -7253,6 +7257,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         seo_keywords,
         schema_json,
         customization_type,
+        customization_mode,
         customization_images,
         customization_dimensions
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -7289,6 +7294,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         finalSeoKeywords,
         finalSchemaJson,
         customization_type || 'Apparels',
+        req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
         customization_dimensions ? JSON.stringify(customization_dimensions) : null
       ]
@@ -7472,6 +7478,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         seo_keywords = ?,
         schema_json = ?,
         customization_type = ?,
+        customization_mode = ?,
         customization_images = ?,
         customization_dimensions = ?,
         updated_at = NOW()
@@ -7509,6 +7516,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         finalSeoKeywords,
         finalSchemaJson,
         customization_type || 'Apparels',
+        req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
         customization_dimensions ? JSON.stringify(customization_dimensions) : null,
         productId
@@ -7627,6 +7635,7 @@ app.get('/api/products/:id', async (req, res) => {
       customization_type: product.customization_type,
       customization_images: product.customization_images ? (typeof product.customization_images === 'string' ? JSON.parse(product.customization_images) : product.customization_images) : null,
       customization_dimensions: product.customization_dimensions ? (typeof product.customization_dimensions === 'string' ? JSON.parse(product.customization_dimensions) : product.customization_dimensions) : null,
+      customization_mode: product.customization_mode || null,
       seo_title: product.seo_title,
       seo_description: product.seo_description,
       seo_keywords: product.seo_keywords,
@@ -7727,6 +7736,7 @@ app.get('/api/products', async (req, res) => {
         thumbnail: product.thumbnail,
         stock: product.stock,
         sku: product.sku,
+        customization_mode: product.customization_mode || null,
         created_at: product.created_at,
         updated_at: product.updated_at,
         rating: sum.rating,
@@ -8284,7 +8294,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
 
     const p = rows[0];
     const siteBase = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
-    const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
+    const backendBase = process.env.PUBLIC_API_BASE || 'http://localhost:5000';
 
     function toSlug(str) {
       try {
@@ -9109,10 +9119,16 @@ const generateSubscriptionToken = () => {
 };
 
 const sendThisWeeksNewsletterToSubscriber = async (email, subscriptionToken) => {
-  const collections = await fetchWeeklyNewsletterCollections();
-  const hasAny = (collections.newArrivals && collections.newArrivals.length > 0) || (collections.discounted && collections.discounted.length > 0);
-  if (!hasAny) return false;
-  return await sendWeeklyNewsletter({ email, subscription_token: subscriptionToken }, collections);
+  try {
+    const collections = await fetchWeeklyNewsletterCollections();
+    // Always attempt to send a newsletter to newly subscribed users even if there
+    // are no new arrivals or discounted products this week. The newsletter
+    // renderer will gracefully handle empty collections and show a short note.
+    return await sendWeeklyNewsletter({ email, subscription_token: subscriptionToken }, collections);
+  } catch (err) {
+    console.error(`❌ Error while sending this week's newsletter to ${email}:`, err?.message || err);
+    return false;
+  }
 };
 
 // Subscribe to newsletter endpoint
@@ -10147,7 +10163,7 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
               const images = JSON.parse(product.images || product.product_photos || '[]');
               if (images.length > 0) {
                 const firstImg = images[0];
-                imageUrl = firstImg.startsWith('http') ? firstImg : `https://api.yokebud.fi${firstImg.startsWith('/') ? '' : '/'}${firstImg}`;
+                imageUrl = firstImg.startsWith('http') ? firstImg : `http://localhost:5000${firstImg.startsWith('/') ? '' : '/'}${firstImg}`;
               }
             } catch (e) {}
 
