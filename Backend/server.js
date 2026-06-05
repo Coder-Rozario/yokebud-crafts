@@ -7216,7 +7216,6 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     }
 
     const finalPrice = parseFloat(price);
-    const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
 
     // Process sizes
     const processedSizes = processSizes(sizes);
@@ -7409,7 +7408,6 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     }
 
     const finalPrice = parseFloat(price);
-    const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
 
     // Process sizes
     const processedSizes = processSizes(sizes);
