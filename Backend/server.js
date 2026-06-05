@@ -568,6 +568,33 @@ async function ensureProductStockStatusSchema() {
 
 ensureProductStockStatusSchema();
 
+async function ensureProductMoqSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [cols] = await connection.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products'`,
+      [process.env.DB_NAME]
+    );
+
+    const columnNames = new Set((cols || []).map(c => c.COLUMN_NAME));
+
+    if (!columnNames.has('moq')) {
+      await connection.query(
+        'ALTER TABLE products ADD COLUMN moq INT DEFAULT 1'
+      );
+      console.log('Added moq column to products table');
+    }
+  } catch (e) {
+    console.warn('Product moq schema check failed:', e.message || e);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureProductMoqSchema();
+
 async function ensureSeoContentSchema() {
   let connection;
   try {
@@ -7149,7 +7176,6 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       name,
       description,
       price,
-      discounted_price,
       categories,
       stock,
       moq,
@@ -7158,7 +7184,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       sku,
       shipping,
       warranty,
-      bulk_discount,
+      discount_ranges,
       sizes,
       colors,
       tags,
@@ -7223,7 +7249,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     // Insert product into database
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageArray);
-    const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount });
+    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, discount_ranges });
 
     // Debug: log customization_mode for incoming create
     console.log('CREATE product - customization_mode:', req.body.customization_mode);
@@ -7232,15 +7258,14 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         product_name,
         product_description,
         price,
-        discounted_price,
         category,
         stock,
+        moq,
         material,
         care_instructions,
         sku,
         shipping_info,
         warranty,
-        bulk_discount,
         sizes,
         colors,
         tags,
@@ -7265,20 +7290,19 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_images,
         customization_dimensions,
         allow_customer_size_adjustment
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
         finalPrice,
-        finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
+        moq ? parseInt(moq) : 1,
         material,
         care,
         sku,
         shipping,
         warranty,
-        bulk_discount,
         JSON.stringify(processedSizes),
         JSON.stringify(colors),
         JSON.stringify(tags),
@@ -7341,9 +7365,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const {
       name,
       description,
-      price, // This will be max_price
-      min_price, // This can be custom min price
-      discounted_price, // For setting min_price
+      price, // This will be the base price
       categories,
       stock,
       moq,
@@ -7352,7 +7374,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       sku,
       shipping,
       warranty,
-      bulk_discount,
+      discount_ranges,
       sizes,
       colors,
       tags,
@@ -7442,7 +7464,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageUrls);
-    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, bulk_discount });
+    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, discount_ranges });
 
     // Auto-generate SEO fields if not provided
     const seo = generateProductSEO(name, description, finalPrice, imageUrls);
@@ -7456,15 +7478,14 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         product_name = ?,
         product_description = ?,
         price = ?,
-        discounted_price = ?,
         category = ?,
         stock = ?,
+        moq = ?,
         material = ?,
         care_instructions = ?,
         sku = ?,
         shipping_info = ?,
         warranty = ?,
-        bulk_discount = ?,
         sizes = ?,
         colors = ?,
         tags = ?,
@@ -7495,15 +7516,14 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         name,
         description,
         finalPrice,
-        finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
+        moq ? parseInt(moq) : 1,
         material,
         care,
         sku,
         shipping,
         warranty,
-        bulk_discount,
         JSON.stringify(processedSizes),
         JSON.stringify(colors),
         JSON.stringify(tags),
@@ -7612,19 +7632,16 @@ app.get('/api/products/:id', async (req, res) => {
       product_description: product.product_description,
       product_details: product.product_details || product.product_description,
       price: product.price,
-      min_price: priceRange && priceRange.min != null ? Number(priceRange.min) : (product.discounted_price || product.price),
-      max_price: priceRange && priceRange.max != null ? Number(priceRange.max) : product.price,
-      discounted_price: product.discounted_price,
       categories: categories,
       category: categories[0],
       stock: product.stock,
-      moq: product.moq,
+      moq: product.moq || 1,
       material: product.material,
       care_instructions: product.care_instructions,
       sku: product.sku,
       shipping_info: product.shipping_info,
       warranty: product.warranty,
-      bulk_discount: product.bulk_discount,
+      discount_ranges: meta && meta.discount_ranges ? meta.discount_ranges : [],
       sizes: JSON.parse(product.sizes || '[]'),
       colors: JSON.parse(product.colors || '[]'),
       product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]'),
@@ -7722,7 +7739,6 @@ app.get('/api/products', async (req, res) => {
         product_name: product.product_name,
         product_description: product.product_details || product.product_description,
         price: product.price,
-        discounted_price: product.discounted_price,
         categories,
         category: categories[0],
         colors: JSON.parse(product.colors || '[]'),
@@ -7730,8 +7746,6 @@ app.get('/api/products', async (req, res) => {
         product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]'),
         tags: JSON.parse(product.tags || '[]'),
         features: JSON.parse(product.features || '[]'),
-        min_price: priceRange && priceRange.min != null ? Number(priceRange.min) : (product.discounted_price || product.price),
-        max_price: priceRange && priceRange.max != null ? Number(priceRange.max) : product.price,
         slug: product.slug,
         sitemap_path: sitemapPath,
         status: product.status,
@@ -7746,6 +7760,8 @@ app.get('/api/products', async (req, res) => {
         thumbnail: product.thumbnail,
         stock: product.stock,
         sku: product.sku,
+        moq: product.moq || 1,
+        discount_ranges: meta && meta.discount_ranges ? meta.discount_ranges : [],
         customization_mode: product.customization_mode || null,
         customization_type: product.customization_type,
         customization_images: product.customization_images ? (typeof product.customization_images === 'string' ? JSON.parse(product.customization_images) : product.customization_images) : null,
