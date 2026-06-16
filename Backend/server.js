@@ -11069,6 +11069,9 @@ app.get('/api/admin/popups', requireAdminAuth, async (req, res) => {
 
 // Create a new popup
 app.post('/api/admin/popups', requireAdminAuth, async (req, res) => {
+  console.log('=== /api/admin/popups POST called ===');
+  console.log('Request body:', req.body);
+  
   let connection;
   try {
     const {
@@ -11104,14 +11107,16 @@ app.post('/api/admin/popups', requireAdminAuth, async (req, res) => {
         auto_close_duration || 10,
         start_date || null,
         end_date || null,
-        is_active !== undefined ? is_active : true,
+        is_active !== undefined ? (is_active ? 1 : 0) : 1,
         position || 'center',
         display_delay || 3
       ]
     );
+    console.log('Inserted popup with ID:', result.insertId);
     connection.release();
     res.json({ success: true, popupId: result.insertId });
   } catch (error) {
+    console.error('Error creating popup:', error);
     if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to create popup: ' + error.message });
   }
@@ -11137,7 +11142,11 @@ app.put('/api/admin/popups/:id', requireAdminAuth, async (req, res) => {
     allowedFields.forEach(field => {
       if (updates[field] !== undefined) {
         updateFields.push(`${field} = ?`);
-        updateValues.push(updates[field]);
+        if (field === 'is_active') {
+          updateValues.push(updates[field] ? 1 : 0);
+        } else {
+          updateValues.push(updates[field]);
+        }
       }
     });
     updateValues.push(id);
@@ -11180,18 +11189,28 @@ app.get('/api/popups', async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
+    console.log('=== /api/popups called ===');
     const today = new Date().toISOString().slice(0, 10);
+    console.log('Today (for query):', today);
+    
+    // First get all popups
+    const [allRows] = await connection.query('SELECT * FROM popups');
+    console.log('All popups in DB:', allRows);
+    
     const [rows] = await connection.query(
       `SELECT * FROM popups 
-       WHERE is_active = TRUE 
+       WHERE is_active = 1 
        AND (start_date IS NULL OR start_date <= ?)
        AND (end_date IS NULL OR end_date >= ?)
        ORDER BY created_at ASC`,
       [today, today]
     );
+    console.log('Filtered popups:', rows);
+    
     connection.release();
     res.json({ success: true, popups: rows });
   } catch (error) {
+    console.error('/api/popups error:', error);
     if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to fetch popups: ' + error.message });
   }
