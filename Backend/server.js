@@ -379,7 +379,7 @@ async function ensureSeoSchema() {
     if (homeSeo.length === 0) {
       const defaultHomeTitle = 'Laser Engraving, Custom Apparel & Resin Art | Personalized Gifts Finland';
       const defaultHomeContent = `
-        <p>Welcome to <strong>Yokebud Crafts</strong>, your premier destination for high-quality <strong>laser engraving Finland</strong>, <strong>custom apparel</strong>, and <strong>resin art</strong>. We specialize in precision <strong>laser cutting services</strong>, professional engraving, and unique handcrafted creations that transform everyday objects into meaningful treasures.</p>
+        <p>Welcome to <strong>Yokebud Craft</strong>, your premier destination for high-quality <strong>laser engraving Finland</strong>, <strong>custom apparel</strong>, and <strong>resin art</strong>. We specialize in precision <strong>laser cutting services</strong>, professional engraving, and unique handcrafted creations that transform everyday objects into meaningful treasures.</p>
         
         <h3>Expert Laser Engraving & Custom Apparel in Finland</h3>
         <p>Our state-of-the-art technology allows us to provide the finest <strong>laser engraving Helsinki</strong> has to offer, alongside premium <strong>customized hoodies</strong> and <strong>t-shirts</strong>. Whether you're looking for corporate branding, personalized wedding gifts, or custom streetwear, our team ensures every detail is captured with perfection.</p>
@@ -387,7 +387,7 @@ async function ensureSeoSchema() {
         <h3>Resin Art & Handcrafted Jewelry</h3>
         <p>Explore our stunning collection of <strong>resin art</strong> and <strong>handcrafted jewelry</strong>. Each piece is uniquely designed and made with care in our Finnish studio, combining traditional craftsmanship with modern artistic techniques. From <strong>engraved wood gifts</strong> to <strong>personalized leather accessories</strong>, we have something for everyone.</p>
         
-        <h3>Why Choose Yokebud Crafts?</h3>
+        <h3>Why Choose Yokebud Craft?</h3>
         <ul>
           <li><strong>Precision and Quality:</strong> Advanced laser systems and high-quality apparel materials.</li>
           <li><strong>Local Expertise:</strong> Proudly based in Helsinki, serving all of Finland.</li>
@@ -406,10 +406,10 @@ async function ensureSeoSchema() {
     if (laserSeo.length === 0) {
       const laserTitle = 'Premium Laser Engraving Services in Finland';
       const laserContent = `
-        <p>Yokebud Crafts is the leading provider of <strong>laser engraving Finland</strong>, offering unparalleled precision and artistic flair for all your customization needs. Our <strong>laser cutting products</strong> and engraving services are designed to meet the highest standards of quality, whether you're looking for a single personalized gift or large-scale corporate branding solutions.</p>
+        <p>Yokebud Craft is the leading provider of <strong>laser engraving Finland</strong>, offering unparalleled precision and artistic flair for all your customization needs. Our <strong>laser cutting products</strong> and engraving services are designed to meet the highest standards of quality, whether you're looking for a single personalized gift or large-scale corporate branding solutions.</p>
         
         <h3>Why Laser Engraving?</h3>
-        <p>Laser engraving is a permanent, high-precision method of marking materials. Unlike traditional printing, <strong>engraved gifts</strong> do not fade or wear off over time. At Yokebud Crafts, we use state-of-the-art CO2 and Fiber lasers to work with wood, leather, acrylic, metal, and more. Our <strong>laser cutting services</strong> allow us to create intricate shapes and designs that were once thought impossible.</p>
+        <p>Laser engraving is a permanent, high-precision method of marking materials. Unlike traditional printing, <strong>engraved gifts</strong> do not fade or wear off over time. At Yokebud Craft, we use state-of-the-art CO2 and Fiber lasers to work with wood, leather, acrylic, metal, and more. Our <strong>laser cutting services</strong> allow us to create intricate shapes and designs that were once thought impossible.</p>
         
         <h3>Our Laser Engraving Capabilities in Helsinki</h3>
         <p>Based in the heart of <strong>Helsinki</strong>, we serve clients across Finland with fast turnaround times and exceptional attention to detail. Our services include:</p>
@@ -468,9 +468,6 @@ async function ensureCustomizationSchema() {
     }
     if (!productColNames.has('customization_dimensions')) {
       await connection.query('ALTER TABLE products ADD COLUMN customization_dimensions JSON NULL');
-    }
-    if (!productColNames.has('allow_customer_size_adjustment')) {
-      await connection.query('ALTER TABLE products ADD COLUMN allow_customer_size_adjustment TINYINT(1) DEFAULT 0 AFTER customization_dimensions');
     }
 
     console.log('✅ Customization schema updated successfully.');
@@ -568,33 +565,6 @@ async function ensureProductStockStatusSchema() {
 
 ensureProductStockStatusSchema();
 
-async function ensureProductMoqSchema() {
-  let connection;
-  try {
-    connection = await pool.getConnection();
-    const [cols] = await connection.query(
-      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
-       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products'`,
-      [process.env.DB_NAME]
-    );
-
-    const columnNames = new Set((cols || []).map(c => c.COLUMN_NAME));
-
-    if (!columnNames.has('moq')) {
-      await connection.query(
-        'ALTER TABLE products ADD COLUMN moq INT DEFAULT 1'
-      );
-      console.log('Added moq column to products table');
-    }
-  } catch (e) {
-    console.warn('Product moq schema check failed:', e.message || e);
-  } finally {
-    if (connection) connection.release();
-  }
-}
-
-ensureProductMoqSchema();
-
 async function ensureSeoContentSchema() {
   let connection;
   try {
@@ -615,7 +585,7 @@ async function ensureSeoContentSchema() {
     const [rows] = await connection.query('SELECT * FROM seo_content WHERE page_name = "home"');
     if (rows.length === 0) {
       await connection.query(
-        'INSERT INTO seo_content (page_name, title, content) VALUES ("home", "Welcome to Yokebud Crafts", "<p>Your SEO content here...</p>")'
+        'INSERT INTO seo_content (page_name, title, content) VALUES ("home", "Welcome to Yokebud Craft", "<p>Your SEO content here...</p>")'
       );
     }
   } catch (e) {
@@ -706,7 +676,40 @@ async function ensureSitemapSchema() {
   }
 }
 
-ensureSitemapSchema();
+async function ensurePopupsSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    
+    await connection.query(
+      `CREATE TABLE IF NOT EXISTS popups (
+        id INT NOT NULL AUTO_INCREMENT,
+        title VARCHAR(255) NOT NULL,
+        image_url TEXT,
+        description TEXT,
+        link_url TEXT,
+        link_text VARCHAR(255) DEFAULT 'Learn More',
+        auto_close_duration INT DEFAULT 10,
+        start_date DATE,
+        end_date DATE,
+        is_active BOOLEAN DEFAULT TRUE,
+        position VARCHAR(20) DEFAULT 'center',
+        display_delay INT DEFAULT 3,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id)
+      )`
+    );
+    
+    console.log('✅ Popups schema checked/created successfully');
+  } catch (e) {
+    console.warn('⚠️ Popups schema check failed:', e.message);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensurePopupsSchema();
 
 const { exec } = require('child_process');
 
@@ -1150,7 +1153,7 @@ const renderThemedEmail = ({
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <meta name="color-scheme" content="light">
       <meta name="supported-color-schemes" content="light">
-      <title>${title || 'Yokebud Crafts'}</title>
+      <title>${title || 'Yokebud Craft'}</title>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
       <style>
         /* Reset and Base Styles */
@@ -1441,8 +1444,8 @@ const renderThemedEmail = ({
         <!-- Header -->
         <div class="email-header">
           <div class="header-content">
-            <div class="brand-logo">YOKEBUD CRAFTS</div>
-            <h1 class="email-title">${title || 'Yokebud Crafts'}</h1>
+            <div class="brand-logo">Yokebud Craft</div>
+            <h1 class="email-title">${title || 'Yokebud Craft'}</h1>
             ${subtitle ? `<p class="email-subtitle">${subtitle}</p>` : ''}
           </div>
         </div>
@@ -1513,13 +1516,13 @@ const renderThemedEmail = ({
             ` : ''}
             
             <div class="contact-info">
-              <p>Yokebud Crafts</p>
+              <p>Yokebud Craft</p>
               <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
               <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
             </div>
             
             <div class="copyright">
-              &copy; ${new Date().getFullYear()} Yokebud Crafts. All rights reserved.
+              &copy; ${new Date().getFullYear()} Yokebud Craft. All rights reserved.
             </div>
           </div>
         </div>
@@ -1548,7 +1551,7 @@ const renderAdminOtpEmail = (otp) => {
       
       <div class="email-card" style="text-align: center; padding: 40px 20px;">
         <p class="content-text" style="margin-bottom: 20px;">
-          Use this OTP to login to your Yokebud Crafts account.
+          Use this OTP to login to your Yokebud Craft account.
         </p>
 
         <div style="background: #1A202C; border-radius: 12px; padding: 20px; display: inline-block; margin: 0 auto 20px auto; min-width: 200px;">
@@ -1569,7 +1572,7 @@ const renderAdminOtpEmail = (otp) => {
   `;
 
   return renderThemedEmail({
-    title: 'Yokebud Crafts Admin',
+    title: 'Yokebud Craft Admin',
     subtitle: 'Admin Access Verification',
     contentHtml,
     footerNote: 'This code was generated for Admin access.'
@@ -1612,7 +1615,7 @@ const renderWelcomeEmail = (email, token) => {
   
   const contentHtml = `
     <div class="content-section">
-      <h2 class="content-title">Welcome to Yokebud Crafts! </h2>
+      <h2 class="content-title">Welcome to Yokebud Craft! </h2>
       <p class="content-text">
         Thank you for joining our exclusive community of fashion enthusiasts and wholesale buyers. 
         We're thrilled to have you on board!
@@ -1637,7 +1640,7 @@ const renderWelcomeEmail = (email, token) => {
   `;
   
   return renderThemedEmail({
-    title: 'Welcome to Yokebud Crafts',
+    title: 'Welcome to Yokebud Craft',
     subtitle: 'Your journey to premium wholesale fashion begins here',
     contentHtml,
     primaryCtaText: 'Explore Our Collection',
@@ -1656,7 +1659,7 @@ const renderAccountWelcomeEmail = (name) => {
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">Welcome${name ? `, ${name}` : ''}! 🎉</h2>
-        <p class="content-text">Your Yokebud Crafts account has been created successfully.</p>
+        <p class="content-text">Your Yokebud Craft account has been created successfully.</p>
       </div>
 
       <div class="email-card">
@@ -1672,7 +1675,7 @@ const renderAccountWelcomeEmail = (name) => {
   `;
 
   return renderThemedEmail({
-    title: 'Welcome to Yokebud Crafts',
+    title: 'Welcome to Yokebud Craft',
     subtitle: 'We are excited to have you here',
     contentHtml,
     primaryCtaText: 'Go to Your Profile',
@@ -1762,7 +1765,7 @@ const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
       
       <p class="content-text">
         We've received your order and are preparing it for shipment. You'll receive another email 
-        with tracking information once your order ships. Thank you for choosing Yokebud Crafts!
+        with tracking information once your order ships. Thank you for choosing Yokebud Craft!
       </p>
     </div>
   `;
@@ -1894,7 +1897,7 @@ const renderManualNotificationEmail = (orderId, customerInfo) => {
     contentHtml,
     primaryCtaText: 'View Order',
     primaryCtaUrl: `${process.env.PUBLIC_SITE_URL || 'http://localhost:5173'}/UserProfile`,
-    footerNote: 'Thank you for choosing Yokebud Crafts!'
+    footerNote: 'Thank you for choosing Yokebud Craft!'
   });
 };
 
@@ -1949,11 +1952,11 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
   
   return renderThemedEmail({
     title: 'New Subscriber Alert',
-    subtitle: 'Yokebud Crafts Newsletter System',
+    subtitle: 'Yokebud Craft Newsletter System',
     contentHtml,
     primaryCtaText: 'View Subscriber Dashboard',
     primaryCtaUrl: `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}`,
-    footerNote: 'This is an automated notification from Yokebud Crafts Newsletter System'
+    footerNote: 'This is an automated notification from Yokebud Craft Newsletter System'
   });
 };
 
@@ -2046,7 +2049,7 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
       </div>
       
       <p class="content-text">
-        Hello! Here are the latest handpicked products and exclusive discounts from Yokebud Crafts. 
+        Hello! Here are the latest handpicked products and exclusive discounts from Yokebud Craft. 
         Whether you're looking for custom laser engraved gifts or premium handmade art, we've got something special for you this week.
       </p>
       
@@ -2088,7 +2091,7 @@ const renderUnsubscribeConfirmationEmail = (email) => {
       <div class="email-card">
         <p class="content-text" style="text-align: center; margin: 0;">
           You will no longer receive weekly product updates, exclusive offers, 
-          or fashion insights from Yokebud Crafts.
+          or fashion insights from Yokebud Craft.
         </p>
       </div>
       
@@ -2113,8 +2116,8 @@ const renderUnsubscribeConfirmationEmail = (email) => {
 const renderOTPEmail = (email, otp, type = 'registration') => {
   const subjectText = type === 'registration' ? 'Verify Your Email Address' : 'Login Verification';
   const descriptionText = type === 'registration' 
-    ? 'Thank you for signing up with Yokebud Crafts!' 
-    : 'Use this OTP to login to your Yokebud Crafts account.';
+    ? 'Thank you for signing up with Yokebud Craft!' 
+    : 'Use this OTP to login to your Yokebud Craft account.';
   
   // Standalone HTML without external fonts or images
   return `
@@ -2123,7 +2126,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${subjectText} - Yokebud Crafts</title>
+      <title>${subjectText} - Yokebud Craft</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -2250,7 +2253,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
     <body>
       <div class="email-container">
         <div class="email-header">
-          <div class="brand-logo">YOKEBUD CRAFTS</div>
+          <div class="brand-logo">Yokebud Craft</div>
           <h1 class="email-title">${subjectText}</h1>
           <p class="email-subtitle">Secure Verification Required</p>
         </div>
@@ -2300,12 +2303,12 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
             </a>
           </div>
           <div class="contact-info">
-            <p><strong>Yokebud Crafts</strong></p>
+            <p><strong>Yokebud Craft</strong></p>
             <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
             <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
           </div>
           <div class="copyright">
-            &copy; ${new Date().getFullYear()} Yokebud Crafts. All rights reserved.
+            &copy; ${new Date().getFullYear()} Yokebud Craft. All rights reserved.
           </div>
         </div>
       </div>
@@ -2447,7 +2450,7 @@ const renderContactFormNotificationEmail = (name, email, whatsapp, message) => {
     contentHtml,
     primaryCtaText: 'Open Admin Inbox',
     primaryCtaUrl: adminUrl,
-    footerNote: 'This is an automated notification from Yokebud Crafts website.'
+    footerNote: 'This is an automated notification from Yokebud Craft website.'
   });
 };
 
@@ -2458,7 +2461,7 @@ const renderContactFormConfirmationEmail = (name, email, message) => {
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">Message Received! ✨</h2>
         <p class="content-text">
-          Thank you for contacting Yokebud Crafts
+          Thank you for contacting Yokebud Craft
         </p>
       </div>
       
@@ -2511,7 +2514,7 @@ const renderInquiryNotificationEmail = (recipientName, senderName, inquiryNumber
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">${title}</h2>
         <p class="content-text">
-          ${isToAdmin ? `Customer <strong>${senderName}</strong> has sent a new message.` : `You have received a new message from Yokebud Crafts support.`}
+          ${isToAdmin ? `Customer <strong>${senderName}</strong> has sent a new message.` : `You have received a new message from Yokebud Craft support.`}
         </p>
       </div>
       
@@ -2601,9 +2604,9 @@ const renderPasswordResetEmail = (email, resetToken) => {
 const sendWelcomeEmail = async (email, token) => {
   const html = renderWelcomeEmail(email, token);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
     to: email,
-    subject: '✅ Subscription Confirmed — Yokebud Crafts Newsletter',
+    subject: '✅ Subscription Confirmed — Yokebud Craft Newsletter',
     html,
     priority: 'high'
   };
@@ -2622,9 +2625,9 @@ const sendWelcomeEmail = async (email, token) => {
 const sendAccountWelcomeEmail = async (email, name) => {
   const html = renderAccountWelcomeEmail(name);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <welcome@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Craft <welcome@yokebud.com>',
     to: email,
-    subject: '🎉 Welcome to Yokebud Crafts',
+    subject: '🎉 Welcome to Yokebud Craft',
     html,
     priority: 'normal'
   };
@@ -2642,9 +2645,9 @@ const sendAccountWelcomeEmail = async (email, name) => {
 const sendOrderConfirmationEmail = async (orderId, customerInfo, items, totals) => {
   const html = renderOrderConfirmationEmail(orderId, customerInfo, items, totals);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
     to: customerInfo.email,
-    subject: `✅ Order Confirmed #${orderId} - Yokebud Crafts`,
+    subject: `✅ Order Confirmed #${orderId} - Yokebud Craft`,
     html,
     priority: 'high'
   };
@@ -2663,7 +2666,7 @@ const sendOrderConfirmationEmail = async (orderId, customerInfo, items, totals) 
 const sendNewSubscriberNotification = async (subscriberEmail) => {
   const html = renderNewSubscriberNotificationEmail(subscriberEmail);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts System <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Craft System <yokebud@gmail.com>',
     to: 'yokebud@gmail.com',
     subject: `🎯 New Newsletter Subscriber: ${subscriberEmail}`,
     html,
@@ -2684,9 +2687,9 @@ const sendNewSubscriberNotification = async (subscriberEmail) => {
 const sendWeeklyNewsletter = async (subscriber, products) => {
   const html = renderWeeklyNewsletterEmail(subscriber, products, subscriber.subscription_token);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
     to: subscriber.email,
-    subject: `🚀 Yokebud Crafts Weekly Update - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+    subject: `🚀 Yokebud Craft Weekly Update - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
     html,
     priority: 'normal'
   };
@@ -2705,9 +2708,9 @@ const sendWeeklyNewsletter = async (subscriber, products) => {
 const sendUnsubscribeConfirmation = async (email) => {
   const html = renderUnsubscribeConfirmationEmail(email);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <newsletter@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Craft <newsletter@yokebud.com>',
     to: email,
-    subject: '👋 You have been unsubscribed from Yokebud Crafts Newsletter',
+    subject: '👋 You have been unsubscribed from Yokebud Craft Newsletter',
     html,
     priority: 'normal'
   };
@@ -2726,13 +2729,13 @@ const sendUnsubscribeConfirmation = async (email) => {
 const sendOTPEmail = async (email, otp, type = 'registration', customFrom = null, retries = 3) => {
   const html = renderOTPEmail(email, otp, type);
   const subject = type === 'registration' 
-    ? 'Verify Your Email - Yokebud Crafts' 
+    ? 'Verify Your Email - Yokebud Craft' 
     : type === 'admin_login'
-    ? '🔐 Admin Login OTP - Yokebud Crafts'
-    : 'Login OTP - Yokebud Crafts';
+    ? '🔐 Admin Login OTP - Yokebud Craft'
+    : 'Login OTP - Yokebud Craft';
   
   const mailOptions = {
-    from: customFrom || process.env.EMAIL_FROM || `Yokebud Crafts Security <${process.env.EMAIL_USER}>`,
+    from: customFrom || process.env.EMAIL_FROM || `Yokebud Craft Security <${process.env.EMAIL_USER}>`,
     to: email,
     subject,
     html, // Add HTML content
@@ -2785,7 +2788,7 @@ const sendOTPEmail = async (email, otp, type = 'registration', customFrom = null
 const sendOrderStatusUpdateEmail = async (orderId, status, customerInfo, trackingNumber = null) => {
   const html = renderOrderStatusUpdateEmail(orderId, status, customerInfo, trackingNumber);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || `Yokebud Crafts <${process.env.EMAIL_USER}>`,
+    from: process.env.EMAIL_FROM || `Yokebud Craft <${process.env.EMAIL_USER}>`,
     to: customerInfo.email,
     subject: `📦 Order Status Update #${orderId} - ${status.charAt(0).toUpperCase() + status.slice(1)}`,
     html,
@@ -2806,7 +2809,7 @@ const sendOrderStatusUpdateEmail = async (orderId, status, customerInfo, trackin
 const sendAdminNewOrderEmail = async (orderId, customerInfo, items, totals) => {
   const html = renderAdminNewOrderEmail(orderId, customerInfo, items, totals);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts System <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Craft System <yokebud@gmail.com>',
     to: 'yokebud@gmail.com',
     subject: `🚀 New Order Received: #${orderId}`,
     html,
@@ -2827,9 +2830,9 @@ const sendAdminNewOrderEmail = async (orderId, customerInfo, items, totals) => {
 const sendManualNotificationEmail = async (orderId, customerInfo) => {
   const html = renderManualNotificationEmail(orderId, customerInfo);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
     to: customerInfo.email,
-    subject: `✨ Update regarding Order #${orderId} - Yokebud Crafts`,
+    subject: `✨ Update regarding Order #${orderId} - Yokebud Craft`,
     html,
     priority: 'normal'
   };
@@ -2848,10 +2851,10 @@ const sendManualNotificationEmail = async (orderId, customerInfo) => {
 const sendContactFormNotification = async (name, email, whatsapp, message) => {
   const html = renderContactFormNotificationEmail(name, email, whatsapp, message);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || `Yokebud Crafts <${process.env.EMAIL_USER}>`,
+    from: process.env.EMAIL_FROM || `Yokebud Craft <${process.env.EMAIL_USER}>`,
     replyTo: email,
     to: 'yokebud@gmail.com',
-    subject: `📩 New Contact Message from ${name} - Yokebud Crafts`,
+    subject: `📩 New Contact Message from ${name} - Yokebud Craft`,
     html,
     priority: 'high'
   };
@@ -2870,9 +2873,9 @@ const sendContactFormNotification = async (name, email, whatsapp, message) => {
 const sendContactFormConfirmation = async (name, email, message) => {
   const html = renderContactFormConfirmationEmail(name, email, message);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
     to: email,
-    subject: '✨ Thank you for contacting Yokebud Crafts',
+    subject: '✨ Thank you for contacting Yokebud Craft',
     html,
     priority: 'normal'
   };
@@ -2892,7 +2895,7 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
   const isToAdmin = senderType === 'user';
   const recipientEmail = isToAdmin ? 'yokebud@gmail.com' : inquiry.customer_email;
   const recipientName = isToAdmin ? 'Admin' : inquiry.customer_name;
-  const senderName = isToAdmin ? inquiry.customer_name : 'Yokebud Crafts Support';
+  const senderName = isToAdmin ? inquiry.customer_name : 'Yokebud Craft Support';
   
   // Parse product name safely
   let productName = 'Product Inquiry';
@@ -2907,10 +2910,10 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
   
   const subject = isToAdmin 
     ? `📩 New Message: Inquiry #${inquiry.inquiry_number} - ${productName}`
-    : `💬 New Message regarding Inquiry #${inquiry.inquiry_number} - Yokebud Crafts`;
+    : `💬 New Message regarding Inquiry #${inquiry.inquiry_number} - Yokebud Craft`;
 
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
     to: recipientEmail,
     subject: subject,
     html,
@@ -2931,9 +2934,9 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
 const sendPasswordResetEmail = async (email, resetToken) => {
   const html = renderPasswordResetEmail(email, resetToken);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts Security <security@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Craft Security <security@yokebud.com>',
     to: email,
-    subject: '🔐 Password Reset Request - Yokebud Crafts',
+    subject: '🔐 Password Reset Request - Yokebud Craft',
     html,
     priority: 'high'
   };
@@ -2974,7 +2977,7 @@ const generateProductSEO = (name, description, price, imageUrls) => {
     "image": imageUrls || [],
     "brand": {
       "@type": "Brand",
-      "name": "Yokebud Crafts"
+      "name": "Yokebud Craft"
     },
     "offers": {
       "@type": "Offer",
@@ -3488,10 +3491,10 @@ const checkUnreadMessageReminders = async () => {
         const content = `<p style="margin:0 0 12px 0;color:${EMAIL_THEME.textLight};">A new message has remained unviewed for over 1 hour in your conversation about <span style="color:${EMAIL_THEME.text};font-weight:700;">${product.product_name || 'your product'}</span>.</p><div style="background:#0D0D0D;border:1px solid #1a1a1a;border-radius:12px;padding:16px;margin-top:8px;"><div style="color:${EMAIL_THEME.textLight};font-size:12px;margin-bottom:6px;">Message preview</div><div style="color:${EMAIL_THEME.text};line-height:1.6;">${preview || 'No text'}</div></div>`;
         const clientUrl = `${process.env.CLIENT_URL || 'https://www.yokebud.fi'}/messages`;
         const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin/inquiries'}`;
-        const userHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
-        const adminHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
-        const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
-        const mailAdmin = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: 'yokebud@gmail.com', subject: `${subject} - ${inquiry.customer_name || ''}`, html: adminHtml };
+        const userHtml = renderThemedEmail({ title: 'Yokebud Craft', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
+        const adminHtml = renderThemedEmail({ title: 'Yokebud Craft', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
+        const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
+        const mailAdmin = { from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>', to: 'yokebud@gmail.com', subject: `${subject} - ${inquiry.customer_name || ''}`, html: adminHtml };
         try { await sendMail(mailUser); } catch {}
         try { await sendMail(mailAdmin); } catch {}
         messages[i] = { ...msg, reminder_sent: true };
@@ -5201,7 +5204,7 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
     }
 
     const toSlug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    let inquiryFolder = `yokebud crafts/inquiries/${inquiryId}`;
+    let inquiryFolder = `Yokebud Craft/inquiries/${inquiryId}`;
     try {
       const uid = inquiries[0] && inquiries[0].user_id;
       if (uid) {
@@ -5214,7 +5217,7 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
           name = full || name;
         }
         const userSlug = toSlug(name);
-        inquiryFolder = `yokebud crafts/users/${userSlug}/inquiries/${inquiryId}`;
+        inquiryFolder = `Yokebud Craft/users/${userSlug}/inquiries/${inquiryId}`;
       }
     } catch (_) {}
 
@@ -5319,7 +5322,7 @@ app.get('/debug/email-preview', (req, res) => {
     <p style="margin:0;color:${EMAIL_THEME.textLight};line-height:1.7;">This is a sample preview for the current email template without logo.</p>
   </div>`;
   const html = renderThemedEmail({
-    title: 'Yokebud Crafts',
+    title: 'Yokebud Craft',
     subtitle: 'Template Preview',
     contentHtml: sampleContent,
     primaryCtaText: 'Visit Website',
@@ -7176,6 +7179,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       name,
       description,
       price,
+      discounted_price,
       categories,
       stock,
       moq,
@@ -7184,7 +7188,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       sku,
       shipping,
       warranty,
-      discount_ranges,
+      bulk_discount,
       sizes,
       colors,
       tags,
@@ -7203,8 +7207,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       stock_status,
       customization_type,
       customization_images,
-      customization_dimensions,
-      allow_customer_size_adjustment
+      customization_dimensions
     } = req.body;
     
     const validation = validateProductPayload(req.body);
@@ -7216,6 +7219,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     }
 
     const finalPrice = parseFloat(price);
+    const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
 
     // Process sizes
     const processedSizes = processSizes(sizes);
@@ -7248,7 +7252,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     // Insert product into database
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageArray);
-    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, discount_ranges });
+    const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount });
 
     // Debug: log customization_mode for incoming create
     console.log('CREATE product - customization_mode:', req.body.customization_mode);
@@ -7257,14 +7261,15 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         product_name,
         product_description,
         price,
+        discounted_price,
         category,
         stock,
-        moq,
         material,
         care_instructions,
         sku,
         shipping_info,
         warranty,
+        bulk_discount,
         sizes,
         colors,
         tags,
@@ -7287,21 +7292,21 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_type,
         customization_mode,
         customization_images,
-        customization_dimensions,
-        allow_customer_size_adjustment
+        customization_dimensions
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
         finalPrice,
+        finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
-        moq ? parseInt(moq) : 1,
         material,
         care,
         sku,
         shipping,
         warranty,
+        bulk_discount,
         JSON.stringify(processedSizes),
         JSON.stringify(colors),
         JSON.stringify(tags),
@@ -7324,8 +7329,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_type || 'Apparels',
         req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
-        customization_dimensions ? JSON.stringify(customization_dimensions) : null,
-        allow_customer_size_adjustment ? 1 : 0
+        customization_dimensions ? JSON.stringify(customization_dimensions) : null
       ]
     );
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
@@ -7364,7 +7368,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const {
       name,
       description,
-      price, // This will be the base price
+      price, // This will be max_price
+      min_price, // This can be custom min price
+      discounted_price, // For setting min_price
       categories,
       stock,
       moq,
@@ -7373,7 +7379,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       sku,
       shipping,
       warranty,
-      discount_ranges,
+      bulk_discount,
       sizes,
       colors,
       tags,
@@ -7385,8 +7391,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       stock_status,
       customization_type,
       customization_images,
-      customization_dimensions,
-      allow_customer_size_adjustment
+      customization_dimensions
     } = req.body;
 
     const validation = validateProductPayload({
@@ -7408,6 +7413,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     }
 
     const finalPrice = parseFloat(price);
+    const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
 
     // Process sizes
     const processedSizes = processSizes(sizes);
@@ -7462,7 +7468,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageUrls);
-    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, discount_ranges });
+    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, bulk_discount });
 
     // Auto-generate SEO fields if not provided
     const seo = generateProductSEO(name, description, finalPrice, imageUrls);
@@ -7476,14 +7482,15 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         product_name = ?,
         product_description = ?,
         price = ?,
+        discounted_price = ?,
         category = ?,
         stock = ?,
-        moq = ?,
         material = ?,
         care_instructions = ?,
         sku = ?,
         shipping_info = ?,
         warranty = ?,
+        bulk_discount = ?,
         sizes = ?,
         colors = ?,
         tags = ?,
@@ -7507,21 +7514,21 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         customization_mode = ?,
         customization_images = ?,
         customization_dimensions = ?,
-        allow_customer_size_adjustment = ?,
         updated_at = NOW()
       WHERE id = ?`,
       [
         name,
         description,
         finalPrice,
+        finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
-        moq ? parseInt(moq) : 1,
         material,
         care,
         sku,
         shipping,
         warranty,
+        bulk_discount,
         JSON.stringify(processedSizes),
         JSON.stringify(colors),
         JSON.stringify(tags),
@@ -7545,7 +7552,6 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
         customization_dimensions ? JSON.stringify(customization_dimensions) : null,
-        allow_customer_size_adjustment ? 1 : 0,
         productId
       ]
     );
@@ -7630,16 +7636,19 @@ app.get('/api/products/:id', async (req, res) => {
       product_description: product.product_description,
       product_details: product.product_details || product.product_description,
       price: product.price,
+      min_price: priceRange && priceRange.min != null ? Number(priceRange.min) : (product.discounted_price || product.price),
+      max_price: priceRange && priceRange.max != null ? Number(priceRange.max) : product.price,
+      discounted_price: product.discounted_price,
       categories: categories,
       category: categories[0],
       stock: product.stock,
-      moq: product.moq || 1,
+      moq: product.moq,
       material: product.material,
       care_instructions: product.care_instructions,
       sku: product.sku,
       shipping_info: product.shipping_info,
       warranty: product.warranty,
-      discount_ranges: meta && meta.discount_ranges ? meta.discount_ranges : [],
+      bulk_discount: product.bulk_discount,
       sizes: JSON.parse(product.sizes || '[]'),
       colors: JSON.parse(product.colors || '[]'),
       product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]'),
@@ -7660,7 +7669,6 @@ app.get('/api/products/:id', async (req, res) => {
       customization_images: product.customization_images ? (typeof product.customization_images === 'string' ? JSON.parse(product.customization_images) : product.customization_images) : null,
       customization_dimensions: product.customization_dimensions ? (typeof product.customization_dimensions === 'string' ? JSON.parse(product.customization_dimensions) : product.customization_dimensions) : null,
       customization_mode: product.customization_mode || null,
-      allow_customer_size_adjustment: product.allow_customer_size_adjustment ? 1 : 0,
       seo_title: product.seo_title,
       seo_description: product.seo_description,
       seo_keywords: product.seo_keywords,
@@ -7737,6 +7745,7 @@ app.get('/api/products', async (req, res) => {
         product_name: product.product_name,
         product_description: product.product_details || product.product_description,
         price: product.price,
+        discounted_price: product.discounted_price,
         categories,
         category: categories[0],
         colors: JSON.parse(product.colors || '[]'),
@@ -7744,6 +7753,8 @@ app.get('/api/products', async (req, res) => {
         product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]'),
         tags: JSON.parse(product.tags || '[]'),
         features: JSON.parse(product.features || '[]'),
+        min_price: priceRange && priceRange.min != null ? Number(priceRange.min) : (product.discounted_price || product.price),
+        max_price: priceRange && priceRange.max != null ? Number(priceRange.max) : product.price,
         slug: product.slug,
         sitemap_path: sitemapPath,
         status: product.status,
@@ -7758,13 +7769,7 @@ app.get('/api/products', async (req, res) => {
         thumbnail: product.thumbnail,
         stock: product.stock,
         sku: product.sku,
-        moq: product.moq || 1,
-        discount_ranges: meta && meta.discount_ranges ? meta.discount_ranges : [],
         customization_mode: product.customization_mode || null,
-        customization_type: product.customization_type,
-        customization_images: product.customization_images ? (typeof product.customization_images === 'string' ? JSON.parse(product.customization_images) : product.customization_images) : null,
-        customization_dimensions: product.customization_dimensions ? (typeof product.customization_dimensions === 'string' ? JSON.parse(product.customization_dimensions) : product.customization_dimensions) : null,
-        allow_customer_size_adjustment: product.allow_customer_size_adjustment ? 1 : 0,
         created_at: product.created_at,
         updated_at: product.updated_at,
         rating: sum.rating,
@@ -7867,7 +7872,7 @@ app.post('/api/products/:id/reviews', async (req, res) => {
     let mediaUrls = [];
     const uploadBuffer = (buf) => new Promise((resolve, reject) => {
       try {
-        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud crafts/reviews', resource_type: 'auto' }, (err, result) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: 'Yokebud Craft/reviews', resource_type: 'auto' }, (err, result) => {
           if (err) return reject(err);
           resolve(result);
         });
@@ -7881,7 +7886,7 @@ app.post('/api/products/:id/reviews', async (req, res) => {
       for (const f of arr) {
         if (f.tempFilePath) {
           try {
-            const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud crafts/reviews', resource_type: 'auto' });
+            const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'Yokebud Craft/reviews', resource_type: 'auto' });
             results.push(r);
           } catch {}
         } else if (f.data) {
@@ -7950,7 +7955,7 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
     let mediaUrls = [];
     const uploadBuffer = (buf) => new Promise((resolve, reject) => {
       try {
-        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud crafts/reviews', resource_type: 'auto' }, (err, result) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: 'Yokebud Craft/reviews', resource_type: 'auto' }, (err, result) => {
           if (err) return reject(err);
           resolve(result);
         });
@@ -7963,7 +7968,7 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
       const results = [];
       for (const f of arr) {
         if (f.tempFilePath) {
-          try { const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud crafts/reviews', resource_type: 'auto' }); results.push(r); } catch {}
+          try { const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'Yokebud Craft/reviews', resource_type: 'auto' }); results.push(r); } catch {}
         } else if (f.data) {
           try { const r = await uploadBuffer(f.data); results.push(r); } catch {}
         }
@@ -8387,7 +8392,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
       description: String(p.product_description || p.product_details || ''),
       sku: p.sku || String(p.id || ''),
       image: photos.map(absoluteImageUrl).slice(0, 4),
-      brand: { '@type': 'Brand', name: 'Yokebud Crafts' },
+      brand: { '@type': 'Brand', name: 'Yokebud Craft' },
       offers: {
         '@type': 'Offer',
         priceCurrency: 'EUR',
@@ -8398,14 +8403,14 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     };
 
     const tags = `
-      <title>${escapeAttr(name)} | Yokebud Crafts</title>
+      <title>${escapeAttr(name)} | Yokebud Craft</title>
       <meta name="description" content="${escapeAttr(desc)}">
       <link rel="canonical" href="${canonicalUrl}">
       <meta property="og:type" content="product">
       <meta property="og:title" content="${escapeAttr(name)}">
       <meta property="og:description" content="${escapeAttr(desc)}">
       <meta property="og:url" content="${canonicalUrl}">
-      <meta property="og:site_name" content="Yokebud Crafts">
+      <meta property="og:site_name" content="Yokebud Craft">
       <meta property="og:image" content="${firstImage}">
       <meta name="twitter:card" content="summary_large_image">
       <meta name="twitter:title" content="${escapeAttr(name)}">
@@ -8569,7 +8574,7 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
     const productSlugHint = req.body && (req.body.productSlug || req.body.slug);
     const productNameHint = req.body && (req.body.productName || req.body.name);
     const toSlug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    let targetFolder = 'yokebud crafts/products';
+    let targetFolder = 'Yokebud Craft/products';
     if (productId) {
       try {
         const conn = await pool.getConnection();
@@ -9586,7 +9591,7 @@ async function ensureBlogsSchema() {
         {
           title: 'Best Laser Engraving Gift Ideas in Finland',
           excerpt: 'Discover the most unique and thoughtful personalized gift ideas using professional laser engraving technology in Finland.',
-          content: '<p>Looking for the perfect gift? <strong>Laser engraving Finland</strong> offers a unique way to personalize gifts for your loved ones. From <strong>custom engraved wood</strong> frames to <strong>personalized leather wallets</strong>, the possibilities are endless. At Yokebud Crafts, we specialize in creating one-of-a-kind treasures that are both beautiful and durable. Learn more about our <a href="/?category=laser-engraving">laser engraving services</a> today.</p>',
+          content: '<p>Looking for the perfect gift? <strong>Laser engraving Finland</strong> offers a unique way to personalize gifts for your loved ones. From <strong>custom engraved wood</strong> frames to <strong>personalized leather wallets</strong>, the possibilities are endless. At Yokebud Craft, we specialize in creating one-of-a-kind treasures that are both beautiful and durable. Learn more about our <a href="/?category=laser-engraving">laser engraving services</a> today.</p>',
           category: 'Gift Ideas',
           slug: 'best-laser-engraving-gift-ideas-finland'
         },
@@ -9600,14 +9605,14 @@ async function ensureBlogsSchema() {
         {
           title: 'Laser Cutting vs Traditional Crafting',
           excerpt: 'Comparing modern laser cutting technology with traditional handcrafted methods for creating custom wood and leather products.',
-          content: '<p>While traditional crafting methods have their charm, <strong>laser cutting Helsinki</strong> brings a level of precision and consistency that is hard to match. By combining <strong>handmade in Finland</strong> quality with modern laser technology, Yokebud Crafts delivers the best of both worlds. Our <strong>laser-cut wooden crafts</strong> showcase intricate designs that are durable and perfectly finished. Check out our <a href="/?category=laser-cutting-products">laser cutting products</a>.</p>',
+          content: '<p>While traditional crafting methods have their charm, <strong>laser cutting Helsinki</strong> brings a level of precision and consistency that is hard to match. By combining <strong>handmade in Finland</strong> quality with modern laser technology, Yokebud Craft delivers the best of both worlds. Our <strong>laser-cut wooden crafts</strong> showcase intricate designs that are durable and perfectly finished. Check out our <a href="/?category=laser-cutting-products">laser cutting products</a>.</p>',
           category: 'Craftsmanship',
           slug: 'laser-cutting-vs-traditional-crafting'
         },
         {
           title: 'Personalized Engraved Gift Trends Finland',
           excerpt: 'Stay up to date with the latest trends in personalized and engraved gifts in the Finnish market for 2026.',
-          content: '<p>Personalization is more popular than ever in Finland. The latest trends show a high demand for <strong>custom engraved gifts</strong> that focus on sustainability and local craftsmanship. From <strong>engraved stone decor</strong> to <strong>personalized apparel</strong>, Finnish consumers value quality and uniqueness. Stay ahead of the curve with Yokebud Crafts, your hub for <strong>laser engraving Finland</strong>. Discover our <a href="/?category=laser-engraving">latest arrivals</a>.</p>',
+          content: '<p>Personalization is more popular than ever in Finland. The latest trends show a high demand for <strong>custom engraved gifts</strong> that focus on sustainability and local craftsmanship. From <strong>engraved stone decor</strong> to <strong>personalized apparel</strong>, Finnish consumers value quality and uniqueness. Stay ahead of the curve with Yokebud Craft, your hub for <strong>laser engraving Finland</strong>. Discover our <a href="/?category=laser-engraving">latest arrivals</a>.</p>',
           category: 'Trends',
           slug: 'personalized-engraved-gift-trends-finland'
         }
@@ -10200,7 +10205,7 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
             // Inject Meta Tags
             const metaTags = `
     <!-- Dynamic Meta Tags for ${name} -->
-    <title>${name} | Yokebud Crafts</title>
+    <title>${name} | Yokebud Craft</title>
     <meta name="description" content="${desc}" />
     <meta property="og:title" content="${name}" />
     <meta property="og:description" content="${desc}" />
@@ -11044,6 +11049,151 @@ app.post('/api/admin/sitemap/revert/:id', requireAdminAuth, async (req, res) => 
       connection.release();
     }
     res.status(500).json({ success: false, message: 'Failed to revert sitemap: ' + error.message });
+  }
+});
+
+// ==================== POPUP ADMIN API ENDPOINTS ====================
+// Get all popups
+app.get('/api/admin/popups', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [rows] = await connection.query('SELECT * FROM popups ORDER BY created_at DESC');
+    connection.release();
+    res.json({ success: true, popups: rows });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to fetch popups: ' + error.message });
+  }
+});
+
+// Create a new popup
+app.post('/api/admin/popups', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const {
+      title,
+      image_url,
+      description,
+      link_url,
+      link_text,
+      auto_close_duration,
+      start_date,
+      end_date,
+      is_active,
+      position,
+      display_delay
+    } = req.body;
+    
+    if (!title) {
+      return res.status(400).json({ success: false, message: 'Title is required' });
+    }
+
+    connection = await pool.getConnection();
+    const [result] = await connection.query(
+      `INSERT INTO popups (
+        title, image_url, description, link_url, link_text,
+        auto_close_duration, start_date, end_date, is_active, position, display_delay
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        title,
+        image_url || null,
+        description || null,
+        link_url || null,
+        link_text || 'Learn More',
+        auto_close_duration || 10,
+        start_date || null,
+        end_date || null,
+        is_active !== undefined ? is_active : true,
+        position || 'center',
+        display_delay || 3
+      ]
+    );
+    connection.release();
+    res.json({ success: true, popupId: result.insertId });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to create popup: ' + error.message });
+  }
+});
+
+// Update popup
+app.put('/api/admin/popups/:id', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'Popup ID is required' });
+    }
+
+    const updateFields = [];
+    const updateValues = [];
+    const allowedFields = [
+      'title', 'image_url', 'description', 'link_url', 'link_text',
+      'auto_close_duration', 'start_date', 'end_date', 'is_active', 'position', 'display_delay'
+    ];
+    allowedFields.forEach(field => {
+      if (updates[field] !== undefined) {
+        updateFields.push(`${field} = ?`);
+        updateValues.push(updates[field]);
+      }
+    });
+    updateValues.push(id);
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ success: false, message: 'No fields to update' });
+    }
+
+    connection = await pool.getConnection();
+    await connection.query(
+      `UPDATE popups SET ${updateFields.join(', ')} WHERE id = ?`,
+      updateValues
+    );
+    connection.release();
+    res.json({ success: true, message: 'Popup updated successfully' });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to update popup: ' + error.message });
+  }
+});
+
+// Delete popup
+app.delete('/api/admin/popups/:id', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { id } = req.params;
+    connection = await pool.getConnection();
+    await connection.query('DELETE FROM popups WHERE id = ?', [id]);
+    connection.release();
+    res.json({ success: true, message: 'Popup deleted successfully' });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to delete popup: ' + error.message });
+  }
+});
+
+// ==================== POPUP CLIENT API ENDPOINT ====================
+// Get active popups
+app.get('/api/popups', async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const today = new Date().toISOString().slice(0, 10);
+    const [rows] = await connection.query(
+      `SELECT * FROM popups 
+       WHERE is_active = TRUE 
+       AND (start_date IS NULL OR start_date <= ?)
+       AND (end_date IS NULL OR end_date >= ?)
+       ORDER BY created_at ASC`,
+      [today, today]
+    );
+    connection.release();
+    res.json({ success: true, popups: rows });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to fetch popups: ' + error.message });
   }
 });
 
