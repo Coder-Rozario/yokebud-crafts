@@ -11191,24 +11191,35 @@ app.get('/api/popups', async (req, res) => {
     connection = await pool.getConnection();
     console.log('=== /api/popups called ===');
     const today = new Date().toISOString().slice(0, 10);
-    console.log('Today (for query):', today);
+    const todayLocal = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD in local time
+    console.log('Today (UTC):', today);
+    console.log('Today (local):', todayLocal);
     
     // First get all popups
     const [allRows] = await connection.query('SELECT * FROM popups');
     console.log('All popups in DB:', allRows);
     
+    // First try without date filtering to see if popups exist
+    const [allActiveRows] = await connection.query(
+      `SELECT * FROM popups 
+       WHERE is_active = 1 
+       ORDER BY created_at ASC`
+    );
+    console.log('All active popups (no date filter):', allActiveRows);
+    
+    // Then try with date filter using local date
     const [rows] = await connection.query(
       `SELECT * FROM popups 
        WHERE is_active = 1 
        AND (start_date IS NULL OR start_date <= ?)
        AND (end_date IS NULL OR end_date >= ?)
        ORDER BY created_at ASC`,
-      [today, today]
+      [todayLocal, todayLocal]
     );
-    console.log('Filtered popups:', rows);
+    console.log('Filtered popups (local date):', rows);
     
     connection.release();
-    res.json({ success: true, popups: rows });
+    res.json({ success: true, popups: rows.length > 0 ? rows : allActiveRows }); // Fallback to no date filter if empty
   } catch (error) {
     console.error('/api/popups error:', error);
     if (connection) connection.release();
