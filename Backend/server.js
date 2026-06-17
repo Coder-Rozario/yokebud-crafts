@@ -11285,31 +11285,43 @@ app.get('/api/popups', async (req, res) => {
 app.post('/api/custom-laser-orders', async (req, res) => {
   let connection;
   try {
+    console.log('=== /api/custom-laser-orders POST called ===');
     const token = req.headers.authorization?.replace('Bearer ', '');
+    console.log('Received token:', token ? 'yes' : 'no');
+    
     let userId = null;
     if (token) {
       try {
         const decoded = jwt.verify(token, JWT_SECRET);
         userId = decoded.userId;
+        console.log('Decoded userId:', userId);
       } catch (err) {
+        console.log('Token verification failed:', err.message);
         // If token invalid, proceed without userId
       }
     }
 
     const { title, description, image_url, width, height, depth, material } = req.body;
+    console.log('Received data:', { title, description, image_url, width, height, depth, material });
+    
     if (!title || !description) {
+      console.log('Validation failed: missing title or description');
       return res.status(400).json({ success: false, message: 'Title and description are required' });
     }
 
     connection = await pool.getConnection();
+    console.log('Database connection acquired');
+    
     const [result] = await connection.query(
       'INSERT INTO custom_laser_orders (user_id, title, description, image_url, width, height, depth, material) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       [userId, title, description, image_url, width || null, height || null, depth || null, material || null]
     );
+    console.log('Insert result:', result);
     connection.release();
 
     res.status(201).json({ success: true, orderId: result.insertId, message: 'Custom laser order submitted successfully' });
   } catch (error) {
+    console.error('/api/custom-laser-orders error:', error);
     if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to submit custom laser order: ' + error.message });
   }
@@ -11319,6 +11331,7 @@ app.post('/api/custom-laser-orders', async (req, res) => {
 app.get('/api/custom-laser-orders', async (req, res) => {
   let connection;
   try {
+    console.log('=== /api/custom-laser-orders GET called ===');
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
       return res.status(401).json({ success: false, message: 'Authentication required' });
@@ -11332,10 +11345,12 @@ app.get('/api/custom-laser-orders', async (req, res) => {
       'SELECT * FROM custom_laser_orders WHERE user_id = ? ORDER BY created_at DESC',
       [userId]
     );
+    console.log('Found orders:', orders.length);
     connection.release();
 
     res.json({ success: true, orders });
   } catch (error) {
+    console.error('/api/custom-laser-orders get error:', error);
     if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to fetch custom laser orders: ' + error.message });
   }
@@ -11345,13 +11360,16 @@ app.get('/api/custom-laser-orders', async (req, res) => {
 app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => {
   let connection;
   try {
+    console.log('=== /api/admin/custom-laser-orders GET called ===');
     connection = await pool.getConnection();
     const [orders] = await connection.query(
       'SELECT clo.*, up.email, up.display_name FROM custom_laser_orders clo LEFT JOIN user_profiles up ON clo.user_id = up.user_id ORDER BY clo.created_at DESC'
     );
+    console.log('Found admin orders:', orders.length);
     connection.release();
     res.json({ success: true, orders });
   } catch (error) {
+    console.error('/api/admin/custom-laser-orders error:', error);
     if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to fetch custom laser orders: ' + error.message });
   }
@@ -11361,18 +11379,22 @@ app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => 
 app.put('/api/admin/custom-laser-orders/:id', requireAdminAuth, async (req, res) => {
   let connection;
   try {
+    console.log('=== /api/admin/custom-laser-orders PUT called ===');
     const { id } = req.params;
     const { status, notes } = req.body;
+    console.log('Updating order', id, 'with status', status);
 
     connection = await pool.getConnection();
-    await connection.query(
+    const [result] = await connection.query(
       'UPDATE custom_laser_orders SET status = COALESCE(?, status), notes = COALESCE(?, notes) WHERE id = ?',
       [status, notes, id]
     );
+    console.log('Update result:', result);
     connection.release();
 
     res.json({ success: true, message: 'Custom laser order updated successfully' });
   } catch (error) {
+    console.error('/api/admin/custom-laser-orders put error:', error);
     if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to update custom laser order: ' + error.message });
   }
