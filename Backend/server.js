@@ -11361,17 +11361,99 @@ app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => 
   let connection;
   try {
     console.log('=== /api/admin/custom-laser-orders GET called ===');
+    console.log('Admin auth cookie present:', !!req.cookies?.adminAuth);
+    
     connection = await pool.getConnection();
-    const [orders] = await connection.query(
-      'SELECT clo.*, up.email, up.display_name FROM custom_laser_orders clo LEFT JOIN user_profiles up ON clo.user_id = up.user_id ORDER BY clo.created_at DESC'
+    
+    // First, check if the table exists
+    const [tableCheck] = await connection.query(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'custom_laser_orders'"
     );
+    
+    if (tableCheck[0].count === 0) {
+      console.error('custom_laser_orders table does not exist!');
+      connection.release();
+      return res.status(500).json({ 
+        success: false, 
+        message: 'custom_laser_orders table does not exist' 
+      });
+    }
+    
+    // Get orders with user info - check if display_name column exists
+    const [columns] = await connection.query(
+      "SELECT COLUMN_NAME FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'user_profiles'"
+    );
+    const columnNames = columns.map(c => c.COLUMN_NAME);
+    
+    // Build query based on available columns
+    let query = `
+      SELECT clo.*, 
+             up.email
+    `;
+    
+    // Add display_name if it exists
+    if (columnNames.includes('display_name')) {
+      query += `, up.display_name`;
+    }
+    
+    // Add first_name and last_name if they exist
+    if (columnNames.includes('first_name')) {
+      query += `, up.first_name`;
+    }
+    if (columnNames.includes('last_name')) {
+      query += `, up.last_name`;
+    }
+    
+    query += `
+      FROM custom_laser_orders clo 
+      LEFT JOIN user_profiles up ON clo.user_id = up.user_id 
+      ORDER BY clo.created_at DESC
+    `;
+    
+    const [orders] = await connection.query(query);
+    
     console.log('Found admin orders:', orders.length);
+    console.log('First order sample:', orders.length > 0 ? orders[0] : 'No orders');
+    
     connection.release();
-    res.json({ success: true, orders });
+    
+    // Process orders to create display_name if not available
+    const processedOrders = orders.map(order => {
+      let displayName = order.display_name || null;
+      
+      // If no display_name but first_name and last_name exist
+      if (!displayName && order.first_name && order.last_name) {
+        displayName = `${order.first_name} ${order.last_name}`.trim();
+      } else if (!displayName && order.first_name) {
+        displayName = order.first_name;
+      } else if (!displayName && order.last_name) {
+        displayName = order.last_name;
+      }
+      
+      return {
+        ...order,
+        display_name: displayName,
+        // Ensure all fields are properly formatted
+        width: order.width ? parseFloat(order.width) : null,
+        height: order.height ? parseFloat(order.height) : null,
+        depth: order.depth ? parseFloat(order.depth) : null
+      };
+    });
+    
+    res.json({ 
+      success: true, 
+      orders: processedOrders,
+      count: processedOrders.length
+    });
+    
   } catch (error) {
     console.error('/api/admin/custom-laser-orders error:', error);
     if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to fetch custom laser orders: ' + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch custom laser orders: ' + error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
@@ -11382,21 +11464,58 @@ app.put('/api/admin/custom-laser-orders/:id', requireAdminAuth, async (req, res)
     console.log('=== /api/admin/custom-laser-orders PUT called ===');
     const { id } = req.params;
     const { status, notes } = req.body;
-    console.log('Updating order', id, 'with status', status);
-
+    
+    console.log('Updating order', id, 'with status:', status, 'notes:', notes);
+    
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'Order ID is required' });
+    }
+    
     connection = await pool.getConnection();
+    
+    // Check if order exists
+    const [existing] = await connection.query(
+      'SELECT id FROM custom_laser_orders WHERE id = ?',
+      [id]
+    );
+    
+    if (existing.length === 0) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    
+    // Update the order
     const [result] = await connection.query(
-      'UPDATE custom_laser_orders SET status = COALESCE(?, status), notes = COALESCE(?, notes) WHERE id = ?',
+      `UPDATE custom_laser_orders 
+       SET status = COALESCE(?, status), 
+           notes = COALESCE(?, notes),
+           updated_at = NOW()
+       WHERE id = ?`,
       [status, notes, id]
     );
+    
     console.log('Update result:', result);
     connection.release();
-
-    res.json({ success: true, message: 'Custom laser order updated successfully' });
+    
+    // Get updated order
+    const [updated] = await connection.query(
+      'SELECT * FROM custom_laser_orders WHERE id = ?',
+      [id]
+    );
+    
+    res.json({ 
+      success: true, 
+      message: 'Custom laser order updated successfully',
+      order: updated[0]
+    });
+    
   } catch (error) {
     console.error('/api/admin/custom-laser-orders put error:', error);
     if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to update custom laser order: ' + error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to update custom laser order: ' + error.message 
+    });
   }
 });
 
