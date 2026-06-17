@@ -565,6 +565,39 @@ async function ensureProductStockStatusSchema() {
 
 ensureProductStockStatusSchema();
 
+async function ensureCustomLaserOrdersSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.query(
+      `CREATE TABLE IF NOT EXISTS custom_laser_orders (
+        id INT NOT NULL AUTO_INCREMENT,
+        user_id INT NULL,
+        title VARCHAR(255) NOT NULL,
+        description TEXT NOT NULL,
+        image_url TEXT NULL,
+        width DECIMAL(10,2) NULL,
+        height DECIMAL(10,2) NULL,
+        depth DECIMAL(10,2) NULL,
+        material VARCHAR(100) NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        notes TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_user (user_id)
+      )`
+    );
+    console.log('✅ Custom laser orders schema checked/created successfully');
+  } catch (e) {
+    console.warn('⚠️ Custom laser orders schema check failed:', e.message);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureCustomLaserOrdersSchema();
+
 async function ensureSeoContentSchema() {
   let connection;
   try {
@@ -11244,6 +11277,104 @@ app.get('/api/popups', async (req, res) => {
     console.error('/api/popups error:', error);
     if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to fetch popups: ' + error.message });
+  }
+});
+
+// ==================== CUSTOM LASER ORDERS API ENDPOINTS ====================
+// Create custom laser order
+app.post('/api/custom-laser-orders', async (req, res) => {
+  let connection;
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    let userId = null;
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userId = decoded.userId;
+      } catch (err) {
+        // If token invalid, proceed without userId
+      }
+    }
+
+    const { title, description, image_url, width, height, depth, material } = req.body;
+    if (!title || !description) {
+      return res.status(400).json({ success: false, message: 'Title and description are required' });
+    }
+
+    connection = await pool.getConnection();
+    const [result] = await connection.query(
+      'INSERT INTO custom_laser_orders (user_id, title, description, image_url, width, height, depth, material) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [userId, title, description, image_url, width || null, height || null, depth || null, material || null]
+    );
+    connection.release();
+
+    res.status(201).json({ success: true, orderId: result.insertId, message: 'Custom laser order submitted successfully' });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to submit custom laser order: ' + error.message });
+  }
+});
+
+// Get user's custom laser orders
+app.get('/api/custom-laser-orders', async (req, res) => {
+  let connection;
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const userId = decoded.userId;
+
+    connection = await pool.getConnection();
+    const [orders] = await connection.query(
+      'SELECT * FROM custom_laser_orders WHERE user_id = ? ORDER BY created_at DESC',
+      [userId]
+    );
+    connection.release();
+
+    res.json({ success: true, orders });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to fetch custom laser orders: ' + error.message });
+  }
+});
+
+// Get all custom laser orders (admin)
+app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [orders] = await connection.query(
+      'SELECT clo.*, up.email, up.display_name FROM custom_laser_orders clo LEFT JOIN user_profiles up ON clo.user_id = up.user_id ORDER BY clo.created_at DESC'
+    );
+    connection.release();
+    res.json({ success: true, orders });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to fetch custom laser orders: ' + error.message });
+  }
+});
+
+// Update custom laser order status (admin)
+app.put('/api/admin/custom-laser-orders/:id', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { id } = req.params;
+    const { status, notes } = req.body;
+
+    connection = await pool.getConnection();
+    await connection.query(
+      'UPDATE custom_laser_orders SET status = COALESCE(?, status), notes = COALESCE(?, notes) WHERE id = ?',
+      [status, notes, id]
+    );
+    connection.release();
+
+    res.json({ success: true, message: 'Custom laser order updated successfully' });
+  } catch (error) {
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to update custom laser order: ' + error.message });
   }
 });
 
