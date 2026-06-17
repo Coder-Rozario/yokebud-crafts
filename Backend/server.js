@@ -7189,6 +7189,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       shipping,
       warranty,
       bulk_discount,
+      discount_ranges,
       sizes,
       colors,
       tags,
@@ -7207,7 +7208,8 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       stock_status,
       customization_type,
       customization_images,
-      customization_dimensions
+      customization_dimensions,
+      allow_customer_size_adjustment
     } = req.body;
     
     const validation = validateProductPayload(req.body);
@@ -7252,7 +7254,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     // Insert product into database
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageArray);
-    const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount });
+    const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount, discount_ranges: discount_ranges || [] });
 
     // Debug: log customization_mode for incoming create
     console.log('CREATE product - customization_mode:', req.body.customization_mode);
@@ -7264,6 +7266,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         discounted_price,
         category,
         stock,
+        moq,
         material,
         care_instructions,
         sku,
@@ -7292,8 +7295,9 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_type,
         customization_mode,
         customization_images,
-        customization_dimensions
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        customization_dimensions,
+        allow_customer_size_adjustment
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
@@ -7301,6 +7305,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
+        moq || 1,
         material,
         care,
         sku,
@@ -7329,7 +7334,8 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_type || 'Apparels',
         req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
-        customization_dimensions ? JSON.stringify(customization_dimensions) : null
+        customization_dimensions ? JSON.stringify(customization_dimensions) : null,
+        allow_customer_size_adjustment ? 1 : 0
       ]
     );
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
@@ -7380,6 +7386,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       shipping,
       warranty,
       bulk_discount,
+      discount_ranges,
       sizes,
       colors,
       tags,
@@ -7391,7 +7398,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       stock_status,
       customization_type,
       customization_images,
-      customization_dimensions
+      customization_dimensions,
+      allow_customer_size_adjustment,
+      metadata
     } = req.body;
 
     const validation = validateProductPayload({
@@ -7468,7 +7477,14 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageUrls);
-    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, bulk_discount });
+    const metadataJson = JSON.stringify({ 
+      tags, 
+      features, 
+      shipping, 
+      warranty, 
+      bulk_discount, 
+      discount_ranges: discount_ranges || (metadata && metadata.discount_ranges) || [] 
+    });
 
     // Auto-generate SEO fields if not provided
     const seo = generateProductSEO(name, description, finalPrice, imageUrls);
@@ -7485,6 +7501,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         discounted_price = ?,
         category = ?,
         stock = ?,
+        moq = ?,
         material = ?,
         care_instructions = ?,
         sku = ?,
@@ -7514,6 +7531,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         customization_mode = ?,
         customization_images = ?,
         customization_dimensions = ?,
+        allow_customer_size_adjustment = ?,
         updated_at = NOW()
       WHERE id = ?`,
       [
@@ -7523,6 +7541,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
+        moq || 1,
         material,
         care,
         sku,
@@ -7552,6 +7571,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
         customization_dimensions ? JSON.stringify(customization_dimensions) : null,
+        allow_customer_size_adjustment ? 1 : 0,
         productId
       ]
     );
