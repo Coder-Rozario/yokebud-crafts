@@ -7054,6 +7054,39 @@ app.post('/api/user/logout', async (req, res) => {
       }
     }
 
+    let validatedPromoCode = null;
+    if (promoCode && (promoCode.id || promoCode.code)) {
+      const orderProductIds = (Array.isArray(items) ? items : [])
+        .map((it) => it && (it.id ?? it.product_id ?? it._id))
+        .filter((id) => id != null && id !== '');
+
+      let promoRecord = null;
+      if (promoCode.id) {
+        const [rows] = await connection.query('SELECT * FROM promo_codes WHERE id = ?', [promoCode.id]);
+        promoRecord = rows[0] || null;
+      } else if (promoCode.code) {
+        const [rows] = await connection.query('SELECT * FROM promo_codes WHERE code = ?', [promoCode.code.toUpperCase()]);
+        promoRecord = rows[0] || null;
+      }
+
+      if (!promoRecord) {
+        connection.release();
+        return res.status(400).json({ success: false, message: 'Invalid promo code' });
+      }
+
+      const validation = await validatePromoCodeRecord(connection, promoRecord, {
+        productIds: normalizePromoProductIds(orderProductIds),
+        userId: authUserId
+      });
+
+      if (!validation.valid) {
+        connection.release();
+        return res.status(400).json({ success: false, message: validation.message });
+      }
+
+      validatedPromoCode = validation.promoCode;
+    }
+
     await connection.beginTransaction();
 
     try {
@@ -7167,17 +7200,17 @@ app.post('/api/user/logout', async (req, res) => {
     }
 
     // Handle promo code if provided
-    if (promoCode && promoCode.id) {
+    if (validatedPromoCode && validatedPromoCode.id) {
       // Increment used count
       await connection.query(
         'UPDATE promo_codes SET used_count = used_count + 1 WHERE id = ?',
-        [promoCode.id]
+        [validatedPromoCode.id]
       );
       
       // Record usage
       await connection.query(
         'INSERT INTO promo_code_usages (promo_code_id, user_id, order_id) VALUES (?, ?, ?)',
-        [promoCode.id, authUserId || null, orderId]
+        [validatedPromoCode.id, authUserId || null, orderId]
       );
     }
 
@@ -11876,6 +11909,74 @@ app.put('/api/admin/custom-laser-orders/:id', requireAdminAuth, async (req, res)
 
 // ==================== PROMO CODE API ENDPOINTS ====================
 
+function normalizePromoProductIds(productIds) {
+  if (!Array.isArray(productIds)) return [];
+  return productIds
+    .map((id) => {
+      const n = Number(id);
+      return Number.isFinite(n) ? n : String(id);
+    })
+    .filter((id) => id !== '' && id != null);
+}
+
+function promoProductIdsMatch(productIds, targetProductId) {
+  if (!targetProductId) return true;
+  const normalized = normalizePromoProductIds(productIds);
+  const target = Number(targetProductId);
+  return normalized.some((id) =>
+    Number.isFinite(target) && Number(id) === target || String(id) === String(targetProductId)
+  );
+}
+
+async function validatePromoCodeRecord(connection, promoCode, { productIds, userId }) {
+  const now = new Date();
+
+  if (promoCode.valid_from && new Date(promoCode.valid_from) > now) {
+    return { valid: false, message: 'Promo code not yet valid' };
+  }
+
+  if (promoCode.valid_until && new Date(promoCode.valid_until) < now) {
+    return { valid: false, message: 'Promo code has expired' };
+  }
+
+  if (promoCode.usage_limit && promoCode.used_count >= promoCode.usage_limit) {
+    return { valid: false, message: 'Promo code usage limit reached' };
+  }
+
+  if (promoCode.user_specific && promoCode.user_id) {
+    const expectedUser = String(promoCode.user_id);
+    const actualUser = userId != null ? String(userId) : '';
+    if (!actualUser || expectedUser !== actualUser) {
+      return { valid: false, message: 'Promo code not valid for this user' };
+    }
+  }
+
+  if (promoCode.product_id && productIds && productIds.length > 0 && !promoProductIdsMatch(productIds, promoCode.product_id)) {
+    return { valid: false, message: 'Promo code not valid for these products' };
+  }
+
+  if (userId) {
+    const [usages] = await connection.query(
+      'SELECT id FROM promo_code_usages WHERE promo_code_id = ? AND user_id = ?',
+      [promoCode.id, String(userId)]
+    );
+    if (usages.length > 0) {
+      return { valid: false, message: 'Promo code already used by this user' };
+    }
+  }
+
+  return {
+    valid: true,
+    promoCode: {
+      id: promoCode.id,
+      code: promoCode.code,
+      type: promoCode.type,
+      value: parseFloat(promoCode.value),
+      product_id: promoCode.product_id
+    }
+  };
+}
+
 // Create promo code (admin only)
 app.post('/api/admin/promo-codes', requireAdminAuth, async (req, res) => {
   let connection;
@@ -11963,62 +12064,18 @@ app.post('/api/promo-codes/validate', async (req, res) => {
     }
     
     const promoCode = promoCodes[0];
-    const now = new Date();
-    
-    // Check validity dates
-    if (promoCode.valid_from && new Date(promoCode.valid_from) > now) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Promo code not yet valid' });
-    }
-    
-    if (promoCode.valid_until && new Date(promoCode.valid_until) < now) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Promo code has expired' });
-    }
-    
-    // Check usage limit
-    if (promoCode.usage_limit && promoCode.used_count >= promoCode.usage_limit) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Promo code usage limit reached' });
-    }
-    
-    // Check user-specific
-    if (promoCode.user_specific && promoCode.user_id && (!userId || promoCode.user_id !== userId)) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Promo code not valid for this user' });
-    }
-    
-    // Check product-specific
-    if (promoCode.product_id && productIds && !productIds.includes(parseInt(promoCode.product_id))) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Promo code not valid for these products' });
-    }
-    
-    // Check if user already used this promo code
-    if (userId) {
-      const [usages] = await connection.query(
-        'SELECT id FROM promo_code_usages WHERE promo_code_id = ? AND user_id = ?',
-        [promoCode.id, userId]
-      );
-      
-      if (usages.length > 0) {
-        connection.release();
-        return res.status(400).json({ success: false, message: 'Promo code already used by this user' });
-      }
-    }
-    
-    connection.release();
-    
-    res.json({
-      success: true,
-      promoCode: {
-        id: promoCode.id,
-        code: promoCode.code,
-        type: promoCode.type,
-        value: parseFloat(promoCode.value),
-        product_id: promoCode.product_id
-      }
+    const validation = await validatePromoCodeRecord(connection, promoCode, {
+      productIds: normalizePromoProductIds(productIds),
+      userId
     });
+
+    connection.release();
+
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, message: validation.message });
+    }
+
+    res.json({ success: true, promoCode: validation.promoCode });
   } catch (error) {
     console.error('/api/promo-codes/validate error:', error);
     if (connection) connection.release();
@@ -12034,7 +12091,10 @@ app.get('/api/admin/promo-codes', requireAdminAuth, async (req, res) => {
     connection = await pool.getConnection();
     
     const [promoCodes] = await connection.query(
-      'SELECT * FROM promo_codes ORDER BY created_at DESC'
+      `SELECT pc.*, p.product_name
+       FROM promo_codes pc
+       LEFT JOIN products p ON pc.product_id = p.id
+       ORDER BY pc.created_at DESC`
     );
     
     connection.release();
@@ -12043,6 +12103,70 @@ app.get('/api/admin/promo-codes', requireAdminAuth, async (req, res) => {
     console.error('/api/admin/promo-codes error:', error);
     if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to fetch promo codes' });
+  }
+});
+
+// Update promo code (admin)
+app.put('/api/admin/promo-codes/:id', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { id } = req.params;
+    const {
+      product_id,
+      code,
+      type,
+      value,
+      usage_limit,
+      user_specific,
+      user_id,
+      valid_from,
+      valid_until
+    } = req.body;
+
+    if (!code || !type || !value) {
+      return res.status(400).json({ success: false, message: 'Code, type, and value are required' });
+    }
+
+    if (type !== 'percentage' && type !== 'fixed') {
+      return res.status(400).json({ success: false, message: 'Type must be either percentage or fixed' });
+    }
+
+    connection = await pool.getConnection();
+
+    const [existing] = await connection.query('SELECT id FROM promo_codes WHERE id = ?', [id]);
+    if (!existing.length) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Promo code not found' });
+    }
+
+    await connection.query(
+      `UPDATE promo_codes SET
+        product_id = ?, code = ?, type = ?, value = ?, usage_limit = ?,
+        user_specific = ?, user_id = ?, valid_from = ?, valid_until = ?
+       WHERE id = ?`,
+      [
+        product_id || null,
+        code.toUpperCase(),
+        type,
+        parseFloat(value),
+        usage_limit || null,
+        user_specific ? 1 : 0,
+        user_id || null,
+        valid_from || null,
+        valid_until || null,
+        id
+      ]
+    );
+
+    connection.release();
+    res.json({ success: true, message: 'Promo code updated successfully' });
+  } catch (error) {
+    console.error('/api/admin/promo-codes PUT error:', error);
+    if (connection) connection.release();
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ success: false, message: 'Promo code already exists' });
+    }
+    res.status(500).json({ success: false, message: 'Failed to update promo code: ' + error.message });
   }
 });
 
