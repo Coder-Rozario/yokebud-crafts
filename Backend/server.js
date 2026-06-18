@@ -11363,7 +11363,12 @@ app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => 
     console.log('=== /api/admin/custom-laser-orders GET called ===');
     connection = await pool.getConnection();
     const [orders] = await connection.query(
-      'SELECT clo.*, up.email, up.display_name FROM custom_laser_orders clo LEFT JOIN user_profiles up ON clo.user_id = up.user_id ORDER BY clo.created_at DESC'
+      `SELECT clo.*, uc.email, 
+              CONCAT(up.first_name, ' ', up.last_name) as display_name
+       FROM custom_laser_orders clo 
+       LEFT JOIN user_credentials uc ON clo.user_id = uc.user_id
+       LEFT JOIN user_profiles up ON clo.user_id = up.user_id 
+       ORDER BY clo.created_at DESC`
     );
     console.log('Found admin orders:', orders.length);
     connection.release();
