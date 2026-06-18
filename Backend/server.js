@@ -7065,9 +7065,7 @@ app.post('/api/user/logout', async (req, res) => {
 
     let validatedPromoCode = null;
     if (promoCode && (promoCode.id || promoCode.code)) {
-      const orderProductIds = (Array.isArray(items) ? items : [])
-        .map((it) => it && (it.id ?? it.product_id ?? it._id))
-        .filter((id) => id != null && id !== '');
+      const orderProductIds = extractPromoProductIdsFromItems(Array.isArray(items) ? items : []);
 
       let promoRecord = null;
       if (promoCode.id) {
@@ -7084,7 +7082,7 @@ app.post('/api/user/logout', async (req, res) => {
       }
 
       const validation = await validatePromoCodeRecord(connection, promoRecord, {
-        productIds: normalizePromoProductIds(orderProductIds),
+        productIds: orderProductIds,
         userId: authUserId
       });
 
@@ -11668,6 +11666,92 @@ app.get('/api/popups', async (req, res) => {
 
 // ==================== CUSTOM LASER ORDERS API ENDPOINTS ====================
 
+const uploadCustomLaserImage = (imageSource) => new Promise((resolve) => {
+  if (!imageSource || typeof imageSource !== 'string') return resolve(null);
+  const src = imageSource.trim();
+  if (!src) return resolve(null);
+  if (src.startsWith('http') && src.includes('cloudinary.com')) return resolve(src);
+  if (src.startsWith('http') && !src.startsWith('data:')) return resolve(src);
+  if (!src.startsWith('data:')) return resolve(src);
+
+  cloudinary.uploader.upload(
+    src,
+    { folder: 'Yokebud Craft/custom-laser', resource_type: 'auto' },
+    (err, result) => {
+      if (err) {
+        console.error('Custom laser Cloudinary upload failed:', err.message);
+        resolve(src);
+      } else {
+        resolve(result?.secure_url || src);
+      }
+    }
+  );
+});
+
+const processCustomLaserImages = async (image_url, image_urls) => {
+  let urls = [];
+  if (image_urls) {
+    if (Array.isArray(image_urls)) urls = [...image_urls];
+    else if (typeof image_urls === 'string') {
+      try {
+        const parsed = JSON.parse(image_urls);
+        urls = Array.isArray(parsed) ? parsed : [image_urls];
+      } catch {
+        urls = [image_urls];
+      }
+    }
+  }
+  if (image_url && !urls.includes(image_url)) urls.unshift(image_url);
+
+  const uploaded = await Promise.all(urls.map(uploadCustomLaserImage));
+  const filtered = uploaded.filter(Boolean);
+  return {
+    image_url: filtered[0] || null,
+    image_urls: filtered.length ? filtered : null,
+  };
+};
+
+const orderHasBase64Images = (order) => {
+  const check = (v) => typeof v === 'string' && v.startsWith('data:');
+  if (check(order.image_url)) return true;
+  let urls = order.image_urls;
+  if (typeof urls === 'string') {
+    try { urls = JSON.parse(urls); } catch { return check(urls); }
+  }
+  return Array.isArray(urls) && urls.some(check);
+};
+
+const normalizeCustomOrderImages = (order) => {
+  if (order.image_urls && typeof order.image_urls === 'string') {
+    try {
+      order.image_urls = JSON.parse(order.image_urls);
+    } catch {
+      order.image_urls = order.image_url ? [order.image_url] : [];
+    }
+  }
+  return order;
+};
+
+const migrateCustomOrderImagesIfNeeded = async (connection, order) => {
+  normalizeCustomOrderImages(order);
+  if (!orderHasBase64Images(order)) return order;
+
+  let urls = order.image_urls;
+  if (typeof urls === 'string') {
+    try { urls = JSON.parse(urls); } catch { urls = order.image_url ? [order.image_url] : []; }
+  }
+
+  const processed = await processCustomLaserImages(order.image_url, urls);
+  await connection.query(
+    'UPDATE custom_laser_orders SET image_url = ?, image_urls = ? WHERE id = ?',
+    [processed.image_url, processed.image_urls ? JSON.stringify(processed.image_urls) : null, order.id]
+  );
+
+  order.image_url = processed.image_url;
+  order.image_urls = processed.image_urls || [];
+  return order;
+};
+
 const createCustomLaserInquiry = async (connection, orderId, userId, orderData, customerInfo = {}) => {
   if (!userId) return null;
 
@@ -11781,6 +11865,8 @@ app.post('/api/custom-laser-orders', async (req, res) => {
 
     connection = await pool.getConnection();
     console.log('Database connection acquired');
+
+    const processedImages = await processCustomLaserImages(image_url, image_urls);
     
     const [result] = await connection.query(
       'INSERT INTO custom_laser_orders (user_id, title, description, image_url, image_urls, width, height, depth, material) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -11788,8 +11874,8 @@ app.post('/api/custom-laser-orders', async (req, res) => {
         authUserId, 
         title, 
         description, 
-        image_url || null, 
-        image_urls ? JSON.stringify(image_urls) : null, 
+        processedImages.image_url, 
+        processedImages.image_urls ? JSON.stringify(processedImages.image_urls) : null, 
         width || null, 
         height || null, 
         depth || null, 
@@ -11802,8 +11888,8 @@ app.post('/api/custom-laser-orders', async (req, res) => {
     const orderPayload = {
       title,
       description,
-      image_url: image_url || null,
-      image_urls: image_urls || null,
+      image_url: processedImages.image_url,
+      image_urls: processedImages.image_urls,
       width: width || null,
       height: height || null,
       depth: depth || null,
@@ -11899,15 +11985,9 @@ app.get('/api/custom-laser-orders', async (req, res) => {
       [userId]
     );
     
-    // Parse image_urls if it's a JSON string
-    for (const order of orders) {
-      if (order.image_urls && typeof order.image_urls === 'string') {
-        try {
-          order.image_urls = JSON.parse(order.image_urls);
-        } catch (e) {
-            order.image_urls = [];
-          }
-      }
+    // Parse / migrate image_urls for each order
+    for (let i = 0; i < orders.length; i++) {
+      orders[i] = await migrateCustomOrderImagesIfNeeded(connection, orders[i]);
     }
     
     console.log('Found orders:', orders.length);
@@ -11936,15 +12016,9 @@ app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => 
     console.log('Found admin orders:', orders.length);
     console.log('Orders:', orders);
     
-    // Parse image_urls if it's a JSON string
-    for (const order of orders) {
-      if (order.image_urls && typeof order.image_urls === 'string') {
-        try {
-          order.image_urls = JSON.parse(order.image_urls);
-        } catch (e) {
-          order.image_urls = [];
-        }
-      }
+    // Parse / migrate images and attach user data
+    for (let i = 0; i < orders.length; i++) {
+      orders[i] = await migrateCustomOrderImagesIfNeeded(connection, orders[i]);
     }
     
     // Now, for each order, get user data if user_id exists
@@ -12159,21 +12233,57 @@ app.put('/api/admin/custom-laser-orders/:id', requireAdminAuth, async (req, res)
 
 function normalizePromoProductIds(productIds) {
   if (!Array.isArray(productIds)) return [];
-  return productIds
-    .map((id) => {
-      const n = Number(id);
-      return Number.isFinite(n) ? n : String(id);
-    })
-    .filter((id) => id !== '' && id != null);
+  const out = [];
+
+  for (const id of productIds) {
+    if (id == null || id === '') continue;
+    const idStr = String(id).trim();
+    if (!idStr) continue;
+
+    // Customization buy-now: custom-{productId}-{timestamp}
+    const customizedMatch = idStr.match(/^custom-(\d+)-\d+$/);
+    if (customizedMatch) {
+      out.push(Number(customizedMatch[1]));
+      continue;
+    }
+
+    // Custom laser checkout ids (custom-{orderId}) are not catalog product ids
+    if (/^custom-\d+$/.test(idStr)) continue;
+
+    const n = Number(id);
+    out.push(Number.isFinite(n) ? n : idStr);
+  }
+
+  return out.filter((id) => id !== '' && id != null);
+}
+
+function extractPromoProductIdsFromItems(items) {
+  if (!Array.isArray(items)) return [];
+  const ids = [];
+  for (const item of items) {
+    if (!item) continue;
+    const candidates = [item.product_id, item.product?.id, item.id, item._id];
+    for (const candidate of candidates) {
+      if (candidate != null && candidate !== '') ids.push(candidate);
+    }
+  }
+  return normalizePromoProductIds(ids);
 }
 
 function promoProductIdsMatch(productIds, targetProductId) {
   if (!targetProductId) return true;
   const normalized = normalizePromoProductIds(productIds);
-  const target = Number(targetProductId);
-  return normalized.some((id) =>
-    Number.isFinite(target) && Number(id) === target || String(id) === String(targetProductId)
-  );
+  if (!normalized.length) return false;
+
+  const targetStr = String(targetProductId);
+  const targetNum = Number(targetProductId);
+
+  return normalized.some((id) => {
+    const idStr = String(id);
+    const idNum = Number(id);
+    if (Number.isFinite(targetNum) && Number.isFinite(idNum) && idNum === targetNum) return true;
+    return idStr === targetStr;
+  });
 }
 
 async function validatePromoCodeRecord(connection, promoCode, { productIds, userId }) {
@@ -12199,8 +12309,11 @@ async function validatePromoCodeRecord(connection, promoCode, { productIds, user
     }
   }
 
-  if (promoCode.product_id && productIds && productIds.length > 0 && !promoProductIdsMatch(productIds, promoCode.product_id)) {
-    return { valid: false, message: 'Promo code not valid for these products' };
+  if (promoCode.product_id) {
+    const normalized = normalizePromoProductIds(productIds || []);
+    if (!normalized.length || !promoProductIdsMatch(normalized, promoCode.product_id)) {
+      return { valid: false, message: 'Promo code not valid for these products' };
+    }
   }
 
   if (userId) {
