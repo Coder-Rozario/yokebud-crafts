@@ -717,6 +717,15 @@ async function ensureCustomLaserOrdersSchema() {
         console.warn('⚠️ Could not add order_id index:', err.message);
       }
     }
+
+    // Link custom laser orders to inquiry conversations for messaging
+    try {
+      await connection.query('ALTER TABLE custom_laser_orders ADD COLUMN inquiry_id VARCHAR(255) NULL AFTER order_id');
+    } catch (err) {
+      if (!err.message.includes('Duplicate column name')) {
+        console.warn('⚠️ Could not add inquiry_id column:', err.message);
+      }
+    }
     
     console.log('✅ Custom laser orders schema checked/created successfully');
   } catch (e) {
@@ -11658,6 +11667,90 @@ app.get('/api/popups', async (req, res) => {
 });
 
 // ==================== CUSTOM LASER ORDERS API ENDPOINTS ====================
+
+const createCustomLaserInquiry = async (connection, orderId, userId, orderData, customerInfo = {}) => {
+  if (!userId) return null;
+
+  const productId = `custom-laser-${orderId}`;
+  const [existing] = await connection.query(
+    'SELECT id FROM inquiry_conversations WHERE user_id = ? AND product_id = ? LIMIT 1',
+    [userId, productId]
+  );
+  if (existing.length > 0) {
+    await connection.query(
+      'UPDATE custom_laser_orders SET inquiry_id = ? WHERE id = ?',
+      [existing[0].id, orderId]
+    );
+    return existing[0].id;
+  }
+
+  const inquiryId = generateInquiryId(userId, productId);
+  const inquiryNumber = generateInquiryNumber();
+  const imageUrls = Array.isArray(orderData.image_urls)
+    ? orderData.image_urls
+    : (orderData.image_url ? [orderData.image_url] : []);
+  const firstImage = imageUrls[0] || orderData.image_url || null;
+
+  const productPayload = {
+    id: productId,
+    product_name: orderData.title,
+    product_description: orderData.description,
+    price: orderData.price || null,
+    product_photos: firstImage ? [firstImage] : [],
+    is_custom_laser_order: true,
+    custom_laser_order_id: orderId,
+    width: orderData.width,
+    height: orderData.height,
+    depth: orderData.depth,
+    material: orderData.material,
+    quantity: 1,
+  };
+
+  const customerName = [customerInfo.firstName, customerInfo.lastName].filter(Boolean).join(' ').trim()
+    || customerInfo.name
+    || 'Customer';
+
+  const initialMessages = [{
+    id: uuidv4(),
+    sender_type: 'user',
+    message: `Custom laser order #${orderId}: ${orderData.title}`,
+    files: [],
+    timestamp: new Date().toISOString(),
+    is_read: true,
+    status: 'sent',
+  }];
+
+  await connection.query(
+    `INSERT INTO inquiry_conversations (
+      id, user_id, product_id, inquiry_number,
+      customer_name, customer_email, customer_phone, customer_country,
+      product_data, messages, status, created_at, updated_at, last_activity, unread_count, admin_unread_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW(), ?, ?)`,
+    [
+      inquiryId,
+      userId,
+      productId,
+      inquiryNumber,
+      customerName,
+      customerInfo.email || null,
+      customerInfo.phone || null,
+      customerInfo.country || null,
+      JSON.stringify(productPayload),
+      JSON.stringify(initialMessages),
+      'new',
+      0,
+      1,
+    ]
+  );
+
+  await connection.query(
+    'UPDATE custom_laser_orders SET inquiry_id = ? WHERE id = ?',
+    [inquiryId, orderId]
+  );
+
+  return inquiryId;
+};
+
 // Create custom laser order
 app.post('/api/custom-laser-orders', async (req, res) => {
   let connection;
@@ -11704,8 +11797,21 @@ app.post('/api/custom-laser-orders', async (req, res) => {
       ]
     );
     console.log('Insert result:', result);
-    
-    // Fetch user data if authUserId exists to send emails
+
+    const orderId = result.insertId;
+    const orderPayload = {
+      title,
+      description,
+      image_url: image_url || null,
+      image_urls: image_urls || null,
+      width: width || null,
+      height: height || null,
+      depth: depth || null,
+      material: material || null,
+      price: null,
+    };
+
+    // Fetch user data if authUserId exists to send emails / create inquiry
     let customerInfo = {};
     if (authUserId) {
       try {
@@ -11735,7 +11841,13 @@ app.post('/api/custom-laser-orders', async (req, res) => {
           };
         }
       } catch (userErr) {
-        console.error('Error fetching user data for custom order email:', userErr);
+        console.error('Error fetching user data for custom order:', userErr);
+      }
+
+      try {
+        await createCustomLaserInquiry(connection, orderId, authUserId, orderPayload, customerInfo);
+      } catch (inqErr) {
+        console.error('Error creating inquiry for custom laser order:', inqErr);
       }
     }
     
@@ -11879,6 +11991,142 @@ app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => 
     console.error('/api/admin/custom-laser-orders error:', error);
     if (connection) connection.release();
     res.status(500).json({ success: false, message: 'Failed to fetch custom laser orders: ' + error.message });
+  }
+});
+
+// Ensure inquiry conversation exists for a custom laser order (admin)
+app.post('/api/admin/custom-laser-orders/:id/ensure-inquiry', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { id } = req.params;
+    connection = await pool.getConnection();
+
+    const [orders] = await connection.query('SELECT * FROM custom_laser_orders WHERE id = ?', [id]);
+    if (!orders.length) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const order = orders[0];
+    if (order.inquiry_id) {
+      connection.release();
+      return res.json({ success: true, inquiryId: order.inquiry_id });
+    }
+
+    if (!order.user_id) {
+      connection.release();
+      return res.status(400).json({ success: false, message: 'Order has no linked user for messaging' });
+    }
+
+    let imageUrls = order.image_urls;
+    if (imageUrls && typeof imageUrls === 'string') {
+      try { imageUrls = JSON.parse(imageUrls); } catch { imageUrls = []; }
+    }
+
+    const [userData] = await connection.query(
+      `SELECT uc.email, up.first_name, up.last_name, up.phone, up.country
+       FROM user_credentials uc
+       LEFT JOIN user_profiles up ON uc.user_id = up.user_id
+       WHERE uc.user_id = ? AND uc.is_active = TRUE`,
+      [order.user_id]
+    );
+    const user = userData[0] || {};
+
+    const inquiryId = await createCustomLaserInquiry(connection, order.id, order.user_id, {
+      title: order.title,
+      description: order.description,
+      image_url: order.image_url,
+      image_urls: imageUrls,
+      width: order.width,
+      height: order.height,
+      depth: order.depth,
+      material: order.material,
+      price: order.price,
+    }, {
+      firstName: user.first_name,
+      lastName: user.last_name,
+      email: user.email,
+      phone: user.phone,
+      country: user.country,
+    });
+
+    connection.release();
+    res.json({ success: true, inquiryId });
+  } catch (error) {
+    console.error('/api/admin/custom-laser-orders ensure-inquiry error:', error);
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to create inquiry conversation' });
+  }
+});
+
+// Ensure inquiry conversation exists for a custom laser order (user)
+app.post('/api/custom-laser-orders/:id/ensure-inquiry', async (req, res) => {
+  let connection;
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const userId = decoded.userId;
+    const { id } = req.params;
+
+    connection = await pool.getConnection();
+    const [orders] = await connection.query(
+      'SELECT * FROM custom_laser_orders WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
+
+    if (!orders.length) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const order = orders[0];
+    if (order.inquiry_id) {
+      connection.release();
+      return res.json({ success: true, inquiryId: order.inquiry_id });
+    }
+
+    let imageUrls = order.image_urls;
+    if (imageUrls && typeof imageUrls === 'string') {
+      try { imageUrls = JSON.parse(imageUrls); } catch { imageUrls = []; }
+    }
+
+    const [userData] = await connection.query(
+      `SELECT uc.email, up.first_name, up.last_name, up.phone, up.country
+       FROM user_credentials uc
+       LEFT JOIN user_profiles up ON uc.user_id = up.user_id
+       WHERE uc.user_id = ? AND uc.is_active = TRUE`,
+      [userId]
+    );
+    const user = userData[0] || {};
+
+    const inquiryId = await createCustomLaserInquiry(connection, order.id, userId, {
+      title: order.title,
+      description: order.description,
+      image_url: order.image_url,
+      image_urls: imageUrls,
+      width: order.width,
+      height: order.height,
+      depth: order.depth,
+      material: order.material,
+      price: order.price,
+    }, {
+      firstName: user.first_name,
+      lastName: user.last_name,
+      email: user.email,
+      phone: user.phone,
+      country: user.country,
+    });
+
+    connection.release();
+    res.json({ success: true, inquiryId });
+  } catch (error) {
+    console.error('/api/custom-laser-orders ensure-inquiry error:', error);
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to create inquiry conversation' });
   }
 });
 
