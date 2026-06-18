@@ -569,6 +569,8 @@ async function ensureCustomLaserOrdersSchema() {
   let connection;
   try {
     connection = await pool.getConnection();
+    
+    // Create table with image_urls (JSON) instead of just image_url
     await connection.query(
       `CREATE TABLE IF NOT EXISTS custom_laser_orders (
         id INT NOT NULL AUTO_INCREMENT,
@@ -576,6 +578,7 @@ async function ensureCustomLaserOrdersSchema() {
         title VARCHAR(255) NOT NULL,
         description TEXT NOT NULL,
         image_url TEXT NULL,
+        image_urls JSON NULL,
         width DECIMAL(10,2) NULL,
         height DECIMAL(10,2) NULL,
         depth DECIMAL(10,2) NULL,
@@ -588,6 +591,16 @@ async function ensureCustomLaserOrdersSchema() {
         KEY idx_user (user_id)
       )`
     );
+    
+    // Add image_urls column if it doesn't exist
+    try {
+      await connection.query('ALTER TABLE custom_laser_orders ADD COLUMN image_urls JSON NULL AFTER image_url');
+    } catch (err) {
+      if (!err.message.includes('Duplicate column name')) {
+        console.warn('⚠️ Could not add image_urls column:', err.message);
+      }
+    }
+    
     console.log('✅ Custom laser orders schema checked/created successfully');
   } catch (e) {
     console.warn('⚠️ Custom laser orders schema check failed:', e.message);
@@ -1901,6 +1914,114 @@ const renderAdminNewOrderEmail = (orderId, customerInfo, items, totals) => {
   });
 };
 
+// Custom Laser Order Confirmation Email (Customer)
+const renderCustomLaserOrderConfirmationEmail = (orderId, customerInfo, orderData) => {
+  const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
+  
+  const contentHtml = `
+    <div class="content-section">
+      <div style="text-align: center; margin-bottom: 30px;">
+        <h2 class="content-title">Custom Laser Order Received! 🎉</h2>
+        <p class="content-text" style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
+          Order #${orderId}
+        </p>
+      </div>
+      
+      <div class="email-card">
+        <h3 class="card-title">Order Details</h3>
+        <p style="margin-bottom: 10px;">
+          <strong>Title:</strong> ${orderData.title}
+        </p>
+        <p style="margin-bottom: 10px;">
+          <strong>Description:</strong> ${orderData.description}
+        </p>
+        ${orderData.width ? `<p style="margin-bottom: 10px;"><strong>Width:</strong> ${orderData.width} cm</p>` : ''}
+        ${orderData.height ? `<p style="margin-bottom: 10px;"><strong>Height:</strong> ${orderData.height} cm</p>` : ''}
+        ${orderData.depth ? `<p style="margin-bottom: 10px;"><strong>Depth:</strong> ${orderData.depth} cm</p>` : ''}
+        ${orderData.material ? `<p style="margin-bottom: 10px;"><strong>Material:</strong> ${orderData.material}</p>` : ''}
+      </div>
+      
+      ${customerInfo.email ? `
+      <div class="email-card">
+        <h3 class="card-title">Your Information</h3>
+        <p style="margin-bottom: 10px;">
+          <strong>Name:</strong> ${customerInfo.firstName || ''} ${customerInfo.lastName || ''}
+        </p>
+        <p style="margin-bottom: 10px;">
+          <strong>Email:</strong> ${customerInfo.email}
+        </p>
+        ${customerInfo.phone ? `<p style="margin-bottom: 10px;"><strong>Phone:</strong> ${customerInfo.phone}</p>` : ''}
+      </div>
+      ` : ''}
+      
+      <p class="content-text">
+        Thank you for submitting your custom laser order! We've received your request and will review it shortly. 
+        You'll receive an update once we've reviewed your order. If you have any questions, please don't hesitate to contact us!
+      </p>
+    </div>
+  `;
+  
+  return renderThemedEmail({
+    title: 'Custom Laser Order Confirmation',
+    subtitle: `Order #${orderId}`,
+    contentHtml,
+    primaryCtaText: 'View Orders',
+    primaryCtaUrl: viewOrdersUrl,
+    footerNote: 'This is an automated confirmation email for your custom laser order.'
+  });
+};
+
+// Admin New Custom Laser Order Email
+const renderAdminNewCustomLaserOrderEmail = (orderId, customerInfo, orderData) => {
+  const contentHtml = `
+    <div class="content-section">
+      <div style="text-align: center; margin-bottom: 30px;">
+        <h2 class="content-title">New Custom Laser Order! 🎨</h2>
+        <p class="content-text" style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
+          Order #${orderId}
+        </p>
+      </div>
+      
+      <div class="email-card">
+        <h3 class="card-title">Order Details</h3>
+        <p style="margin-bottom: 10px;">
+          <strong>Title:</strong> ${orderData.title}
+        </p>
+        <p style="margin-bottom: 10px;">
+          <strong>Description:</strong> ${orderData.description}
+        </p>
+        ${orderData.width ? `<p style="margin-bottom: 10px;"><strong>Width:</strong> ${orderData.width} cm</p>` : ''}
+        ${orderData.height ? `<p style="margin-bottom: 10px;"><strong>Height:</strong> ${orderData.height} cm</p>` : ''}
+        ${orderData.depth ? `<p style="margin-bottom: 10px;"><strong>Depth:</strong> ${orderData.depth} cm</p>` : ''}
+        ${orderData.material ? `<p style="margin-bottom: 10px;"><strong>Material:</strong> ${orderData.material}</p>` : ''}
+      </div>
+      
+      ${customerInfo.email ? `
+      <div class="email-card">
+        <h3 class="card-title">Customer Information</h3>
+        <p style="margin-bottom: 10px;">
+          <strong>Name:</strong> ${customerInfo.firstName || ''} ${customerInfo.lastName || ''}
+        </p>
+        <p style="margin-bottom: 10px;">
+          <strong>Email:</strong> ${customerInfo.email}
+        </p>
+        ${customerInfo.phone ? `<p style="margin-bottom: 10px;"><strong>Phone:</strong> ${customerInfo.phone}</p>` : ''}
+        ${customerInfo.address ? `<p style="margin-bottom: 10px;"><strong>Address:</strong> ${customerInfo.address}, ${customerInfo.city || ''}, ${customerInfo.country || ''}</p>` : ''}
+      </div>
+      ` : ''}
+    </div>
+  `;
+  
+  return renderThemedEmail({
+    title: 'New Custom Laser Order Alert',
+    subtitle: `Order #${orderId}`,
+    contentHtml,
+    primaryCtaText: 'View in Admin Panel',
+    primaryCtaUrl: `${process.env.ADMIN_URL || 'http://localhost:5173/admin'}/orders`,
+    footerNote: 'This is an automated notification for Admins.'
+  });
+};
+
 // 2b. MANUAL SUCCESS EMAIL
 const renderManualNotificationEmail = (orderId, customerInfo) => {
   const contentHtml = `
@@ -2855,6 +2976,48 @@ const sendAdminNewOrderEmail = async (orderId, customerInfo, items, totals) => {
     return true;
   } catch (error) {
     console.error('❌ Admin notification email error:', error);
+    return false;
+  }
+};
+
+// Send Custom Laser Order Confirmation Email (Customer)
+const sendCustomLaserOrderConfirmationEmail = async (orderId, customerInfo, orderData) => {
+  const html = renderCustomLaserOrderConfirmationEmail(orderId, customerInfo, orderData);
+  const mailOptions = {
+    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
+    to: customerInfo.email,
+    subject: `✅ Custom Laser Order Confirmed #${orderId} - Yokebud Craft`,
+    html,
+    priority: 'high'
+  };
+  
+  try {
+    await sendMail(mailOptions);
+    console.log(`📧 Custom laser order confirmation email sent for order #${orderId}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Custom laser order confirmation email error:', error);
+    return false;
+  }
+};
+
+// Send Admin New Custom Laser Order Email
+const sendAdminNewCustomLaserOrderEmail = async (orderId, customerInfo, orderData) => {
+  const html = renderAdminNewCustomLaserOrderEmail(orderId, customerInfo, orderData);
+  const mailOptions = {
+    from: process.env.EMAIL_FROM || 'Yokebud Craft System <yokebud@gmail.com>',
+    to: 'yokebud@gmail.com',
+    subject: `🎨 New Custom Laser Order Received: #${orderId}`,
+    html,
+    priority: 'high'
+  };
+  
+  try {
+    await sendMail(mailOptions);
+    console.log(`📧 Admin custom laser order notification sent for order #${orderId}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Admin custom laser order notification email error:', error);
     return false;
   }
 };
@@ -11301,8 +11464,8 @@ app.post('/api/custom-laser-orders', async (req, res) => {
       }
     }
 
-    const { title, description, image_url, width, height, depth, material } = req.body;
-    console.log('Received data:', { title, description, image_url, width, height, depth, material });
+    const { title, description, image_url, image_urls, width, height, depth, material } = req.body;
+    console.log('Received data:', { title, description, image_url, image_urls, width, height, depth, material });
     
     if (!title || !description) {
       console.log('Validation failed: missing title or description');
@@ -11313,11 +11476,75 @@ app.post('/api/custom-laser-orders', async (req, res) => {
     console.log('Database connection acquired');
     
     const [result] = await connection.query(
-      'INSERT INTO custom_laser_orders (user_id, title, description, image_url, width, height, depth, material) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [userId, title, description, image_url, width || null, height || null, depth || null, material || null]
+      'INSERT INTO custom_laser_orders (user_id, title, description, image_url, image_urls, width, height, depth, material) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        userId, 
+        title, 
+        description, 
+        image_url || null, 
+        image_urls ? JSON.stringify(image_urls) : null, 
+        width || null, 
+        height || null, 
+        depth || null, 
+        material || null
+      ]
     );
     console.log('Insert result:', result);
+    
+    // Fetch user data if userId exists to send emails
+    let customerInfo = {};
+    if (userId) {
+      try {
+        const [userData] = await connection.query(
+          `SELECT uc.email, up.first_name, up.last_name, up.phone,
+           up.house_number, up.apartment, up.landmark, up.address, 
+           up.city, up.state, up.zip_code, up.country
+           FROM user_credentials uc 
+           LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
+           WHERE uc.user_id = ? AND uc.is_active = TRUE`,
+          [userId]
+        );
+        if (userData.length > 0) {
+          customerInfo = {
+            email: userData[0].email,
+            firstName: userData[0].first_name,
+            lastName: userData[0].last_name,
+            phone: userData[0].phone,
+            houseNumber: userData[0].house_number,
+            apartment: userData[0].apartment,
+            landmark: userData[0].landmark,
+            address: userData[0].address,
+            city: userData[0].city,
+            state: userData[0].state,
+            zipCode: userData[0].zip_code,
+            country: userData[0].country
+          };
+        }
+      } catch (userErr) {
+        console.error('Error fetching user data for custom order email:', userErr);
+      }
+    }
+    
     connection.release();
+    
+    const orderData = { title, description, width, height, depth, material };
+    
+    // Send emails
+    if (customerInfo.email) {
+      try {
+        await sendCustomLaserOrderConfirmationEmail(result.insertId, customerInfo, orderData);
+        await sendAdminNewCustomLaserOrderEmail(result.insertId, customerInfo, orderData);
+      } catch (emailErr) {
+        console.error('Error sending custom order emails:', emailErr);
+      }
+    } else {
+      // Still send admin notification even if no user email
+      try {
+        await sendAdminNewCustomLaserOrderEmail(result.insertId, customerInfo, orderData);
+      } catch (emailErr) {
+        console.error('Error sending admin custom order email:', emailErr);
+      }
+    }
 
     res.status(201).json({ success: true, orderId: result.insertId, message: 'Custom laser order submitted successfully' });
   } catch (error) {
@@ -11345,6 +11572,18 @@ app.get('/api/custom-laser-orders', async (req, res) => {
       'SELECT * FROM custom_laser_orders WHERE user_id = ? ORDER BY created_at DESC',
       [userId]
     );
+    
+    // Parse image_urls if it's a JSON string
+    for (const order of orders) {
+      if (order.image_urls && typeof order.image_urls === 'string') {
+        try {
+          order.image_urls = JSON.parse(order.image_urls);
+        } catch (e) {
+            order.image_urls = [];
+          }
+      }
+    }
+    
     console.log('Found orders:', orders.length);
     connection.release();
 
@@ -11371,13 +11610,26 @@ app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => 
     console.log('Found admin orders:', orders.length);
     console.log('Orders:', orders);
     
+    // Parse image_urls if it's a JSON string
+    for (const order of orders) {
+      if (order.image_urls && typeof order.image_urls === 'string') {
+        try {
+          order.image_urls = JSON.parse(order.image_urls);
+        } catch (e) {
+          order.image_urls = [];
+        }
+      }
+    }
+    
     // Now, for each order, get user data if user_id exists
     for (let i = 0; i < orders.length; i++) {
       const order = orders[i];
       if (order.user_id) {
         try {
           const [userData] = await connection.query(
-            `SELECT uc.email, up.first_name, up.last_name 
+            `SELECT uc.email, up.first_name, up.last_name, up.phone,
+             up.house_number, up.apartment, up.landmark, up.address, 
+             up.city, up.state, up.zip_code, up.country
              FROM user_credentials uc 
              LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
              WHERE uc.user_id = ? AND uc.is_active = TRUE`,
@@ -11391,6 +11643,15 @@ app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => 
               user.first_name || user.last_name 
                 ? `${user.first_name || ''} ${user.last_name || ''}`.trim() 
                 : null;
+            orders[i].phone = user.phone;
+            orders[i].house_number = user.house_number;
+            orders[i].apartment = user.apartment;
+            orders[i].landmark = user.landmark;
+            orders[i].address = user.address;
+            orders[i].city = user.city;
+            orders[i].state = user.state;
+            orders[i].zip_code = user.zip_code;
+            orders[i].country = user.country;
           }
         } catch (userErr) {
           console.error('Error getting user for order', order.id, userErr);
