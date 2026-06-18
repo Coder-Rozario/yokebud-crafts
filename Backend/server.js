@@ -11453,20 +11453,20 @@ app.post('/api/custom-laser-orders', async (req, res) => {
   let connection;
   try {
     console.log('=== /api/custom-laser-orders POST called ===');
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    console.log('Received token:', token ? 'yes' : 'no');
     
-    let userId = null;
-    if (token) {
+    const authHeader = req.headers.authorization || '';
+    const tokenRaw = authHeader.startsWith('Bearer ') ? authHeader.replace('Bearer ', '') : null;
+    let authUserId = null;
+    if (tokenRaw) {
       try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        userId = decoded.userId;
-        console.log('Decoded userId:', userId);
-      } catch (err) {
-        console.log('Token verification failed:', err.message);
-        // If token invalid, proceed without userId
+        const decoded = jwt.verify(tokenRaw, JWT_SECRET);
+        authUserId = decoded && decoded.userId ? decoded.userId : null;
+        console.log('Decoded userId:', authUserId);
+      } catch (_) {
+        console.log('Token verification failed');
       }
     }
+    console.log('Received tokenRaw:', tokenRaw ? 'yes' : 'no', 'authUserId:', authUserId);
 
     const { title, description, image_url, image_urls, width, height, depth, material } = req.body;
     console.log('Received data:', { title, description, image_url, image_urls, width, height, depth, material });
@@ -11482,7 +11482,7 @@ app.post('/api/custom-laser-orders', async (req, res) => {
     const [result] = await connection.query(
       'INSERT INTO custom_laser_orders (user_id, title, description, image_url, image_urls, width, height, depth, material) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
-        userId, 
+        authUserId, 
         title, 
         description, 
         image_url || null, 
@@ -11495,9 +11495,9 @@ app.post('/api/custom-laser-orders', async (req, res) => {
     );
     console.log('Insert result:', result);
     
-    // Fetch user data if userId exists to send emails
+    // Fetch user data if authUserId exists to send emails
     let customerInfo = {};
-    if (userId) {
+    if (authUserId) {
       try {
         const [userData] = await connection.query(
           `SELECT uc.email, up.first_name, up.last_name, up.phone,
@@ -11506,7 +11506,7 @@ app.post('/api/custom-laser-orders', async (req, res) => {
            FROM user_credentials uc 
            LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
            WHERE uc.user_id = ? AND uc.is_active = TRUE`,
-          [userId]
+          [authUserId]
         );
         if (userData.length > 0) {
           customerInfo = {
