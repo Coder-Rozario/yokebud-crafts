@@ -11987,7 +11987,12 @@ app.get('/api/admin/users', requireAdminAuth, async (req, res) => {
   try {
     console.log('=== /api/admin/users GET called ===');
     connection = await pool.getConnection();
-    const [users] = await connection.query('SELECT id, user_id, first_name, last_name, phone, email FROM user_profiles ORDER BY created_at DESC');
+    const [users] = await connection.query(`
+      SELECT up.user_id, up.first_name, up.last_name, up.phone, uc.email
+      FROM user_profiles up
+      INNER JOIN user_credentials uc ON up.user_id = uc.user_id
+      ORDER BY up.created_at DESC
+    `);
     connection.release();
     res.json({ success: true, users });
   } catch (error) {
