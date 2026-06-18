@@ -11362,15 +11362,42 @@ app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => 
   try {
     console.log('=== /api/admin/custom-laser-orders GET called ===');
     connection = await pool.getConnection();
+    
+    // Get all orders first
     const [orders] = await connection.query(
-      `SELECT clo.*, uc.email, 
-              CONCAT(up.first_name, ' ', up.last_name) as display_name
-       FROM custom_laser_orders clo 
-       LEFT JOIN user_credentials uc ON clo.user_id = uc.user_id
-       LEFT JOIN user_profiles up ON clo.user_id = up.user_id 
-       ORDER BY clo.created_at DESC`
+      'SELECT * FROM custom_laser_orders ORDER BY created_at DESC'
     );
+    
     console.log('Found admin orders:', orders.length);
+    console.log('Orders:', orders);
+    
+    // Now, for each order, get user data if user_id exists
+    for (let i = 0; i < orders.length; i++) {
+      const order = orders[i];
+      if (order.user_id) {
+        try {
+          const [userData] = await connection.query(
+            `SELECT uc.email, up.first_name, up.last_name 
+             FROM user_credentials uc 
+             LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
+             WHERE uc.user_id = ? AND uc.is_active = TRUE`,
+            [order.user_id]
+          );
+          
+          if (userData.length > 0) {
+            const user = userData[0];
+            orders[i].email = user.email;
+            orders[i].display_name = 
+              user.first_name || user.last_name 
+                ? `${user.first_name || ''} ${user.last_name || ''}`.trim() 
+                : null;
+          }
+        } catch (userErr) {
+          console.error('Error getting user for order', order.id, userErr);
+        }
+      }
+    }
+    
     connection.release();
     res.json({ success: true, orders });
   } catch (error) {
