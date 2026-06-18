@@ -655,10 +655,14 @@ async function ensureCustomLaserOrdersSchema() {
         material VARCHAR(100) NULL,
         status VARCHAR(50) DEFAULT 'pending',
         notes TEXT NULL,
+        price DECIMAL(10,2) NULL,
+        checkout_active BOOLEAN DEFAULT FALSE,
+        order_id VARCHAR(255) NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
-        KEY idx_user (user_id)
+        KEY idx_user (user_id),
+        KEY idx_order (order_id)
       )`
     );
     
@@ -678,6 +682,42 @@ async function ensureCustomLaserOrdersSchema() {
       console.warn('⚠️ Could not alter user_id column:', err.message);
     }
     
+    // Add price column
+    try {
+      await connection.query('ALTER TABLE custom_laser_orders ADD COLUMN price DECIMAL(10,2) NULL AFTER notes');
+    } catch (err) {
+      if (!err.message.includes('Duplicate column name')) {
+        console.warn('⚠️ Could not add price column:', err.message);
+      }
+    }
+    
+    // Add checkout_active column
+    try {
+      await connection.query('ALTER TABLE custom_laser_orders ADD COLUMN checkout_active BOOLEAN DEFAULT FALSE AFTER price');
+    } catch (err) {
+      if (!err.message.includes('Duplicate column name')) {
+        console.warn('⚠️ Could not add checkout_active column:', err.message);
+      }
+    }
+    
+    // Add order_id column
+    try {
+      await connection.query('ALTER TABLE custom_laser_orders ADD COLUMN order_id VARCHAR(255) NULL AFTER checkout_active');
+    } catch (err) {
+      if (!err.message.includes('Duplicate column name')) {
+        console.warn('⚠️ Could not add order_id column:', err.message);
+      }
+    }
+    
+    // Add index on order_id
+    try {
+      await connection.query('CREATE INDEX idx_order ON custom_laser_orders (order_id)');
+    } catch (err) {
+      if (!err.message.includes('Duplicate key name')) {
+        console.warn('⚠️ Could not add order_id index:', err.message);
+      }
+    }
+    
     console.log('✅ Custom laser orders schema checked/created successfully');
   } catch (e) {
     console.warn('⚠️ Custom laser orders schema check failed:', e.message);
@@ -687,6 +727,38 @@ async function ensureCustomLaserOrdersSchema() {
 }
 
 ensureCustomLaserOrdersSchema();
+
+async function ensureOrdersCustomLaserColumn() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    
+    // Add custom_laser_order_id column to orders
+    try {
+      await connection.query('ALTER TABLE orders ADD COLUMN custom_laser_order_id VARCHAR(255) NULL AFTER notes');
+    } catch (err) {
+      if (!err.message.includes('Duplicate column name')) {
+        console.warn('⚠️ Could not add custom_laser_order_id column to orders:', err.message);
+      }
+    }
+    
+    // Add index
+    try {
+      await connection.query('CREATE INDEX idx_custom_laser_order ON orders (custom_laser_order_id)');
+    } catch (err) {
+      if (!err.message.includes('Duplicate key name')) {
+        console.warn('⚠️ Could not add custom_laser_order_id index:', err.message);
+      }
+    }
+    
+    console.log('✅ Orders custom laser column checked/created');
+  } catch (e) {
+    console.warn('⚠️ Orders custom laser column check failed:', e.message);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+ensureOrdersCustomLaserColumn();
 
 async function ensureSeoContentSchema() {
   let connection;
@@ -6935,14 +7007,16 @@ app.post('/api/user/logout', async (req, res) => {
       totals,
       estimatedDelivery,
       productionTime,
-      promoCode
+      promoCode,
+      custom_laser_order_id
     } = req.body;
 
     console.log('Received order data:', {
       customerInfo,
       paymentMethod,
       itemsCount: items?.length,
-      totals
+      totals,
+      custom_laser_order_id
     });
 
     // Validate required fields
@@ -6985,6 +7059,7 @@ app.post('/api/user/logout', async (req, res) => {
     try {
       const arrItems = Array.isArray(items) ? items : [];
       for (const it of arrItems) {
+        if (it.is_custom_laser_order) continue; // Skip custom laser orders for stock checks
         const pid = it && it.id != null ? Number(it.id) : null;
         const qty = it && it.quantity != null ? Number(it.quantity) : 0;
         if (!pid || qty <= 0) continue;
@@ -7073,7 +7148,8 @@ app.post('/api/user/logout', async (req, res) => {
         zip: customerInfo.zip,
         country: customerInfo.country
       }),
-      notes: customizationNotes
+      notes: customizationNotes,
+      custom_laser_order_id: custom_laser_order_id || null
     };
 
     // Insert order into database
@@ -7081,6 +7157,14 @@ app.post('/api/user/logout', async (req, res) => {
       `INSERT INTO orders SET ?`,
       [orderData]
     );
+
+    // If custom laser order, update its status and link it to this order
+    if (custom_laser_order_id) {
+      await connection.query(
+        'UPDATE custom_laser_orders SET status = ?, order_id = ? WHERE id = ?',
+        ['Processing', orderId, custom_laser_order_id]
+      );
+    }
 
     // Handle promo code if provided
     if (promoCode && promoCode.id) {
@@ -11771,13 +11855,13 @@ app.put('/api/admin/custom-laser-orders/:id', requireAdminAuth, async (req, res)
   try {
     console.log('=== /api/admin/custom-laser-orders PUT called ===');
     const { id } = req.params;
-    const { status, notes } = req.body;
-    console.log('Updating order', id, 'with status', status);
+    const { status, notes, price, checkout_active } = req.body;
+    console.log('Updating order', id, 'with status', status, 'price', price, 'checkout_active', checkout_active);
 
     connection = await pool.getConnection();
     const [result] = await connection.query(
-      'UPDATE custom_laser_orders SET status = COALESCE(?, status), notes = COALESCE(?, notes) WHERE id = ?',
-      [status, notes, id]
+      'UPDATE custom_laser_orders SET status = COALESCE(?, status), notes = COALESCE(?, notes), price = COALESCE(?, price), checkout_active = COALESCE(?, checkout_active) WHERE id = ?',
+      [status, notes, price, checkout_active, id]
     );
     console.log('Update result:', result);
     connection.release();
