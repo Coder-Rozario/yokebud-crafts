@@ -7989,7 +7989,11 @@ app.get('/api/products', async (req, res) => {
         created_at: product.created_at,
         updated_at: product.updated_at,
         rating: sum.rating,
-        review_count: sum.review_count
+        review_count: sum.review_count,
+        moq: product.moq,
+        metadata: meta,
+        bulk_discount: product.bulk_discount,
+        discount_ranges: meta?.discount_ranges || product.discount_ranges
       };
     });
 
