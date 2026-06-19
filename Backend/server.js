@@ -11787,6 +11787,7 @@ const createCustomLaserInquiry = async (connection, orderId, userId, orderData, 
     height: orderData.height,
     depth: orderData.depth,
     material: orderData.material,
+    category: orderData.category,
     quantity: 1,
   };
 
@@ -11855,12 +11856,12 @@ app.post('/api/custom-laser-orders', async (req, res) => {
     }
     console.log('Received tokenRaw:', tokenRaw ? 'yes' : 'no', 'authUserId:', authUserId);
 
-    const { title, description, image_url, image_urls, width, height, depth, material } = req.body;
-    console.log('Received data:', { title, description, image_url, image_urls, width, height, depth, material });
+    const { title, description, image_url, image_urls, width, height, depth, material, category } = req.body;
+    console.log('Received data:', { title, description, image_url, image_urls, width, height, depth, material, category });
     
-    if (!title || !description) {
-      console.log('Validation failed: missing title or description');
-      return res.status(400).json({ success: false, message: 'Title and description are required' });
+    if (!title || !description || !category) {
+      console.log('Validation failed: missing title, description, or category');
+      return res.status(400).json({ success: false, message: 'Title, description, and category are required' });
     }
 
     connection = await pool.getConnection();
@@ -11869,7 +11870,7 @@ app.post('/api/custom-laser-orders', async (req, res) => {
     const processedImages = await processCustomLaserImages(image_url, image_urls);
     
     const [result] = await connection.query(
-      'INSERT INTO custom_laser_orders (user_id, title, description, image_url, image_urls, width, height, depth, material) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO custom_laser_orders (user_id, title, description, image_url, image_urls, width, height, depth, material, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         authUserId, 
         title, 
@@ -11879,7 +11880,8 @@ app.post('/api/custom-laser-orders', async (req, res) => {
         width || null, 
         height || null, 
         depth || null, 
-        material || null
+        material || null,
+        category || null
       ]
     );
     console.log('Insert result:', result);
@@ -11894,6 +11896,7 @@ app.post('/api/custom-laser-orders', async (req, res) => {
       height: height || null,
       depth: depth || null,
       material: material || null,
+      category: category || null,
       price: null,
     };
 
@@ -12115,6 +12118,7 @@ app.post('/api/admin/custom-laser-orders/:id/ensure-inquiry', requireAdminAuth, 
       height: order.height,
       depth: order.depth,
       material: order.material,
+      category: order.category,
       price: order.price,
     }, {
       firstName: user.first_name,
@@ -12186,6 +12190,7 @@ app.post('/api/custom-laser-orders/:id/ensure-inquiry', async (req, res) => {
       height: order.height,
       depth: order.depth,
       material: order.material,
+      category: order.category,
       price: order.price,
     }, {
       firstName: user.first_name,
