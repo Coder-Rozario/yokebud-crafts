@@ -3366,7 +3366,6 @@ const validateProductPayload = (payload) => {
     name,
     description,
     price,
-    product_price,
     categories,
     stock,
     sku,
@@ -3377,13 +3376,12 @@ const validateProductPayload = (payload) => {
   } = payload || {};
   if (!name || typeof name !== 'string') return { valid: false, message: 'Invalid name' };
   if (!description || typeof description !== 'string') return { valid: false, message: 'Invalid description' };
-  const finalPrice = price != null ? price : product_price;
-  if (finalPrice == null || isNaN(Number(finalPrice)) || Number(finalPrice) <= 0) return { valid: false, message: 'Invalid price' };
+  if (price == null || isNaN(Number(price)) || Number(price) <= 0) return { valid: false, message: 'Invalid price' };
   if (!Array.isArray(categories) || categories.length === 0) return { valid: false, message: 'Invalid categories' };
   
   // Only validate stock if not a preorder
   if (!is_preorder && stock_status !== 'Pre-order') {
-    if (stock == null || stock === '' || isNaN(parseInt(stock))) return { valid: false, message: 'Invalid stock' };
+    if (stock == null || isNaN(parseInt(stock))) return { valid: false, message: 'Invalid stock' };
   }
   
   if (!sku || typeof sku !== 'string') return { valid: false, message: 'Invalid SKU' };
@@ -7602,7 +7600,6 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       name,
       description,
       price,
-      product_price,
       discounted_price,
       categories,
       stock,
@@ -7631,7 +7628,6 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       is_preorder,
       stock_status,
       customization_type,
-      customization_mode,
       customization_images,
       customization_dimensions,
       allow_customer_size_adjustment
@@ -7645,7 +7641,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       });
     }
 
-    const finalPrice = parseFloat(price != null ? price : product_price);
+    const finalPrice = parseFloat(price);
     const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
 
     // Process sizes
@@ -7666,7 +7662,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
 
     const baseSlug = slugify(slug || name);
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
-    const imageArray = Array.isArray(images) && images.length > 0 ? images : (Array.isArray(imageUrls) ? imageUrls : []);
+    const imageArray = Array.isArray(images) ? images : (Array.isArray(imageUrls) ? imageUrls : []);
     const thumb = thumbnail || (imageArray[0] || null);
 
     // Auto-generate SEO fields if not provided
@@ -7682,7 +7678,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount, discount_ranges: discount_ranges || [] });
 
     // Debug: log customization_mode for incoming create
-    console.log('CREATE product - customization_mode:', customization_mode);
+    console.log('CREATE product - customization_mode:', req.body.customization_mode);
     const [result] = await connection.query(
       `INSERT INTO products (
         product_name,
@@ -7755,7 +7751,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         finalSeoKeywords,
         finalSchemaJson,
         customization_type || 'Apparels',
-        customization_mode || null,
+        req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
         customization_dimensions ? JSON.stringify(customization_dimensions) : null,
         allow_customer_size_adjustment ? 1 : 0
@@ -7799,10 +7795,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const {
       name,
       description,
-      price,
-      product_price,
-      min_price,
-      discounted_price,
+      price, // This will be max_price
+      min_price, // This can be custom min price
+      discounted_price, // For setting min_price
       categories,
       stock,
       moq,
@@ -7818,67 +7813,51 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       tags,
       features,
       imageUrls,
-      images,
       imagesToDelete = [],
       is_customizable,
       is_preorder,
       stock_status,
       customization_type,
-      customization_mode,
       customization_images,
       customization_dimensions,
       allow_customer_size_adjustment,
       metadata
     } = req.body;
 
-    console.log('Step 1: Validating product payload...');
     const validation = validateProductPayload({
       name,
       description,
       price,
-      product_price,
       categories,
       stock,
       sku,
       imageUrls,
-      images,
       is_preorder,
       stock_status
     });
     if (!validation.valid) {
-      console.log('Validation failed:', validation.message);
       return res.status(400).json({ 
         success: false, 
         message: validation.message
       });
     }
 
-    console.log('Step 2: Parsing prices...');
-    const finalPrice = parseFloat(price != null ? price : product_price);
+    const finalPrice = parseFloat(price);
     const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
-    console.log('finalPrice:', finalPrice, 'finalDiscountedPrice:', finalDiscountedPrice);
 
-    console.log('Step 3: Processing sizes...');
     // Process sizes
     const processedSizes = processSizes(sizes);
-    console.log('processedSizes:', processedSizes);
 
-    console.log('Step 4: Getting DB connection...');
     connection = await pool.getConnection();
-    console.log('Got connection');
     
-    console.log('Step 5: Starting transaction...');
     await connection.beginTransaction();
-    console.log('Transaction started');
     
     
-    console.log('Step 6: Fetching current product data...');
     // Get current product data
     const [products] = await connection.query(
       'SELECT sku FROM products WHERE id = ?',
       [productId]
     );
-    console.log('Fetched products:', products);
     
     if (products.length === 0) {
       await connection.rollback();
@@ -7887,16 +7866,13 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     }
 
     const currentSku = products[0].sku;
-    console.log('Current SKU:', currentSku);
     
     // Check if SKU is being changed to one that already exists
     if (sku !== currentSku) {
-      console.log('Checking SKU uniqueness...');
       const [skuCheck] = await connection.query(
         'SELECT id FROM products WHERE sku = ? AND id != ?',
         [sku, productId]
       );
-      console.log('SKU check result:', skuCheck);
       
       if (skuCheck.length > 0) {
         await connection.rollback();
@@ -7908,7 +7884,6 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     // Delete images from Cloudinary
     if (imagesToDelete.length > 0) {
       try {
-        console.log('Deleting images from Cloudinary...');
         const deletePromises = imagesToDelete.map(publicId => {
           return cloudinary.uploader.destroy(publicId);
         });
@@ -7918,16 +7893,11 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       }
     }
 
-    console.log('Step 7: Generating slug...');
     // Update product in database
     const baseSlug = slugify(name);
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
-    console.log('Unique slug:', uniqueSlug);
-
-    console.log('Step 8: Stringifying JSON fields...');
-    const imageArray = Array.isArray(images) && images.length > 0 ? images : (Array.isArray(imageUrls) ? imageUrls : []);
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
-    const imagesJson = JSON.stringify(imageArray);
+    const imagesJson = JSON.stringify(imageUrls);
     const metadataJson = JSON.stringify({ 
       tags, 
       features, 
@@ -7936,18 +7906,14 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       bulk_discount, 
       discount_ranges: discount_ranges || (metadata && metadata.discount_ranges) || [] 
     });
-    console.log('JSON stringification complete');
 
-    console.log('Step 9: Generating SEO fields...');
     // Auto-generate SEO fields if not provided
-    const seo = generateProductSEO(name, description, finalPrice, imageArray);
+    const seo = generateProductSEO(name, description, finalPrice, imageUrls);
     const finalSeoTitle = req.body.seo_title || seo.seo_title;
     const finalSeoDescription = req.body.seo_description || seo.seo_description;
     const finalSeoKeywords = req.body.seo_keywords || seo.seo_keywords;
     const finalSchemaJson = req.body.schema_json ? JSON.stringify(req.body.schema_json) : JSON.stringify(seo.schema_json);
-    console.log('SEO complete');
 
-    console.log('Step 10: Updating product in DB...');
     const [result] = await connection.query(
       `UPDATE products SET 
         product_name = ?,
@@ -8008,7 +7974,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         uniqueSlug,
         'active',
         0,
-        (imageArray[0] || null),
+        (imageUrls[0] || null),
         attributesJson,
         imagesJson,
         metadataJson,
@@ -8021,20 +7987,15 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         finalSeoKeywords,
         finalSchemaJson,
         customization_type || 'Apparels',
-        customization_mode || null,
+        req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
         customization_dimensions ? JSON.stringify(customization_dimensions) : null,
         allow_customer_size_adjustment ? 1 : 0,
         productId
       ]
     );
-    console.log('Product updated in DB');
-
-    console.log('Step 11: Handling variants...');
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
-    console.log('Deleting old variants...');
     await connection.query('DELETE FROM product_variants WHERE product_id = ?', [productId]);
-    console.log('Inserting new variants:', variants);
     for (const v of variants) {
       const qty = v && v.quantity != null ? parseInt(v.quantity) : 0;
       await connection.query(
@@ -8042,12 +8003,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         [productId, v && v.color ? String(v.color) : null, v && v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
       );
     }
-    console.log('Variants handled');
     
-    console.log('Step 12: Committing transaction...');
     await connection.commit();
     connection.release();
-    console.log('Transaction committed');
 
     res.json({ 
       success: true, 
@@ -8058,21 +8016,12 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     // Auto-regenerate sitemap when a product is updated
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product update:', err));
   } catch (error) {
-    console.error('=== Product update error ===');
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
-    try { if (connection) {
-      console.log('Rolling back transaction...');
-      await connection.rollback(); 
-      connection.release();
-    } } catch (rollbackErr) {
-      console.error('Error rolling back transaction:', rollbackErr);
-    }
+    try { if (connection) await connection.rollback(); } catch {}
+    console.error('Product update error:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Failed to update product',
-      error: error.message,
-      stack: error.stack 
+      error: error.message 
     });
   }
 });
