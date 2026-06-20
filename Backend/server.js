@@ -3366,6 +3366,7 @@ const validateProductPayload = (payload) => {
     name,
     description,
     price,
+    product_price,
     categories,
     stock,
     sku,
@@ -3376,12 +3377,13 @@ const validateProductPayload = (payload) => {
   } = payload || {};
   if (!name || typeof name !== 'string') return { valid: false, message: 'Invalid name' };
   if (!description || typeof description !== 'string') return { valid: false, message: 'Invalid description' };
-  if (price == null || isNaN(Number(price)) || Number(price) <= 0) return { valid: false, message: 'Invalid price' };
+  const finalPrice = price != null ? price : product_price;
+  if (finalPrice == null || isNaN(Number(finalPrice)) || Number(finalPrice) <= 0) return { valid: false, message: 'Invalid price' };
   if (!Array.isArray(categories) || categories.length === 0) return { valid: false, message: 'Invalid categories' };
   
   // Only validate stock if not a preorder
   if (!is_preorder && stock_status !== 'Pre-order') {
-    if (stock == null || isNaN(parseInt(stock))) return { valid: false, message: 'Invalid stock' };
+    if (stock == null || stock === '' || isNaN(parseInt(stock))) return { valid: false, message: 'Invalid stock' };
   }
   
   if (!sku || typeof sku !== 'string') return { valid: false, message: 'Invalid SKU' };
@@ -7600,6 +7602,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       name,
       description,
       price,
+      product_price,
       discounted_price,
       categories,
       stock,
@@ -7628,6 +7631,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       is_preorder,
       stock_status,
       customization_type,
+      customization_mode,
       customization_images,
       customization_dimensions,
       allow_customer_size_adjustment
@@ -7641,7 +7645,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       });
     }
 
-    const finalPrice = parseFloat(price);
+    const finalPrice = parseFloat(price != null ? price : product_price);
     const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
 
     // Process sizes
@@ -7662,7 +7666,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
 
     const baseSlug = slugify(slug || name);
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
-    const imageArray = Array.isArray(images) ? images : (Array.isArray(imageUrls) ? imageUrls : []);
+    const imageArray = Array.isArray(images) && images.length > 0 ? images : (Array.isArray(imageUrls) ? imageUrls : []);
     const thumb = thumbnail || (imageArray[0] || null);
 
     // Auto-generate SEO fields if not provided
@@ -7678,7 +7682,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount, discount_ranges: discount_ranges || [] });
 
     // Debug: log customization_mode for incoming create
-    console.log('CREATE product - customization_mode:', req.body.customization_mode);
+    console.log('CREATE product - customization_mode:', customization_mode);
     const [result] = await connection.query(
       `INSERT INTO products (
         product_name,
@@ -7751,7 +7755,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         finalSeoKeywords,
         finalSchemaJson,
         customization_type || 'Apparels',
-        req.body.customization_mode || null,
+        customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
         customization_dimensions ? JSON.stringify(customization_dimensions) : null,
         allow_customer_size_adjustment ? 1 : 0
@@ -7795,9 +7799,10 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const {
       name,
       description,
-      price, // This will be max_price
-      min_price, // This can be custom min price
-      discounted_price, // For setting min_price
+      price,
+      product_price,
+      min_price,
+      discounted_price,
       categories,
       stock,
       moq,
@@ -7813,11 +7818,13 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       tags,
       features,
       imageUrls,
+      images,
       imagesToDelete = [],
       is_customizable,
       is_preorder,
       stock_status,
       customization_type,
+      customization_mode,
       customization_images,
       customization_dimensions,
       allow_customer_size_adjustment,
@@ -7829,10 +7836,12 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       name,
       description,
       price,
+      product_price,
       categories,
       stock,
       sku,
       imageUrls,
+      images,
       is_preorder,
       stock_status
     });
@@ -7845,7 +7854,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     }
 
     console.log('Step 2: Parsing prices...');
-    const finalPrice = parseFloat(price);
+    const finalPrice = parseFloat(price != null ? price : product_price);
     const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
     console.log('finalPrice:', finalPrice, 'finalDiscountedPrice:', finalDiscountedPrice);
 
@@ -7916,8 +7925,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     console.log('Unique slug:', uniqueSlug);
 
     console.log('Step 8: Stringifying JSON fields...');
+    const imageArray = Array.isArray(images) && images.length > 0 ? images : (Array.isArray(imageUrls) ? imageUrls : []);
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
-    const imagesJson = JSON.stringify(imageUrls);
+    const imagesJson = JSON.stringify(imageArray);
     const metadataJson = JSON.stringify({ 
       tags, 
       features, 
@@ -7930,7 +7940,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
 
     console.log('Step 9: Generating SEO fields...');
     // Auto-generate SEO fields if not provided
-    const seo = generateProductSEO(name, description, finalPrice, imageUrls);
+    const seo = generateProductSEO(name, description, finalPrice, imageArray);
     const finalSeoTitle = req.body.seo_title || seo.seo_title;
     const finalSeoDescription = req.body.seo_description || seo.seo_description;
     const finalSeoKeywords = req.body.seo_keywords || seo.seo_keywords;
@@ -7998,7 +8008,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         uniqueSlug,
         'active',
         0,
-        (imageUrls[0] || null),
+        (imageArray[0] || null),
         attributesJson,
         imagesJson,
         metadataJson,
@@ -8011,7 +8021,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         finalSeoKeywords,
         finalSchemaJson,
         customization_type || 'Apparels',
-        req.body.customization_mode || null,
+        customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
         customization_dimensions ? JSON.stringify(customization_dimensions) : null,
         allow_customer_size_adjustment ? 1 : 0,
