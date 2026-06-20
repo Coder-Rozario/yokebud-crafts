@@ -3351,13 +3351,11 @@ const generateProductSEO = (name, description, price, imageUrls) => {
   return { seo_title, seo_description, seo_keywords, schema_json };
 };
 
-const ensureUniqueSlug = async (connection, baseSlug, table = 'products', excludeId = null) => {
+const ensureUniqueSlug = async (connection, baseSlug, table = 'products') => {
   let slug = baseSlug;
   let suffix = 1;
   while (true) {
-    const [rows] = excludeId
-      ? await connection.query(`SELECT id FROM ${table} WHERE slug = ? AND id != ? LIMIT 1`, [slug, excludeId])
-      : await connection.query(`SELECT id FROM ${table} WHERE slug = ? LIMIT 1`, [slug]);
+    const [rows] = await connection.query(`SELECT id FROM ${table} WHERE slug = ? LIMIT 1`, [slug]);
     if (!rows || rows.length === 0) return slug;
     slug = `${baseSlug}-${suffix++}`;
   }
@@ -7597,6 +7595,7 @@ app.put('/api/orders/:orderId/tracking', async (req, res) => {
 app.post('/api/products', requireAdminAuth, async (req, res) => {
   let connection;
   try {
+    console.log('POST /api/products - req.body:', JSON.stringify(req.body, null, 2));
     const {
       name,
       description,
@@ -7791,6 +7790,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
 app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
   let connection;
   try {
+    console.log('PUT /api/products/:id - req.body:', JSON.stringify(req.body, null, 2));
     const productId = req.params.id;
     const {
       name,
@@ -7832,7 +7832,6 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       stock,
       sku,
       imageUrls,
-      images: req.body.images,
       is_preorder,
       stock_status
     });
@@ -7896,7 +7895,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
 
     // Update product in database
     const baseSlug = slugify(name);
-    const uniqueSlug = await ensureUniqueSlug(connection, baseSlug, 'products', productId);
+    const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageUrls);
     const metadataJson = JSON.stringify({ 
@@ -8018,7 +8017,6 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product update:', err));
   } catch (error) {
     try { if (connection) await connection.rollback(); } catch {}
-    try { if (connection) connection.release(); } catch {}
     console.error('Product update error:', error);
     res.status(500).json({ 
       success: false, 
@@ -9429,31 +9427,53 @@ app.get('/api/admin/dashboard', requireAdminAuth, async (req, res) => {
   try {
     connection = await pool.getConnection();
     
-    const [unreadCount] = await connection.query(
-      'SELECT COUNT(*) as count FROM messages WHERE is_read = 0'
-    );
+    let unreadMessages = 0, totalMessages = 0, totalProducts = 0, pendingOrders = 0;
     
-    const [totalCount] = await connection.query(
-      'SELECT COUNT(*) as count FROM messages'
-    );
+    try {
+      const [unreadCount] = await connection.query(
+        'SELECT COUNT(*) as count FROM messages WHERE is_read = 0'
+      );
+      unreadMessages = unreadCount[0].count;
+    } catch (e) {
+      console.warn('Dashboard: messages table not found, defaulting to 0');
+    }
     
-    const [productCount] = await connection.query(
-      'SELECT COUNT(*) as count FROM products'
-    );
+    try {
+      const [totalCount] = await connection.query(
+        'SELECT COUNT(*) as count FROM messages'
+      );
+      totalMessages = totalCount[0].count;
+    } catch (e) {
+      console.warn('Dashboard: messages table not found, defaulting to 0');
+    }
     
-    const [orderCount] = await connection.query(
-      'SELECT COUNT(*) as count FROM checkout_data WHERE status IN ("Pending", "Processing")'
-    );
+    try {
+      const [productCount] = await connection.query(
+        'SELECT COUNT(*) as count FROM products'
+      );
+      totalProducts = productCount[0].count;
+    } catch (e) {
+      console.warn('Dashboard: products table not found, defaulting to 0');
+    }
+    
+    try {
+      const [orderCount] = await connection.query(
+        'SELECT COUNT(*) as count FROM checkout_data WHERE status IN ("Pending", "Processing")'
+      );
+      pendingOrders = orderCount[0].count;
+    } catch (e) {
+      console.warn('Dashboard: checkout_data table not found, defaulting to 0');
+    }
     
     connection.release();
 
     res.json({ 
       success: true, 
       stats: {
-        unreadMessages: unreadCount[0].count,
-        totalMessages: totalCount[0].count,
-        totalProducts: productCount[0].count,
-        pendingOrders: orderCount[0].count
+        unreadMessages,
+        totalMessages,
+        totalProducts,
+        pendingOrders
       }
     });
   } catch (error) {
