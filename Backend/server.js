@@ -7587,6 +7587,7 @@ app.put('/api/orders/:orderId/tracking', async (req, res) => {
 
 // Create product endpoint
 app.post('/api/products', requireAdminAuth, async (req, res) => {
+  let connection;
   try {
     const {
       name,
@@ -7639,7 +7640,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     // Process sizes
     const processedSizes = processSizes(sizes);
     
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     
     // Check for duplicate SKU
     const [existingProducts] = await connection.query(
@@ -7770,6 +7771,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     // Auto-regenerate sitemap when a new product is added
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product creation:', err));
   } catch (error) {
+    if (connection) connection.release();
     console.error('Product creation error:', error);
     res.status(500).json({ 
       success: false, 
@@ -8022,16 +8024,18 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
 
 // Get single product endpoint
 app.get('/api/products/:id', async (req, res) => {
+  let connection;
   try {
     const productId = req.params.id;
     
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [products] = await connection.query(
       'SELECT * FROM products WHERE id = ?',
       [productId]
     );
 
     if (products.length === 0) {
+      connection.release();
       return res.status(404).json({ error: 'Product not found' });
     }
 
@@ -8119,6 +8123,7 @@ app.get('/api/products/:id', async (req, res) => {
     connection.release();
     res.json(parsedProduct);
   } catch (error) {
+    if (connection) connection.release();
     console.error('Error fetching product:', error);
     res.status(500).json({ error: 'Failed to fetch product' });
   }
@@ -8126,8 +8131,9 @@ app.get('/api/products/:id', async (req, res) => {
 
 // Get all products endpoint
 app.get('/api/products', async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [products] = await connection.query(
       'SELECT * FROM products ORDER BY created_at DESC'
     );
@@ -8216,17 +8222,19 @@ app.get('/api/products', async (req, res) => {
 
     res.json(parsedProducts);
   } catch (error) {
+    if (connection) connection.release();
     console.error('Error fetching products:', error);
     res.status(500).json({ error: 'Failed to fetch products' });
   }
 });
 
 app.get('/api/products/:id/reviews', async (req, res) => {
+  let connection;
   try {
     const productId = req.params.id;
     const googleUid = (req.query && req.query.google_uid) ? String(req.query.google_uid) : null;
     const token = req.headers.authorization ? req.headers.authorization.replace('Bearer ', '') : null;
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [reviews] = await connection.query(
       'SELECT id, user_id, google_uid, reviewer_name, reviewer_photo_url, rating, title, review_text, media_json, is_first_review, created_at FROM user_reviews WHERE product_id = ? AND is_approved = 1 ORDER BY created_at DESC',
       [productId]
@@ -8250,6 +8258,8 @@ app.get('/api/products/:id/reviews', async (req, res) => {
     const summary = sumRows[0] || { avg_rating: null, review_count: 0 };
     res.json({ success: true, reviews, summary, you_have_rated: youHaveRated });
   } catch (error) {
+    if (connection) connection.release();
+    console.error('Error fetching reviews:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch reviews' });
   }
 });
@@ -9409,10 +9419,9 @@ app.post('/api/admin/verify-otp', async (req, res) => {
 // ==================== ADMIN DASHBOARD AND STATS ====================
 // Admin dashboard
 app.get('/api/admin/dashboard', requireAdminAuth, async (req, res) => {
+  let connection;
   try {
-    
-
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     
     const [unreadCount] = await connection.query(
       'SELECT COUNT(*) as count FROM messages WHERE is_read = 0'
@@ -9442,6 +9451,7 @@ app.get('/api/admin/dashboard', requireAdminAuth, async (req, res) => {
       }
     });
   } catch (error) {
+    if (connection) connection.release();
     console.error('Dashboard error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -9449,10 +9459,9 @@ app.get('/api/admin/dashboard', requireAdminAuth, async (req, res) => {
 
 // Admin: users summary (total users and recent activity)
 app.get('/api/admin/users/summary', requireAdminAuth, async (req, res) => {
+  let connection;
   try {
-    
-
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
 
     const [totalRows] = await connection.query(
       'SELECT COUNT(*) as count FROM user_profiles'
@@ -9483,6 +9492,7 @@ app.get('/api/admin/users/summary', requireAdminAuth, async (req, res) => {
       activity: activityRows
     });
   } catch (error) {
+    if (connection) connection.release();
     console.error('Users summary error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
