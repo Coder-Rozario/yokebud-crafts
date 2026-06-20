@@ -7824,6 +7824,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       metadata
     } = req.body;
 
+    console.log('Step 1: Validating product payload...');
     const validation = validateProductPayload({
       name,
       description,
@@ -7836,28 +7837,39 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       stock_status
     });
     if (!validation.valid) {
+      console.log('Validation failed:', validation.message);
       return res.status(400).json({ 
         success: false, 
         message: validation.message
       });
     }
 
+    console.log('Step 2: Parsing prices...');
     const finalPrice = parseFloat(price);
     const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
+    console.log('finalPrice:', finalPrice, 'finalDiscountedPrice:', finalDiscountedPrice);
 
+    console.log('Step 3: Processing sizes...');
     // Process sizes
     const processedSizes = processSizes(sizes);
+    console.log('processedSizes:', processedSizes);
 
+    console.log('Step 4: Getting DB connection...');
     connection = await pool.getConnection();
+    console.log('Got connection');
     
+    console.log('Step 5: Starting transaction...');
     await connection.beginTransaction();
+    console.log('Transaction started');
     
     
+    console.log('Step 6: Fetching current product data...');
     // Get current product data
     const [products] = await connection.query(
       'SELECT sku FROM products WHERE id = ?',
       [productId]
     );
+    console.log('Fetched products:', products);
     
     if (products.length === 0) {
       await connection.rollback();
@@ -7866,13 +7878,16 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     }
 
     const currentSku = products[0].sku;
+    console.log('Current SKU:', currentSku);
     
     // Check if SKU is being changed to one that already exists
     if (sku !== currentSku) {
+      console.log('Checking SKU uniqueness...');
       const [skuCheck] = await connection.query(
         'SELECT id FROM products WHERE sku = ? AND id != ?',
         [sku, productId]
       );
+      console.log('SKU check result:', skuCheck);
       
       if (skuCheck.length > 0) {
         await connection.rollback();
@@ -7884,6 +7899,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     // Delete images from Cloudinary
     if (imagesToDelete.length > 0) {
       try {
+        console.log('Deleting images from Cloudinary...');
         const deletePromises = imagesToDelete.map(publicId => {
           return cloudinary.uploader.destroy(publicId);
         });
@@ -7893,9 +7909,13 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       }
     }
 
+    console.log('Step 7: Generating slug...');
     // Update product in database
     const baseSlug = slugify(name);
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
+    console.log('Unique slug:', uniqueSlug);
+
+    console.log('Step 8: Stringifying JSON fields...');
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageUrls);
     const metadataJson = JSON.stringify({ 
@@ -7906,14 +7926,18 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       bulk_discount, 
       discount_ranges: discount_ranges || (metadata && metadata.discount_ranges) || [] 
     });
+    console.log('JSON stringification complete');
 
+    console.log('Step 9: Generating SEO fields...');
     // Auto-generate SEO fields if not provided
     const seo = generateProductSEO(name, description, finalPrice, imageUrls);
     const finalSeoTitle = req.body.seo_title || seo.seo_title;
     const finalSeoDescription = req.body.seo_description || seo.seo_description;
     const finalSeoKeywords = req.body.seo_keywords || seo.seo_keywords;
     const finalSchemaJson = req.body.schema_json ? JSON.stringify(req.body.schema_json) : JSON.stringify(seo.schema_json);
+    console.log('SEO complete');
 
+    console.log('Step 10: Updating product in DB...');
     const [result] = await connection.query(
       `UPDATE products SET 
         product_name = ?,
@@ -7994,8 +8018,13 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         productId
       ]
     );
+    console.log('Product updated in DB');
+
+    console.log('Step 11: Handling variants...');
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
+    console.log('Deleting old variants...');
     await connection.query('DELETE FROM product_variants WHERE product_id = ?', [productId]);
+    console.log('Inserting new variants:', variants);
     for (const v of variants) {
       const qty = v && v.quantity != null ? parseInt(v.quantity) : 0;
       await connection.query(
@@ -8003,9 +8032,12 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         [productId, v && v.color ? String(v.color) : null, v && v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
       );
     }
+    console.log('Variants handled');
     
+    console.log('Step 12: Committing transaction...');
     await connection.commit();
     connection.release();
+    console.log('Transaction committed');
 
     res.json({ 
       success: true, 
@@ -8016,12 +8048,21 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     // Auto-regenerate sitemap when a product is updated
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product update:', err));
   } catch (error) {
-    try { if (connection) await connection.rollback(); } catch {}
-    console.error('Product update error:', error);
+    console.error('=== Product update error ===');
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    try { if (connection) {
+      console.log('Rolling back transaction...');
+      await connection.rollback(); 
+      connection.release();
+    } } catch (rollbackErr) {
+      console.error('Error rolling back transaction:', rollbackErr);
+    }
     res.status(500).json({ 
       success: false, 
       message: 'Failed to update product',
-      error: error.message 
+      error: error.message,
+      stack: error.stack 
     });
   }
 });
