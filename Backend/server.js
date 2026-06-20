@@ -7788,19 +7788,13 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
 
 // Update product endpoint
 app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
-  console.log('=== PUT /api/products/:id START ===');
-  console.log('Product ID:', req.params.id);
-  console.log('Request Body Keys:', Object.keys(req.body));
   let connection;
   try {
-    console.log('PUT /api/products/:id - req.body:', JSON.stringify(req.body, null, 2));
     const productId = req.params.id;
     const {
       name,
       description,
-      price, // This will be max_price
-      min_price, // This can be custom min price
-      discounted_price, // For setting min_price
+      price,
       categories,
       stock,
       moq,
@@ -7816,17 +7810,16 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       tags,
       features,
       imageUrls,
-      imagesToDelete = [],
       is_customizable,
       is_preorder,
       stock_status,
       customization_type,
       customization_images,
       customization_dimensions,
-      allow_customer_size_adjustment,
-      metadata
+      allow_customer_size_adjustment
     } = req.body;
 
+    // Validate product payload
     const validation = validateProductPayload({
       name,
       description,
@@ -7845,58 +7838,29 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       });
     }
 
-    const finalPrice = parseFloat(price);
-    const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
-
-    // Process sizes
-    const processedSizes = processSizes(sizes);
-
+    // Get database connection
     connection = await pool.getConnection();
-    
-    await connection.beginTransaction();
-    
-    
-    // Get current product data
-    const [products] = await connection.query(
-      'SELECT sku FROM products WHERE id = ?',
-      [productId]
-    );
-    
+
+    // Check if product exists
+    const [products] = await connection.query('SELECT sku FROM products WHERE id = ?', [productId]);
     if (products.length === 0) {
-      await connection.rollback();
       connection.release();
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
+    // Check SKU uniqueness
     const currentSku = products[0].sku;
-    
-    // Check if SKU is being changed to one that already exists
     if (sku !== currentSku) {
-      const [skuCheck] = await connection.query(
-        'SELECT id FROM products WHERE sku = ? AND id != ?',
-        [sku, productId]
-      );
-      
+      const [skuCheck] = await connection.query('SELECT id FROM products WHERE sku = ? AND id != ?', [sku, productId]);
       if (skuCheck.length > 0) {
-        await connection.rollback();
         connection.release();
         return res.status(400).json({ success: false, message: 'SKU already exists' });
       }
     }
 
-    // Delete images from Cloudinary
-    if (imagesToDelete.length > 0) {
-      try {
-        const deletePromises = imagesToDelete.map(publicId => {
-          return cloudinary.uploader.destroy(publicId);
-        });
-        await Promise.all(deletePromises);
-      } catch (err) {
-        console.error('Error deleting images from Cloudinary:', err);
-      }
-    }
-
-    // Update product in database
+    // Prepare data
+    const finalPrice = parseFloat(price);
+    const processedSizes = processSizes(sizes);
     const baseSlug = slugify(name);
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
@@ -7907,168 +7871,109 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       shipping, 
       warranty, 
       bulk_discount, 
-      discount_ranges: discount_ranges || (metadata && metadata.discount_ranges) || [] 
+      discount_ranges: discount_ranges || [] 
     });
 
-    // Auto-generate SEO fields if not provided
+    // SEO fields
     const seo = generateProductSEO(name, description, finalPrice, imageUrls);
     const finalSeoTitle = req.body.seo_title || seo.seo_title;
     const finalSeoDescription = req.body.seo_description || seo.seo_description;
     const finalSeoKeywords = req.body.seo_keywords || seo.seo_keywords;
     const finalSchemaJson = req.body.schema_json ? JSON.stringify(req.body.schema_json) : JSON.stringify(seo.schema_json);
 
-    console.log('--- Preparing UPDATE query values ---');
-    console.log('name:', name);
-    console.log('description:', description);
-    console.log('finalPrice:', finalPrice);
-    console.log('finalDiscountedPrice:', finalDiscountedPrice);
-    console.log('categories JSON:', JSON.stringify(categories));
-    console.log('stock value:', (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock));
-    console.log('moq:', moq || 1);
-    console.log('material:', material);
-    console.log('care:', care);
-    console.log('sku:', sku);
-    console.log('shipping:', shipping);
-    console.log('warranty:', warranty);
-    console.log('processedSizes:', processedSizes);
-    console.log('colors:', colors);
-    console.log('tags:', tags);
-    console.log('features:', features);
-    console.log('uniqueSlug:', uniqueSlug);
-    console.log('thumbnail:', (imageUrls[0] || null));
-    console.log('attributesJson:', attributesJson);
-    console.log('imagesJson:', imagesJson);
-    console.log('metadataJson:', metadataJson);
-    console.log('is_customizable:', is_customizable ? 1 : 0);
-    console.log('is_preorder flag:', (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 1 : 0);
-    console.log('stock_status:', stock_status || (is_preorder === true || is_preorder === 1 || is_preorder === 'true' ? 'Pre-order' : 'In Stock'));
-    console.log('finalSeoTitle:', finalSeoTitle);
-    console.log('finalSeoDescription:', finalSeoDescription);
-    console.log('finalSeoKeywords:', finalSeoKeywords);
-    console.log('finalSchemaJson:', finalSchemaJson);
-    console.log('customization_type:', customization_type || 'Apparels');
-    console.log('customization_mode:', req.body.customization_mode || null);
-    console.log('customization_images:', customization_images ? JSON.stringify(customization_images) : null);
-    console.log('customization_dimensions:', customization_dimensions ? JSON.stringify(customization_dimensions) : null);
-    console.log('allow_customer_size_adjustment:', allow_customer_size_adjustment ? 1 : 0);
-    console.log('productId:', productId);
+    // Update product (without transaction to avoid ECONNRESET)
+    await connection.query(
+      `UPDATE products SET 
+        product_name = ?,
+        product_description = ?,
+        price = ?,
+        discounted_price = ?,
+        category = ?,
+        stock = ?,
+        moq = ?,
+        material = ?,
+        care_instructions = ?,
+        sku = ?,
+        shipping_info = ?,
+        warranty = ?,
+        sizes = ?,
+        colors = ?,
+        tags = ?,
+        features = ?,
+        slug = ?,
+        status = ?,
+        featured = ?,
+        thumbnail = ?,
+        attributes = ?,
+        images = ?,
+        metadata = ?,
+        rating = ?,
+        is_customizable = ?,
+        is_preorder = ?,
+        stock_status = ?,
+        seo_title = ?,
+        seo_description = ?,
+        seo_keywords = ?,
+        schema_json = ?,
+        customization_type = ?,
+        customization_mode = ?,
+        customization_images = ?,
+        customization_dimensions = ?,
+        allow_customer_size_adjustment = ?,
+        updated_at = NOW()
+      WHERE id = ?`,
+      [
+        name,
+        description,
+        finalPrice,
+        null,
+        JSON.stringify(categories),
+        (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
+        moq || 1,
+        material,
+        care,
+        sku,
+        shipping,
+        warranty,
+        JSON.stringify(processedSizes),
+        JSON.stringify(colors),
+        JSON.stringify(tags),
+        JSON.stringify(features),
+        uniqueSlug,
+        'active',
+        0,
+        (imageUrls[0] || null),
+        attributesJson,
+        imagesJson,
+        metadataJson,
+        0,
+        is_customizable ? 1 : 0,
+        (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 1 : 0,
+        stock_status || (is_preorder === true || is_preorder === 1 || is_preorder === 'true' ? 'Pre-order' : 'In Stock'),
+        finalSeoTitle,
+        finalSeoDescription,
+        finalSeoKeywords,
+        finalSchemaJson,
+        customization_type || 'Apparels',
+        req.body.customization_mode || null,
+        customization_images ? JSON.stringify(customization_images) : null,
+        customization_dimensions ? JSON.stringify(customization_dimensions) : null,
+        allow_customer_size_adjustment ? 1 : 0,
+        productId
+      ]
+    );
 
-    let updateResult;
-    try {
-      console.log('Executing UPDATE query...');
-      [updateResult] = await connection.query(
-        `UPDATE products SET 
-          product_name = ?,
-          product_description = ?,
-          price = ?,
-          discounted_price = ?,
-          category = ?,
-          stock = ?,
-          moq = ?,
-          material = ?,
-          care_instructions = ?,
-          sku = ?,
-          shipping_info = ?,
-          warranty = ?,
-          sizes = ?,
-          colors = ?,
-          tags = ?,
-          features = ?,
-          slug = ?,
-          status = ?,
-          featured = ?,
-          thumbnail = ?,
-          attributes = ?,
-          images = ?,
-          metadata = ?,
-          rating = ?,
-          is_customizable = ?,
-          is_preorder = ?,
-          stock_status = ?,
-          seo_title = ?,
-          seo_description = ?,
-          seo_keywords = ?,
-          schema_json = ?,
-          customization_type = ?,
-          customization_mode = ?,
-          customization_images = ?,
-          customization_dimensions = ?,
-          allow_customer_size_adjustment = ?,
-          updated_at = NOW()
-        WHERE id = ?`,
-        [
-          name,
-          description,
-          finalPrice,
-          finalDiscountedPrice,
-          JSON.stringify(categories),
-          (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
-          moq || 1,
-          material,
-          care,
-          sku,
-          shipping,
-          warranty,
-          JSON.stringify(processedSizes),
-          JSON.stringify(colors),
-          JSON.stringify(tags),
-          JSON.stringify(features),
-          uniqueSlug,
-          'active',
-          0,
-          (imageUrls[0] || null),
-          attributesJson,
-          imagesJson,
-          metadataJson,
-          0,
-          is_customizable ? 1 : 0,
-          (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 1 : 0,
-          stock_status || (is_preorder === true || is_preorder === 1 || is_preorder === 'true' ? 'Pre-order' : 'In Stock'),
-          finalSeoTitle,
-          finalSeoDescription,
-          finalSeoKeywords,
-          finalSchemaJson,
-          customization_type || 'Apparels',
-          req.body.customization_mode || null,
-          customization_images ? JSON.stringify(customization_images) : null,
-          customization_dimensions ? JSON.stringify(customization_dimensions) : null,
-          allow_customer_size_adjustment ? 1 : 0,
-          productId
-        ]
-      );
-      console.log('UPDATE query successful, result:', updateResult);
-    } catch (updateErr) {
-      console.error('Error executing UPDATE query:', updateErr);
-      console.error('UPDATE error stack:', updateErr.stack);
-      throw updateErr;
-    }
-
+    // Update variants (without transaction)
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
-    console.log('Deleting existing product variants...');
-    try {
-      await connection.query('DELETE FROM product_variants WHERE product_id = ?', [productId]);
-      console.log('Deleted existing product variants');
-    } catch (deleteErr) {
-      console.error('Error deleting product variants:', deleteErr);
-      throw deleteErr;
+    await connection.query('DELETE FROM product_variants WHERE product_id = ?', [productId]);
+    for (const v of variants) {
+      const qty = v && v.quantity != null ? parseInt(v.quantity) : 0;
+      await connection.query(
+        'INSERT INTO product_variants (product_id, color, size, quantity) VALUES (?, ?, ?, ?)',
+        [productId, v && v.color ? String(v.color) : null, v && v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
+      );
     }
 
-    console.log('Inserting new variants:', variants);
-    for (const v of variants) {
-      try {
-        const qty = v && v.quantity != null ? parseInt(v.quantity) : 0;
-        console.log('Inserting variant:', v);
-        await connection.query(
-          'INSERT INTO product_variants (product_id, color, size, quantity) VALUES (?, ?, ?, ?)',
-          [productId, v && v.color ? String(v.color) : null, v && v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
-        );
-      } catch (variantErr) {
-        console.error('Error inserting variant:', v, variantErr);
-        throw variantErr;
-      }
-    }
-    
-    await connection.commit();
     connection.release();
 
     res.json({ 
@@ -8076,11 +7981,10 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       message: 'Product updated successfully',
       productId: productId
     });
-
-    // Auto-regenerate sitemap when a product is updated
-    regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product update:', err));
   } catch (error) {
-    try { if (connection) await connection.rollback(); } catch {}
+    if (connection) {
+      try { connection.release(); } catch {}
+    }
     console.error('Product update error:', error);
     console.error('Error stack:', error.stack);
     res.status(500).json({ 
