@@ -7686,7 +7686,6 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         sku,
         shipping_info,
         warranty,
-        bulk_discount,
         sizes,
         colors,
         tags,
@@ -7711,7 +7710,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_images,
         customization_dimensions,
         allow_customer_size_adjustment
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
@@ -7725,7 +7724,6 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         sku,
         shipping,
         warranty,
-        bulk_discount,
         JSON.stringify(processedSizes),
         JSON.stringify(colors),
         JSON.stringify(tags),
@@ -7922,7 +7920,6 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         sku = ?,
         shipping_info = ?,
         warranty = ?,
-        bulk_discount = ?,
         sizes = ?,
         colors = ?,
         tags = ?,
@@ -7962,7 +7959,6 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         sku,
         shipping,
         warranty,
-        bulk_discount,
         JSON.stringify(processedSizes),
         JSON.stringify(colors),
         JSON.stringify(tags),
@@ -8085,7 +8081,7 @@ app.get('/api/products/:id', async (req, res) => {
       sku: product.sku,
       shipping_info: product.shipping_info,
       warranty: product.warranty,
-      bulk_discount: product.bulk_discount,
+      bulk_discount: meta?.bulk_discount || null,
       sizes: JSON.parse(product.sizes || '[]'),
       colors: JSON.parse(product.colors || '[]'),
       product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]'),
@@ -8215,8 +8211,8 @@ app.get('/api/products', async (req, res) => {
         review_count: sum.review_count,
         moq: product.moq,
         metadata: meta,
-        bulk_discount: product.bulk_discount,
-        discount_ranges: meta?.discount_ranges || product.discount_ranges
+        bulk_discount: meta?.bulk_discount || null,
+        discount_ranges: meta?.discount_ranges || null
       };
     });
 
