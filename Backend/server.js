@@ -469,6 +469,12 @@ async function ensureCustomizationSchema() {
     if (!productColNames.has('customization_dimensions')) {
       await connection.query('ALTER TABLE products ADD COLUMN customization_dimensions JSON NULL');
     }
+    if (!productColNames.has('customization_mode')) {
+      await connection.query('ALTER TABLE products ADD COLUMN customization_mode VARCHAR(64) NULL DEFAULT NULL');
+    }
+    if (!productColNames.has('allow_customer_size_adjustment')) {
+      await connection.query('ALTER TABLE products ADD COLUMN allow_customer_size_adjustment TINYINT(1) DEFAULT 0');
+    }
 
     console.log('✅ Customization schema updated successfully.');
   } catch (e) {
@@ -3345,11 +3351,13 @@ const generateProductSEO = (name, description, price, imageUrls) => {
   return { seo_title, seo_description, seo_keywords, schema_json };
 };
 
-const ensureUniqueSlug = async (connection, baseSlug, table = 'products') => {
+const ensureUniqueSlug = async (connection, baseSlug, table = 'products', excludeId = null) => {
   let slug = baseSlug;
   let suffix = 1;
   while (true) {
-    const [rows] = await connection.query(`SELECT id FROM ${table} WHERE slug = ? LIMIT 1`, [slug]);
+    const [rows] = excludeId
+      ? await connection.query(`SELECT id FROM ${table} WHERE slug = ? AND id != ? LIMIT 1`, [slug, excludeId])
+      : await connection.query(`SELECT id FROM ${table} WHERE slug = ? LIMIT 1`, [slug]);
     if (!rows || rows.length === 0) return slug;
     slug = `${baseSlug}-${suffix++}`;
   }
@@ -7824,6 +7832,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       stock,
       sku,
       imageUrls,
+      images: req.body.images,
       is_preorder,
       stock_status
     });
@@ -7887,7 +7896,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
 
     // Update product in database
     const baseSlug = slugify(name);
-    const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
+    const uniqueSlug = await ensureUniqueSlug(connection, baseSlug, 'products', productId);
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageUrls);
     const metadataJson = JSON.stringify({ 
@@ -8009,6 +8018,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product update:', err));
   } catch (error) {
     try { if (connection) await connection.rollback(); } catch {}
+    try { if (connection) connection.release(); } catch {}
     console.error('Product update error:', error);
     res.status(500).json({ 
       success: false, 
