@@ -1707,10 +1707,10 @@ const renderThemedEmail = ({
               <a href="https://www.youtube.com/@yokebud" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/1384/1384060.png" alt="YouTube" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
-              <a href="https://www.instagram.com/yokebud/" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
+              <a href="https://www.instagram.com/yokebudcraft?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/174/174855.png" alt="Instagram" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
-              <a href="https://www.tiktok.com/@yokebud" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
+              <a href="https://www.tiktok.com/@yokebudcraft?is_from_webapp=1&sender_device=pc" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/3046/3046122.png" alt="TikTok" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
               <a href="https://fi.pinterest.com/yokebud/" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
@@ -2604,10 +2604,10 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
             <a href="https://www.youtube.com/@yokebud" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
               <img src="https://cdn-icons-png.flaticon.com/512/1384/1384060.png" alt="YouTube" style="width:22px;height:22px;display:block;border:0;outline:none;">
             </a>
-            <a href="https://www.instagram.com/yokebud/" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+            <a href="https://www.instagram.com/yokebudcraft?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
               <img src="https://cdn-icons-png.flaticon.com/512/174/174855.png" alt="Instagram" style="width:22px;height:22px;display:block;border:0;outline:none;">
             </a>
-            <a href="https://www.tiktok.com/@yokebud" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+            <a href="https://www.tiktok.com/@yokebudcraft?is_from_webapp=1&sender_device=pc" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
               <img src="https://cdn-icons-png.flaticon.com/512/3046/3046122.png" alt="TikTok" style="width:22px;height:22px;display:block;border:0;outline:none;">
             </a>
             <a href="https://fi.pinterest.com/yokebud/" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
