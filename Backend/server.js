@@ -379,7 +379,7 @@ async function ensureSeoSchema() {
     if (homeSeo.length === 0) {
       const defaultHomeTitle = 'Laser Engraving, Custom Apparel & Resin Art | Personalized Gifts Finland';
       const defaultHomeContent = `
-        <p>Welcome to <strong>Yokebud Craft</strong>, your premier destination for high-quality <strong>laser engraving Finland</strong>, <strong>custom apparel</strong>, and <strong>resin art</strong>. We specialize in precision <strong>laser cutting services</strong>, professional engraving, and unique handcrafted creations that transform everyday objects into meaningful treasures.</p>
+        <p>Welcome to <strong>Yokebud Crafts</strong>, your premier destination for high-quality <strong>laser engraving Finland</strong>, <strong>custom apparel</strong>, and <strong>resin art</strong>. We specialize in precision <strong>laser cutting services</strong>, professional engraving, and unique handcrafted creations that transform everyday objects into meaningful treasures.</p>
         
         <h3>Expert Laser Engraving & Custom Apparel in Finland</h3>
         <p>Our state-of-the-art technology allows us to provide the finest <strong>laser engraving Helsinki</strong> has to offer, alongside premium <strong>customized hoodies</strong> and <strong>t-shirts</strong>. Whether you're looking for corporate branding, personalized wedding gifts, or custom streetwear, our team ensures every detail is captured with perfection.</p>
@@ -387,7 +387,7 @@ async function ensureSeoSchema() {
         <h3>Resin Art & Handcrafted Jewelry</h3>
         <p>Explore our stunning collection of <strong>resin art</strong> and <strong>handcrafted jewelry</strong>. Each piece is uniquely designed and made with care in our Finnish studio, combining traditional craftsmanship with modern artistic techniques. From <strong>engraved wood gifts</strong> to <strong>personalized leather accessories</strong>, we have something for everyone.</p>
         
-        <h3>Why Choose Yokebud Craft?</h3>
+        <h3>Why Choose Yokebud Crafts?</h3>
         <ul>
           <li><strong>Precision and Quality:</strong> Advanced laser systems and high-quality apparel materials.</li>
           <li><strong>Local Expertise:</strong> Proudly based in Helsinki, serving all of Finland.</li>
@@ -406,10 +406,10 @@ async function ensureSeoSchema() {
     if (laserSeo.length === 0) {
       const laserTitle = 'Premium Laser Engraving Services in Finland';
       const laserContent = `
-        <p>Yokebud Craft is the leading provider of <strong>laser engraving Finland</strong>, offering unparalleled precision and artistic flair for all your customization needs. Our <strong>laser cutting products</strong> and engraving services are designed to meet the highest standards of quality, whether you're looking for a single personalized gift or large-scale corporate branding solutions.</p>
+        <p>Yokebud Crafts is the leading provider of <strong>laser engraving Finland</strong>, offering unparalleled precision and artistic flair for all your customization needs. Our <strong>laser cutting products</strong> and engraving services are designed to meet the highest standards of quality, whether you're looking for a single personalized gift or large-scale corporate branding solutions.</p>
         
         <h3>Why Laser Engraving?</h3>
-        <p>Laser engraving is a permanent, high-precision method of marking materials. Unlike traditional printing, <strong>engraved gifts</strong> do not fade or wear off over time. At Yokebud Craft, we use state-of-the-art CO2 and Fiber lasers to work with wood, leather, acrylic, metal, and more. Our <strong>laser cutting services</strong> allow us to create intricate shapes and designs that were once thought impossible.</p>
+        <p>Laser engraving is a permanent, high-precision method of marking materials. Unlike traditional printing, <strong>engraved gifts</strong> do not fade or wear off over time. At Yokebud Crafts, we use state-of-the-art CO2 and Fiber lasers to work with wood, leather, acrylic, metal, and more. Our <strong>laser cutting services</strong> allow us to create intricate shapes and designs that were once thought impossible.</p>
         
         <h3>Our Laser Engraving Capabilities in Helsinki</h3>
         <p>Based in the heart of <strong>Helsinki</strong>, we serve clients across Finland with fast turnaround times and exceptional attention to detail. Our services include:</p>
@@ -469,12 +469,6 @@ async function ensureCustomizationSchema() {
     if (!productColNames.has('customization_dimensions')) {
       await connection.query('ALTER TABLE products ADD COLUMN customization_dimensions JSON NULL');
     }
-    if (!productColNames.has('customization_mode')) {
-      await connection.query('ALTER TABLE products ADD COLUMN customization_mode VARCHAR(64) NULL DEFAULT NULL');
-    }
-    if (!productColNames.has('allow_customer_size_adjustment')) {
-      await connection.query('ALTER TABLE products ADD COLUMN allow_customer_size_adjustment TINYINT(1) DEFAULT 0');
-    }
 
     console.log('✅ Customization schema updated successfully.');
   } catch (e) {
@@ -484,70 +478,22 @@ async function ensureCustomizationSchema() {
   }
 }
 
-async function ensurePromoCodeSchema() {
+async function ensureOrdersEstimatedDeliveryDate() {
   let connection;
   try {
     connection = await pool.getConnection();
     
-    // Create promo_codes table
-    await connection.query(
-      `CREATE TABLE IF NOT EXISTS promo_codes (
-        id INT NOT NULL AUTO_INCREMENT,
-        product_id INT NULL,
-        code VARCHAR(255) NOT NULL UNIQUE,
-        type ENUM('percentage', 'fixed') NOT NULL DEFAULT 'percentage',
-        value DECIMAL(10,2) NOT NULL,
-        usage_limit INT NULL,
-        used_count INT NOT NULL DEFAULT 0,
-        user_specific BOOLEAN NOT NULL DEFAULT FALSE,
-        user_id VARCHAR(255) NULL,
-        valid_from DATETIME NULL,
-        valid_until DATETIME NULL,
-        created_by VARCHAR(255) NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
-        KEY idx_code (code),
-        KEY idx_product (product_id),
-        KEY idx_user (user_id)
-      )`
-    );
-    
-    // Create promo_code_usages table
-    await connection.query(
-      `CREATE TABLE IF NOT EXISTS promo_code_usages (
-        id INT NOT NULL AUTO_INCREMENT,
-        promo_code_id INT NOT NULL,
-        user_id VARCHAR(255) NULL,
-        order_id INT NULL,
-        used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
-        KEY idx_promo_code (promo_code_id),
-        KEY idx_user (user_id),
-        KEY idx_order (order_id)
-      )`
-    );
-    
-    // Alter user_id and created_by columns to VARCHAR if needed
+    // Check and add estimated_delivery_date column to orders
     try {
-      await connection.query('ALTER TABLE promo_codes MODIFY COLUMN user_id VARCHAR(255) NULL');
+      await connection.query('ALTER TABLE orders ADD COLUMN estimated_delivery_date DATE NULL AFTER delivered_at');
+      console.log('✅ Added estimated_delivery_date column to orders table');
     } catch (err) {
-      console.warn('⚠️ Could not alter promo_codes.user_id:', err.message);
+      if (!err.message.includes('Duplicate column name')) {
+        console.warn('⚠️ Could not add estimated_delivery_date column:', err.message);
+      }
     }
-    try {
-      await connection.query('ALTER TABLE promo_codes MODIFY COLUMN created_by VARCHAR(255) NULL');
-    } catch (err) {
-      console.warn('⚠️ Could not alter promo_codes.created_by:', err.message);
-    }
-    try {
-      await connection.query('ALTER TABLE promo_code_usages MODIFY COLUMN user_id VARCHAR(255) NULL');
-    } catch (err) {
-      console.warn('⚠️ Could not alter promo_code_usages.user_id:', err.message);
-    }
-    
-    console.log('✅ Promo code schema created successfully.');
   } catch (e) {
-    console.warn('Promo code schema creation failed:', e.message || e);
+    console.warn('⚠️ Orders estimated delivery date check failed:', e.message);
   } finally {
     if (connection) connection.release();
   }
@@ -555,7 +501,7 @@ async function ensurePromoCodeSchema() {
 
 ensureSeoSchema().then(() => {
   ensureCustomizationSchema();
-  ensurePromoCodeSchema();
+  ensureOrdersEstimatedDeliveryDate();
 });
 
 // Using existing 'user_wishlist' table provisioned in the database
@@ -641,140 +587,6 @@ async function ensureProductStockStatusSchema() {
 
 ensureProductStockStatusSchema();
 
-async function ensureCustomLaserOrdersSchema() {
-  let connection;
-  try {
-    connection = await pool.getConnection();
-    
-    // Create table with image_urls (JSON) instead of just image_url
-    await connection.query(
-      `CREATE TABLE IF NOT EXISTS custom_laser_orders (
-        id INT NOT NULL AUTO_INCREMENT,
-        user_id VARCHAR(255) NULL,
-        title VARCHAR(255) NOT NULL,
-        description TEXT NOT NULL,
-        image_url TEXT NULL,
-        image_urls JSON NULL,
-        width DECIMAL(10,2) NULL,
-        height DECIMAL(10,2) NULL,
-        depth DECIMAL(10,2) NULL,
-        material VARCHAR(100) NULL,
-        status VARCHAR(50) DEFAULT 'pending',
-        notes TEXT NULL,
-        price DECIMAL(10,2) NULL,
-        checkout_active BOOLEAN DEFAULT FALSE,
-        order_id VARCHAR(255) NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
-        KEY idx_user (user_id),
-        KEY idx_order (order_id)
-      )`
-    );
-    
-    // Add image_urls column if it doesn't exist
-    try {
-      await connection.query('ALTER TABLE custom_laser_orders ADD COLUMN image_urls JSON NULL AFTER image_url');
-    } catch (err) {
-      if (!err.message.includes('Duplicate column name')) {
-        console.warn('⚠️ Could not add image_urls column:', err.message);
-      }
-    }
-    
-    // Alter user_id column to VARCHAR if it's still INT
-    try {
-      await connection.query('ALTER TABLE custom_laser_orders MODIFY COLUMN user_id VARCHAR(255) NULL');
-    } catch (err) {
-      console.warn('⚠️ Could not alter user_id column:', err.message);
-    }
-    
-    // Add price column
-    try {
-      await connection.query('ALTER TABLE custom_laser_orders ADD COLUMN price DECIMAL(10,2) NULL AFTER notes');
-    } catch (err) {
-      if (!err.message.includes('Duplicate column name')) {
-        console.warn('⚠️ Could not add price column:', err.message);
-      }
-    }
-    
-    // Add checkout_active column
-    try {
-      await connection.query('ALTER TABLE custom_laser_orders ADD COLUMN checkout_active BOOLEAN DEFAULT FALSE AFTER price');
-    } catch (err) {
-      if (!err.message.includes('Duplicate column name')) {
-        console.warn('⚠️ Could not add checkout_active column:', err.message);
-      }
-    }
-    
-    // Add order_id column
-    try {
-      await connection.query('ALTER TABLE custom_laser_orders ADD COLUMN order_id VARCHAR(255) NULL AFTER checkout_active');
-    } catch (err) {
-      if (!err.message.includes('Duplicate column name')) {
-        console.warn('⚠️ Could not add order_id column:', err.message);
-      }
-    }
-    
-    // Add index on order_id
-    try {
-      await connection.query('CREATE INDEX idx_order ON custom_laser_orders (order_id)');
-    } catch (err) {
-      if (!err.message.includes('Duplicate key name')) {
-        console.warn('⚠️ Could not add order_id index:', err.message);
-      }
-    }
-
-    // Link custom laser orders to inquiry conversations for messaging
-    try {
-      await connection.query('ALTER TABLE custom_laser_orders ADD COLUMN inquiry_id VARCHAR(255) NULL AFTER order_id');
-    } catch (err) {
-      if (!err.message.includes('Duplicate column name')) {
-        console.warn('⚠️ Could not add inquiry_id column:', err.message);
-      }
-    }
-    
-    console.log('✅ Custom laser orders schema checked/created successfully');
-  } catch (e) {
-    console.warn('⚠️ Custom laser orders schema check failed:', e.message);
-  } finally {
-    if (connection) connection.release();
-  }
-}
-
-ensureCustomLaserOrdersSchema();
-
-async function ensureOrdersCustomLaserColumn() {
-  let connection;
-  try {
-    connection = await pool.getConnection();
-    
-    // Add custom_laser_order_id column to orders
-    try {
-      await connection.query('ALTER TABLE orders ADD COLUMN custom_laser_order_id VARCHAR(255) NULL AFTER notes');
-    } catch (err) {
-      if (!err.message.includes('Duplicate column name')) {
-        console.warn('⚠️ Could not add custom_laser_order_id column to orders:', err.message);
-      }
-    }
-    
-    // Add index
-    try {
-      await connection.query('CREATE INDEX idx_custom_laser_order ON orders (custom_laser_order_id)');
-    } catch (err) {
-      if (!err.message.includes('Duplicate key name')) {
-        console.warn('⚠️ Could not add custom_laser_order_id index:', err.message);
-      }
-    }
-    
-    console.log('✅ Orders custom laser column checked/created');
-  } catch (e) {
-    console.warn('⚠️ Orders custom laser column check failed:', e.message);
-  } finally {
-    if (connection) connection.release();
-  }
-}
-ensureOrdersCustomLaserColumn();
-
 async function ensureSeoContentSchema() {
   let connection;
   try {
@@ -795,7 +607,7 @@ async function ensureSeoContentSchema() {
     const [rows] = await connection.query('SELECT * FROM seo_content WHERE page_name = "home"');
     if (rows.length === 0) {
       await connection.query(
-        'INSERT INTO seo_content (page_name, title, content) VALUES ("home", "Welcome to Yokebud Craft", "<p>Your SEO content here...</p>")'
+        'INSERT INTO seo_content (page_name, title, content) VALUES ("home", "Welcome to Yokebud Crafts", "<p>Your SEO content here...</p>")'
       );
     }
   } catch (e) {
@@ -886,40 +698,7 @@ async function ensureSitemapSchema() {
   }
 }
 
-async function ensurePopupsSchema() {
-  let connection;
-  try {
-    connection = await pool.getConnection();
-    
-    await connection.query(
-      `CREATE TABLE IF NOT EXISTS popups (
-        id INT NOT NULL AUTO_INCREMENT,
-        title VARCHAR(255) NOT NULL,
-        image_url TEXT,
-        description TEXT,
-        link_url TEXT,
-        link_text VARCHAR(255) DEFAULT 'Learn More',
-        auto_close_duration INT DEFAULT 10,
-        start_date DATE,
-        end_date DATE,
-        is_active BOOLEAN DEFAULT TRUE,
-        position VARCHAR(20) DEFAULT 'center',
-        display_delay INT DEFAULT 3,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (id)
-      )`
-    );
-    
-    console.log('✅ Popups schema checked/created successfully');
-  } catch (e) {
-    console.warn('⚠️ Popups schema check failed:', e.message);
-  } finally {
-    if (connection) connection.release();
-  }
-}
-
-ensurePopupsSchema();
+ensureSitemapSchema();
 
 const { exec } = require('child_process');
 
@@ -1363,7 +1142,7 @@ const renderThemedEmail = ({
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <meta name="color-scheme" content="light">
       <meta name="supported-color-schemes" content="light">
-      <title>${title || 'Yokebud Craft'}</title>
+      <title>${title || 'Yokebud Crafts'}</title>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
       <style>
         /* Reset and Base Styles */
@@ -1654,8 +1433,8 @@ const renderThemedEmail = ({
         <!-- Header -->
         <div class="email-header">
           <div class="header-content">
-            <div class="brand-logo">Yokebud Craft</div>
-            <h1 class="email-title">${title || 'Yokebud Craft'}</h1>
+            <div class="brand-logo">YOKEBUD CRAFTS</div>
+            <h1 class="email-title">${title || 'Yokebud Crafts'}</h1>
             ${subtitle ? `<p class="email-subtitle">${subtitle}</p>` : ''}
           </div>
         </div>
@@ -1707,10 +1486,10 @@ const renderThemedEmail = ({
               <a href="https://www.youtube.com/@yokebud" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/1384/1384060.png" alt="YouTube" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
-              <a href="https://www.instagram.com/yokebudcraft?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
+              <a href="https://www.instagram.com/yokebud/" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/174/174855.png" alt="Instagram" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
-              <a href="https://www.tiktok.com/@yokebudcraft?is_from_webapp=1&sender_device=pc" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
+              <a href="https://www.tiktok.com/@yokebud" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/3046/3046122.png" alt="TikTok" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
               <a href="https://fi.pinterest.com/yokebud/" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
@@ -1726,13 +1505,13 @@ const renderThemedEmail = ({
             ` : ''}
             
             <div class="contact-info">
-              <p>Yokebud Craft</p>
+              <p>Yokebud Crafts</p>
               <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
               <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
             </div>
             
             <div class="copyright">
-              &copy; ${new Date().getFullYear()} Yokebud Craft. All rights reserved.
+              &copy; ${new Date().getFullYear()} Yokebud Crafts. All rights reserved.
             </div>
           </div>
         </div>
@@ -1761,7 +1540,7 @@ const renderAdminOtpEmail = (otp) => {
       
       <div class="email-card" style="text-align: center; padding: 40px 20px;">
         <p class="content-text" style="margin-bottom: 20px;">
-          Use this OTP to login to your Yokebud Craft account.
+          Use this OTP to login to your Yokebud Crafts account.
         </p>
 
         <div style="background: #1A202C; border-radius: 12px; padding: 20px; display: inline-block; margin: 0 auto 20px auto; min-width: 200px;">
@@ -1782,7 +1561,7 @@ const renderAdminOtpEmail = (otp) => {
   `;
 
   return renderThemedEmail({
-    title: 'Yokebud Craft Admin',
+    title: 'Yokebud Crafts Admin',
     subtitle: 'Admin Access Verification',
     contentHtml,
     footerNote: 'This code was generated for Admin access.'
@@ -1825,7 +1604,7 @@ const renderWelcomeEmail = (email, token) => {
   
   const contentHtml = `
     <div class="content-section">
-      <h2 class="content-title">Welcome to Yokebud Craft! </h2>
+      <h2 class="content-title">Welcome to Yokebud Crafts! </h2>
       <p class="content-text">
         Thank you for joining our exclusive community of fashion enthusiasts and wholesale buyers. 
         We're thrilled to have you on board!
@@ -1850,7 +1629,7 @@ const renderWelcomeEmail = (email, token) => {
   `;
   
   return renderThemedEmail({
-    title: 'Welcome to Yokebud Craft',
+    title: 'Welcome to Yokebud Crafts',
     subtitle: 'Your journey to premium wholesale fashion begins here',
     contentHtml,
     primaryCtaText: 'Explore Our Collection',
@@ -1869,7 +1648,7 @@ const renderAccountWelcomeEmail = (name) => {
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">Welcome${name ? `, ${name}` : ''}! 🎉</h2>
-        <p class="content-text">Your Yokebud Craft account has been created successfully.</p>
+        <p class="content-text">Your Yokebud Crafts account has been created successfully.</p>
       </div>
 
       <div class="email-card">
@@ -1885,7 +1664,7 @@ const renderAccountWelcomeEmail = (name) => {
   `;
 
   return renderThemedEmail({
-    title: 'Welcome to Yokebud Craft',
+    title: 'Welcome to Yokebud Crafts',
     subtitle: 'We are excited to have you here',
     contentHtml,
     primaryCtaText: 'Go to Your Profile',
@@ -1975,7 +1754,7 @@ const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
       
       <p class="content-text">
         We've received your order and are preparing it for shipment. You'll receive another email 
-        with tracking information once your order ships. Thank you for choosing Yokebud Craft!
+        with tracking information once your order ships. Thank you for choosing Yokebud Crafts!
       </p>
     </div>
   `;
@@ -2078,114 +1857,6 @@ const renderAdminNewOrderEmail = (orderId, customerInfo, items, totals) => {
   });
 };
 
-// Custom Laser Order Confirmation Email (Customer)
-const renderCustomLaserOrderConfirmationEmail = (orderId, customerInfo, orderData) => {
-  const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
-  
-  const contentHtml = `
-    <div class="content-section">
-      <div style="text-align: center; margin-bottom: 30px;">
-        <h2 class="content-title">Custom Laser Order Received! 🎉</h2>
-        <p class="content-text" style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
-          Order #${orderId}
-        </p>
-      </div>
-      
-      <div class="email-card">
-        <h3 class="card-title">Order Details</h3>
-        <p style="margin-bottom: 10px;">
-          <strong>Title:</strong> ${orderData.title}
-        </p>
-        <p style="margin-bottom: 10px;">
-          <strong>Description:</strong> ${orderData.description}
-        </p>
-        ${orderData.width ? `<p style="margin-bottom: 10px;"><strong>Width:</strong> ${orderData.width} cm</p>` : ''}
-        ${orderData.height ? `<p style="margin-bottom: 10px;"><strong>Height:</strong> ${orderData.height} cm</p>` : ''}
-        ${orderData.depth ? `<p style="margin-bottom: 10px;"><strong>Depth:</strong> ${orderData.depth} cm</p>` : ''}
-        ${orderData.material ? `<p style="margin-bottom: 10px;"><strong>Material:</strong> ${orderData.material}</p>` : ''}
-      </div>
-      
-      ${customerInfo.email ? `
-      <div class="email-card">
-        <h3 class="card-title">Your Information</h3>
-        <p style="margin-bottom: 10px;">
-          <strong>Name:</strong> ${customerInfo.firstName || ''} ${customerInfo.lastName || ''}
-        </p>
-        <p style="margin-bottom: 10px;">
-          <strong>Email:</strong> ${customerInfo.email}
-        </p>
-        ${customerInfo.phone ? `<p style="margin-bottom: 10px;"><strong>Phone:</strong> ${customerInfo.phone}</p>` : ''}
-      </div>
-      ` : ''}
-      
-      <p class="content-text">
-        Thank you for submitting your custom laser order! We've received your request and will review it shortly. 
-        You'll receive an update once we've reviewed your order. If you have any questions, please don't hesitate to contact us!
-      </p>
-    </div>
-  `;
-  
-  return renderThemedEmail({
-    title: 'Custom Laser Order Confirmation',
-    subtitle: `Order #${orderId}`,
-    contentHtml,
-    primaryCtaText: 'View Orders',
-    primaryCtaUrl: viewOrdersUrl,
-    footerNote: 'This is an automated confirmation email for your custom laser order.'
-  });
-};
-
-// Admin New Custom Laser Order Email
-const renderAdminNewCustomLaserOrderEmail = (orderId, customerInfo, orderData) => {
-  const contentHtml = `
-    <div class="content-section">
-      <div style="text-align: center; margin-bottom: 30px;">
-        <h2 class="content-title">New Custom Laser Order! 🎨</h2>
-        <p class="content-text" style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
-          Order #${orderId}
-        </p>
-      </div>
-      
-      <div class="email-card">
-        <h3 class="card-title">Order Details</h3>
-        <p style="margin-bottom: 10px;">
-          <strong>Title:</strong> ${orderData.title}
-        </p>
-        <p style="margin-bottom: 10px;">
-          <strong>Description:</strong> ${orderData.description}
-        </p>
-        ${orderData.width ? `<p style="margin-bottom: 10px;"><strong>Width:</strong> ${orderData.width} cm</p>` : ''}
-        ${orderData.height ? `<p style="margin-bottom: 10px;"><strong>Height:</strong> ${orderData.height} cm</p>` : ''}
-        ${orderData.depth ? `<p style="margin-bottom: 10px;"><strong>Depth:</strong> ${orderData.depth} cm</p>` : ''}
-        ${orderData.material ? `<p style="margin-bottom: 10px;"><strong>Material:</strong> ${orderData.material}</p>` : ''}
-      </div>
-      
-      ${customerInfo.email ? `
-      <div class="email-card">
-        <h3 class="card-title">Customer Information</h3>
-        <p style="margin-bottom: 10px;">
-          <strong>Name:</strong> ${customerInfo.firstName || ''} ${customerInfo.lastName || ''}
-        </p>
-        <p style="margin-bottom: 10px;">
-          <strong>Email:</strong> ${customerInfo.email}
-        </p>
-        ${customerInfo.phone ? `<p style="margin-bottom: 10px;"><strong>Phone:</strong> ${customerInfo.phone}</p>` : ''}
-        ${customerInfo.address ? `<p style="margin-bottom: 10px;"><strong>Address:</strong> ${customerInfo.address}, ${customerInfo.city || ''}, ${customerInfo.country || ''}</p>` : ''}
-      </div>
-      ` : ''}
-    </div>
-  `;
-  
-  return renderThemedEmail({
-    title: 'New Custom Laser Order Alert',
-    subtitle: `Order #${orderId}`,
-    contentHtml,
-    primaryCtaText: 'View in Admin Panel',
-    primaryCtaUrl: `${process.env.ADMIN_URL || 'http://localhost:5173/admin'}/orders`,
-    footerNote: 'This is an automated notification for Admins.'
-  });
-};
-
 // 2b. MANUAL SUCCESS EMAIL
 const renderManualNotificationEmail = (orderId, customerInfo) => {
   const contentHtml = `
@@ -2215,7 +1886,7 @@ const renderManualNotificationEmail = (orderId, customerInfo) => {
     contentHtml,
     primaryCtaText: 'View Order',
     primaryCtaUrl: `${process.env.PUBLIC_SITE_URL || 'http://localhost:5173'}/UserProfile`,
-    footerNote: 'Thank you for choosing Yokebud Craft!'
+    footerNote: 'Thank you for choosing Yokebud Crafts!'
   });
 };
 
@@ -2270,11 +1941,11 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
   
   return renderThemedEmail({
     title: 'New Subscriber Alert',
-    subtitle: 'Yokebud Craft Newsletter System',
+    subtitle: 'Yokebud Crafts Newsletter System',
     contentHtml,
     primaryCtaText: 'View Subscriber Dashboard',
     primaryCtaUrl: `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}`,
-    footerNote: 'This is an automated notification from Yokebud Craft Newsletter System'
+    footerNote: 'This is an automated notification from Yokebud Crafts Newsletter System'
   });
 };
 
@@ -2367,7 +2038,7 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
       </div>
       
       <p class="content-text">
-        Hello! Here are the latest handpicked products and exclusive discounts from Yokebud Craft. 
+        Hello! Here are the latest handpicked products and exclusive discounts from Yokebud Crafts. 
         Whether you're looking for custom laser engraved gifts or premium handmade art, we've got something special for you this week.
       </p>
       
@@ -2409,7 +2080,7 @@ const renderUnsubscribeConfirmationEmail = (email) => {
       <div class="email-card">
         <p class="content-text" style="text-align: center; margin: 0;">
           You will no longer receive weekly product updates, exclusive offers, 
-          or fashion insights from Yokebud Craft.
+          or fashion insights from Yokebud Crafts.
         </p>
       </div>
       
@@ -2434,8 +2105,8 @@ const renderUnsubscribeConfirmationEmail = (email) => {
 const renderOTPEmail = (email, otp, type = 'registration') => {
   const subjectText = type === 'registration' ? 'Verify Your Email Address' : 'Login Verification';
   const descriptionText = type === 'registration' 
-    ? 'Thank you for signing up with Yokebud Craft!' 
-    : 'Use this OTP to login to your Yokebud Craft account.';
+    ? 'Thank you for signing up with Yokebud Crafts!' 
+    : 'Use this OTP to login to your Yokebud Crafts account.';
   
   // Standalone HTML without external fonts or images
   return `
@@ -2444,7 +2115,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${subjectText} - Yokebud Craft</title>
+      <title>${subjectText} - Yokebud Crafts</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -2571,7 +2242,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
     <body>
       <div class="email-container">
         <div class="email-header">
-          <div class="brand-logo">Yokebud Craft</div>
+          <div class="brand-logo">YOKEBUD CRAFTS</div>
           <h1 class="email-title">${subjectText}</h1>
           <p class="email-subtitle">Secure Verification Required</p>
         </div>
@@ -2604,10 +2275,10 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
             <a href="https://www.youtube.com/@yokebud" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
               <img src="https://cdn-icons-png.flaticon.com/512/1384/1384060.png" alt="YouTube" style="width:22px;height:22px;display:block;border:0;outline:none;">
             </a>
-            <a href="https://www.instagram.com/yokebudcraft?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+            <a href="https://www.instagram.com/yokebud/" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
               <img src="https://cdn-icons-png.flaticon.com/512/174/174855.png" alt="Instagram" style="width:22px;height:22px;display:block;border:0;outline:none;">
             </a>
-            <a href="https://www.tiktok.com/@yokebudcraft?is_from_webapp=1&sender_device=pc" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+            <a href="https://www.tiktok.com/@yokebud" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
               <img src="https://cdn-icons-png.flaticon.com/512/3046/3046122.png" alt="TikTok" style="width:22px;height:22px;display:block;border:0;outline:none;">
             </a>
             <a href="https://fi.pinterest.com/yokebud/" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
@@ -2621,12 +2292,12 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
             </a>
           </div>
           <div class="contact-info">
-            <p><strong>Yokebud Craft</strong></p>
+            <p><strong>Yokebud Crafts</strong></p>
             <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
             <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
           </div>
           <div class="copyright">
-            &copy; ${new Date().getFullYear()} Yokebud Craft. All rights reserved.
+            &copy; ${new Date().getFullYear()} Yokebud Crafts. All rights reserved.
           </div>
         </div>
       </div>
@@ -2636,7 +2307,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
 };
 
 // 7. ORDER STATUS UPDATE EMAIL
-const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNumber = null) => {
+const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNumber = null, estimatedDeliveryDate = null) => {
   const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
   
   const statusConfig = {
@@ -2682,6 +2353,20 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
                 </td>
               </tr>
             ` : ''}
+            ${estimatedDeliveryDate ? `
+              <tr>
+                <td colspan="2" style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+                  <strong style="display: block; color: ${EMAIL_THEME.text};">Estimated Delivery Date</strong>
+                  <span style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
+                    ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', { 
+                      year: 'numeric', 
+                      month: 'long', 
+                      day: 'numeric'
+                    })}
+                  </span>
+                </td>
+              </tr>
+            ` : ''}
             <tr>
               <td colspan="2" style="padding: 15px 0 0 0;">
                 <strong style="display: block; color: ${EMAIL_THEME.text};">Update Date</strong>
@@ -2711,6 +2396,90 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
   
   return renderThemedEmail({
     title: 'Order Status Update',
+    subtitle: `Order #${orderId}`,
+    contentHtml,
+    primaryCtaText: 'View Order Details',
+    primaryCtaUrl: viewOrdersUrl,
+    footerNote: 'If you have any questions about this update, please reply to this email.'
+  });
+};
+
+// Render estimated delivery date update email
+const renderEstimatedDeliveryUpdateEmail = (orderId, customerInfo, estimatedDeliveryDate) => {
+  const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
+  
+  const contentHtml = `
+    <div class="content-section">
+      <div style="text-align: center; margin-bottom: 30px;">
+        <h2 class="content-title">Estimated Delivery Update 📅</h2>
+        <p class="content-text" style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
+          Order #${orderId}
+        </p>
+      </div>
+      
+      <div class="email-card">
+        <h3 class="card-title">Delivery Details</h3>
+        <div style="padding: 15px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+            ${estimatedDeliveryDate ? `
+              <tr>
+                <td style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+                  <strong style="display: block; color: ${EMAIL_THEME.text};">Estimated Delivery Date</strong>
+                  <span style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
+                    ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', { 
+                      year: 'numeric', 
+                      month: 'long', 
+                      day: 'numeric'
+                    })}
+                  </span>
+                </td>
+                <td align="right" style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border}; white-space: nowrap; font-size: 24px;">
+                  📅
+                </td>
+              </tr>
+            ` : `
+              <tr>
+                <td style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+                  <strong style="display: block; color: ${EMAIL_THEME.text};">Estimated Delivery Date</strong>
+                  <span style="color: ${EMAIL_THEME.textLight};">
+                    No estimated delivery date set
+                  </span>
+                </td>
+              </tr>
+            `}
+            <tr>
+              <td colspan="2" style="padding: 15px 0 0 0;">
+                <strong style="display: block; color: ${EMAIL_THEME.text};">Update Date</strong>
+                <span style="color: ${EMAIL_THEME.textLight};">
+                  ${new Date().toLocaleDateString('en-US', { 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </span>
+              </td>
+            </tr>
+          </table>
+        </div>
+      </div>
+      
+      <p class="content-text">
+        ${estimatedDeliveryDate 
+          ? `We have updated the estimated delivery date for your order. We aim to deliver your order by ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', { 
+              year: 'numeric', 
+              month: 'long', 
+              day: 'numeric'
+            })}.`
+          : 'We have removed the estimated delivery date for your order. We will update you when we have more information.'
+        }
+      </p>
+    </div>
+  `;
+  
+  return renderThemedEmail({
+    title: 'Estimated Delivery Update',
     subtitle: `Order #${orderId}`,
     contentHtml,
     primaryCtaText: 'View Order Details',
@@ -2768,7 +2537,7 @@ const renderContactFormNotificationEmail = (name, email, whatsapp, message) => {
     contentHtml,
     primaryCtaText: 'Open Admin Inbox',
     primaryCtaUrl: adminUrl,
-    footerNote: 'This is an automated notification from Yokebud Craft website.'
+    footerNote: 'This is an automated notification from Yokebud Crafts website.'
   });
 };
 
@@ -2779,7 +2548,7 @@ const renderContactFormConfirmationEmail = (name, email, message) => {
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">Message Received! ✨</h2>
         <p class="content-text">
-          Thank you for contacting Yokebud Craft
+          Thank you for contacting Yokebud Crafts
         </p>
       </div>
       
@@ -2832,7 +2601,7 @@ const renderInquiryNotificationEmail = (recipientName, senderName, inquiryNumber
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">${title}</h2>
         <p class="content-text">
-          ${isToAdmin ? `Customer <strong>${senderName}</strong> has sent a new message.` : `You have received a new message from Yokebud Craft support.`}
+          ${isToAdmin ? `Customer <strong>${senderName}</strong> has sent a new message.` : `You have received a new message from Yokebud Crafts support.`}
         </p>
       </div>
       
@@ -2922,9 +2691,9 @@ const renderPasswordResetEmail = (email, resetToken) => {
 const sendWelcomeEmail = async (email, token) => {
   const html = renderWelcomeEmail(email, token);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
     to: email,
-    subject: '✅ Subscription Confirmed — Yokebud Craft Newsletter',
+    subject: '✅ Subscription Confirmed — Yokebud Crafts Newsletter',
     html,
     priority: 'high'
   };
@@ -2943,9 +2712,9 @@ const sendWelcomeEmail = async (email, token) => {
 const sendAccountWelcomeEmail = async (email, name) => {
   const html = renderAccountWelcomeEmail(name);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft <welcome@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Crafts <welcome@yokebud.com>',
     to: email,
-    subject: '🎉 Welcome to Yokebud Craft',
+    subject: '🎉 Welcome to Yokebud Crafts',
     html,
     priority: 'normal'
   };
@@ -2963,9 +2732,9 @@ const sendAccountWelcomeEmail = async (email, name) => {
 const sendOrderConfirmationEmail = async (orderId, customerInfo, items, totals) => {
   const html = renderOrderConfirmationEmail(orderId, customerInfo, items, totals);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
     to: customerInfo.email,
-    subject: `✅ Order Confirmed #${orderId} - Yokebud Craft`,
+    subject: `✅ Order Confirmed #${orderId} - Yokebud Crafts`,
     html,
     priority: 'high'
   };
@@ -2984,7 +2753,7 @@ const sendOrderConfirmationEmail = async (orderId, customerInfo, items, totals) 
 const sendNewSubscriberNotification = async (subscriberEmail) => {
   const html = renderNewSubscriberNotificationEmail(subscriberEmail);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft System <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Crafts System <yokebud@gmail.com>',
     to: 'yokebud@gmail.com',
     subject: `🎯 New Newsletter Subscriber: ${subscriberEmail}`,
     html,
@@ -3005,9 +2774,9 @@ const sendNewSubscriberNotification = async (subscriberEmail) => {
 const sendWeeklyNewsletter = async (subscriber, products) => {
   const html = renderWeeklyNewsletterEmail(subscriber, products, subscriber.subscription_token);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
     to: subscriber.email,
-    subject: `🚀 Yokebud Craft Weekly Update - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+    subject: `🚀 Yokebud Crafts Weekly Update - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
     html,
     priority: 'normal'
   };
@@ -3026,9 +2795,9 @@ const sendWeeklyNewsletter = async (subscriber, products) => {
 const sendUnsubscribeConfirmation = async (email) => {
   const html = renderUnsubscribeConfirmationEmail(email);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft <newsletter@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Crafts <newsletter@yokebud.com>',
     to: email,
-    subject: '👋 You have been unsubscribed from Yokebud Craft Newsletter',
+    subject: '👋 You have been unsubscribed from Yokebud Crafts Newsletter',
     html,
     priority: 'normal'
   };
@@ -3047,13 +2816,13 @@ const sendUnsubscribeConfirmation = async (email) => {
 const sendOTPEmail = async (email, otp, type = 'registration', customFrom = null, retries = 3) => {
   const html = renderOTPEmail(email, otp, type);
   const subject = type === 'registration' 
-    ? 'Verify Your Email - Yokebud Craft' 
+    ? 'Verify Your Email - Yokebud Crafts' 
     : type === 'admin_login'
-    ? '🔐 Admin Login OTP - Yokebud Craft'
-    : 'Login OTP - Yokebud Craft';
+    ? '🔐 Admin Login OTP - Yokebud Crafts'
+    : 'Login OTP - Yokebud Crafts';
   
   const mailOptions = {
-    from: customFrom || process.env.EMAIL_FROM || `Yokebud Craft Security <${process.env.EMAIL_USER}>`,
+    from: customFrom || process.env.EMAIL_FROM || `Yokebud Crafts Security <${process.env.EMAIL_USER}>`,
     to: email,
     subject,
     html, // Add HTML content
@@ -3103,10 +2872,10 @@ const sendOTPEmail = async (email, otp, type = 'registration', customFrom = null
 };
 
 // Send order status update email
-const sendOrderStatusUpdateEmail = async (orderId, status, customerInfo, trackingNumber = null) => {
-  const html = renderOrderStatusUpdateEmail(orderId, status, customerInfo, trackingNumber);
+const sendOrderStatusUpdateEmail = async (orderId, status, customerInfo, trackingNumber = null, estimatedDeliveryDate = null) => {
+  const html = renderOrderStatusUpdateEmail(orderId, status, customerInfo, trackingNumber, estimatedDeliveryDate);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || `Yokebud Craft <${process.env.EMAIL_USER}>`,
+    from: process.env.EMAIL_FROM || `Yokebud Crafts <${process.env.EMAIL_USER}>`,
     to: customerInfo.email,
     subject: `📦 Order Status Update #${orderId} - ${status.charAt(0).toUpperCase() + status.slice(1)}`,
     html,
@@ -3123,11 +2892,32 @@ const sendOrderStatusUpdateEmail = async (orderId, status, customerInfo, trackin
   }
 };
 
+// Send estimated delivery date update email
+const sendEstimatedDeliveryUpdateEmail = async (orderId, customerInfo, estimatedDeliveryDate) => {
+  const html = renderEstimatedDeliveryUpdateEmail(orderId, customerInfo, estimatedDeliveryDate);
+  const mailOptions = {
+    from: process.env.EMAIL_FROM || `Yokebud Crafts <${process.env.EMAIL_USER}>`,
+    to: customerInfo.email,
+    subject: `📅 Estimated Delivery Update for Order #${orderId}`,
+    html,
+    priority: 'normal'
+  };
+  
+  try {
+    await sendMail(mailOptions);
+    console.log(`📧 Estimated delivery update email sent for order #${orderId}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Estimated delivery update email error:', error);
+    return false;
+  }
+};
+
 // Send admin new order email
 const sendAdminNewOrderEmail = async (orderId, customerInfo, items, totals) => {
   const html = renderAdminNewOrderEmail(orderId, customerInfo, items, totals);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft System <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Crafts System <yokebud@gmail.com>',
     to: 'yokebud@gmail.com',
     subject: `🚀 New Order Received: #${orderId}`,
     html,
@@ -3144,55 +2934,13 @@ const sendAdminNewOrderEmail = async (orderId, customerInfo, items, totals) => {
   }
 };
 
-// Send Custom Laser Order Confirmation Email (Customer)
-const sendCustomLaserOrderConfirmationEmail = async (orderId, customerInfo, orderData) => {
-  const html = renderCustomLaserOrderConfirmationEmail(orderId, customerInfo, orderData);
-  const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
-    to: customerInfo.email,
-    subject: `✅ Custom Laser Order Confirmed #${orderId} - Yokebud Craft`,
-    html,
-    priority: 'high'
-  };
-  
-  try {
-    await sendMail(mailOptions);
-    console.log(`📧 Custom laser order confirmation email sent for order #${orderId}`);
-    return true;
-  } catch (error) {
-    console.error('❌ Custom laser order confirmation email error:', error);
-    return false;
-  }
-};
-
-// Send Admin New Custom Laser Order Email
-const sendAdminNewCustomLaserOrderEmail = async (orderId, customerInfo, orderData) => {
-  const html = renderAdminNewCustomLaserOrderEmail(orderId, customerInfo, orderData);
-  const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft System <yokebud@gmail.com>',
-    to: 'yokebud@gmail.com',
-    subject: `🎨 New Custom Laser Order Received: #${orderId}`,
-    html,
-    priority: 'high'
-  };
-  
-  try {
-    await sendMail(mailOptions);
-    console.log(`📧 Admin custom laser order notification sent for order #${orderId}`);
-    return true;
-  } catch (error) {
-    console.error('❌ Admin custom laser order notification email error:', error);
-    return false;
-  }
-};
-
 // Send manual notification email (Single Send)
 const sendManualNotificationEmail = async (orderId, customerInfo) => {
   const html = renderManualNotificationEmail(orderId, customerInfo);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
     to: customerInfo.email,
-    subject: `✨ Update regarding Order #${orderId} - Yokebud Craft`,
+    subject: `✨ Update regarding Order #${orderId} - Yokebud Crafts`,
     html,
     priority: 'normal'
   };
@@ -3211,10 +2959,10 @@ const sendManualNotificationEmail = async (orderId, customerInfo) => {
 const sendContactFormNotification = async (name, email, whatsapp, message) => {
   const html = renderContactFormNotificationEmail(name, email, whatsapp, message);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || `Yokebud Craft <${process.env.EMAIL_USER}>`,
+    from: process.env.EMAIL_FROM || `Yokebud Crafts <${process.env.EMAIL_USER}>`,
     replyTo: email,
     to: 'yokebud@gmail.com',
-    subject: `📩 New Contact Message from ${name} - Yokebud Craft`,
+    subject: `📩 New Contact Message from ${name} - Yokebud Crafts`,
     html,
     priority: 'high'
   };
@@ -3233,9 +2981,9 @@ const sendContactFormNotification = async (name, email, whatsapp, message) => {
 const sendContactFormConfirmation = async (name, email, message) => {
   const html = renderContactFormConfirmationEmail(name, email, message);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
     to: email,
-    subject: '✨ Thank you for contacting Yokebud Craft',
+    subject: '✨ Thank you for contacting Yokebud Crafts',
     html,
     priority: 'normal'
   };
@@ -3255,7 +3003,7 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
   const isToAdmin = senderType === 'user';
   const recipientEmail = isToAdmin ? 'yokebud@gmail.com' : inquiry.customer_email;
   const recipientName = isToAdmin ? 'Admin' : inquiry.customer_name;
-  const senderName = isToAdmin ? inquiry.customer_name : 'Yokebud Craft Support';
+  const senderName = isToAdmin ? inquiry.customer_name : 'Yokebud Crafts Support';
   
   // Parse product name safely
   let productName = 'Product Inquiry';
@@ -3270,10 +3018,10 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
   
   const subject = isToAdmin 
     ? `📩 New Message: Inquiry #${inquiry.inquiry_number} - ${productName}`
-    : `💬 New Message regarding Inquiry #${inquiry.inquiry_number} - Yokebud Craft`;
+    : `💬 New Message regarding Inquiry #${inquiry.inquiry_number} - Yokebud Crafts`;
 
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
     to: recipientEmail,
     subject: subject,
     html,
@@ -3294,9 +3042,9 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
 const sendPasswordResetEmail = async (email, resetToken) => {
   const html = renderPasswordResetEmail(email, resetToken);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Craft Security <security@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud Crafts Security <security@yokebud.com>',
     to: email,
-    subject: '🔐 Password Reset Request - Yokebud Craft',
+    subject: '🔐 Password Reset Request - Yokebud Crafts',
     html,
     priority: 'high'
   };
@@ -3337,7 +3085,7 @@ const generateProductSEO = (name, description, price, imageUrls) => {
     "image": imageUrls || [],
     "brand": {
       "@type": "Brand",
-      "name": "Yokebud Craft"
+      "name": "Yokebud Crafts"
     },
     "offers": {
       "@type": "Offer",
@@ -3851,10 +3599,10 @@ const checkUnreadMessageReminders = async () => {
         const content = `<p style="margin:0 0 12px 0;color:${EMAIL_THEME.textLight};">A new message has remained unviewed for over 1 hour in your conversation about <span style="color:${EMAIL_THEME.text};font-weight:700;">${product.product_name || 'your product'}</span>.</p><div style="background:#0D0D0D;border:1px solid #1a1a1a;border-radius:12px;padding:16px;margin-top:8px;"><div style="color:${EMAIL_THEME.textLight};font-size:12px;margin-bottom:6px;">Message preview</div><div style="color:${EMAIL_THEME.text};line-height:1.6;">${preview || 'No text'}</div></div>`;
         const clientUrl = `${process.env.CLIENT_URL || 'https://www.yokebud.fi'}/messages`;
         const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin/inquiries'}`;
-        const userHtml = renderThemedEmail({ title: 'Yokebud Craft', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
-        const adminHtml = renderThemedEmail({ title: 'Yokebud Craft', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
-        const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
-        const mailAdmin = { from: process.env.EMAIL_FROM || 'Yokebud Craft <yokebud@gmail.com>', to: 'yokebud@gmail.com', subject: `${subject} - ${inquiry.customer_name || ''}`, html: adminHtml };
+        const userHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
+        const adminHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
+        const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
+        const mailAdmin = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: 'yokebud@gmail.com', subject: `${subject} - ${inquiry.customer_name || ''}`, html: adminHtml };
         try { await sendMail(mailUser); } catch {}
         try { await sendMail(mailAdmin); } catch {}
         messages[i] = { ...msg, reminder_sent: true };
@@ -5564,7 +5312,7 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
     }
 
     const toSlug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    let inquiryFolder = `Yokebud Craft/inquiries/${inquiryId}`;
+    let inquiryFolder = `yokebud crafts/inquiries/${inquiryId}`;
     try {
       const uid = inquiries[0] && inquiries[0].user_id;
       if (uid) {
@@ -5577,7 +5325,7 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
           name = full || name;
         }
         const userSlug = toSlug(name);
-        inquiryFolder = `Yokebud Craft/users/${userSlug}/inquiries/${inquiryId}`;
+        inquiryFolder = `yokebud crafts/users/${userSlug}/inquiries/${inquiryId}`;
       }
     } catch (_) {}
 
@@ -5682,7 +5430,7 @@ app.get('/debug/email-preview', (req, res) => {
     <p style="margin:0;color:${EMAIL_THEME.textLight};line-height:1.7;">This is a sample preview for the current email template without logo.</p>
   </div>`;
   const html = renderThemedEmail({
-    title: 'Yokebud Craft',
+    title: 'Yokebud Crafts',
     subtitle: 'Template Preview',
     contentHtml: sampleContent,
     primaryCtaText: 'Visit Website',
@@ -7021,17 +6769,14 @@ app.post('/api/user/logout', async (req, res) => {
       customizationFile,
       totals,
       estimatedDelivery,
-      productionTime,
-      promoCode,
-      custom_laser_order_id
+      productionTime
     } = req.body;
 
     console.log('Received order data:', {
       customerInfo,
       paymentMethod,
       itemsCount: items?.length,
-      totals,
-      custom_laser_order_id
+      totals
     });
 
     // Validate required fields
@@ -7069,43 +6814,11 @@ app.post('/api/user/logout', async (req, res) => {
       }
     }
 
-    let validatedPromoCode = null;
-    if (promoCode && (promoCode.id || promoCode.code)) {
-      const orderProductIds = extractPromoProductIdsFromItems(Array.isArray(items) ? items : []);
-
-      let promoRecord = null;
-      if (promoCode.id) {
-        const [rows] = await connection.query('SELECT * FROM promo_codes WHERE id = ?', [promoCode.id]);
-        promoRecord = rows[0] || null;
-      } else if (promoCode.code) {
-        const [rows] = await connection.query('SELECT * FROM promo_codes WHERE code = ?', [promoCode.code.toUpperCase()]);
-        promoRecord = rows[0] || null;
-      }
-
-      if (!promoRecord) {
-        connection.release();
-        return res.status(400).json({ success: false, message: 'Invalid promo code' });
-      }
-
-      const validation = await validatePromoCodeRecord(connection, promoRecord, {
-        productIds: orderProductIds,
-        userId: authUserId
-      });
-
-      if (!validation.valid) {
-        connection.release();
-        return res.status(400).json({ success: false, message: validation.message });
-      }
-
-      validatedPromoCode = validation.promoCode;
-    }
-
     await connection.beginTransaction();
 
     try {
       const arrItems = Array.isArray(items) ? items : [];
       for (const it of arrItems) {
-        if (it.is_custom_laser_order) continue; // Skip custom laser orders for stock checks
         const pid = it && it.id != null ? Number(it.id) : null;
         const qty = it && it.quantity != null ? Number(it.quantity) : 0;
         if (!pid || qty <= 0) continue;
@@ -7194,8 +6907,7 @@ app.post('/api/user/logout', async (req, res) => {
         zip: customerInfo.zip,
         country: customerInfo.country
       }),
-      notes: customizationNotes,
-      custom_laser_order_id: custom_laser_order_id || null
+      notes: customizationNotes
     };
 
     // Insert order into database
@@ -7203,29 +6915,6 @@ app.post('/api/user/logout', async (req, res) => {
       `INSERT INTO orders SET ?`,
       [orderData]
     );
-
-    // If custom laser order, update its status and link it to this order
-    if (custom_laser_order_id) {
-      await connection.query(
-        'UPDATE custom_laser_orders SET status = ?, order_id = ? WHERE id = ?',
-        ['Processing', orderId, custom_laser_order_id]
-      );
-    }
-
-    // Handle promo code if provided
-    if (validatedPromoCode && validatedPromoCode.id) {
-      // Increment used count
-      await connection.query(
-        'UPDATE promo_codes SET used_count = used_count + 1 WHERE id = ?',
-        [validatedPromoCode.id]
-      );
-      
-      // Record usage
-      await connection.query(
-        'INSERT INTO promo_code_usages (promo_code_id, user_id, order_id) VALUES (?, ?, ?)',
-        [validatedPromoCode.id, authUserId || null, orderId]
-      );
-    }
 
     await connection.commit();
     connection.release();
@@ -7472,7 +7161,7 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
   let connection;
   try {
     const { orderId } = req.params;
-    const { status, delivered_at } = req.body;
+    const { status, delivered_at, estimated_delivery_date } = req.body;
 
     if (!status) {
       return res.status(400).json({
@@ -7487,8 +7176,8 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
       ? (delivered_at ? new Date(delivered_at) : new Date())
       : null;
     const [result] = await connection.query(
-      'UPDATE orders SET status = ?, delivered_at = ?, updated_at = NOW() WHERE order_id = ?',
-      [status, deliveredValue, orderId]
+      'UPDATE orders SET status = ?, delivered_at = ?, estimated_delivery_date = ?, updated_at = NOW() WHERE order_id = ?',
+      [status, deliveredValue, estimated_delivery_date || null, orderId]
     );
 
     if (result.affectedRows === 0) {
@@ -7522,7 +7211,7 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
 
     // Send order status update email
     try {
-      await sendOrderStatusUpdateEmail(orderId, status, parsedOrder.customer_info, parsedOrder.tracking_number);
+      await sendOrderStatusUpdateEmail(orderId, status, parsedOrder.customer_info, parsedOrder.tracking_number, parsedOrder.estimated_delivery_date);
     } catch (e) {
       console.error('Status email error:', e.message || e);
     }
@@ -7539,6 +7228,72 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to update order status: ' + error.message
+    });
+  }
+});
+
+// Update estimated delivery date only
+app.put('/api/orders/:orderId/estimated-delivery', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { orderId } = req.params;
+    const { estimated_delivery_date } = req.body;
+
+    connection = await pool.getConnection();
+
+    const [result] = await connection.query(
+      'UPDATE orders SET estimated_delivery_date = ?, updated_at = NOW() WHERE order_id = ?',
+      [estimated_delivery_date || null, orderId]
+    );
+
+    if (result.affectedRows === 0) {
+      connection.release();
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Get updated order
+    const [orders] = await connection.query(
+      'SELECT * FROM orders WHERE order_id = ?',
+      [orderId]
+    );
+
+    const order = orders[0];
+    
+    // Parse JSON fields
+    const parsedOrder = {
+      ...order,
+      customer_info: typeof order.customer_info === 'string' ? 
+        JSON.parse(order.customer_info) : order.customer_info,
+      items: typeof order.items === 'string' ? 
+        JSON.parse(order.items) : order.items,
+      totals: typeof order.totals === 'string' ? 
+        JSON.parse(order.totals) : order.totals
+    };
+
+    connection.release();
+
+    // Send estimated delivery update email
+    try {
+      await sendEstimatedDeliveryUpdateEmail(orderId, parsedOrder.customer_info, parsedOrder.estimated_delivery_date);
+    } catch (e) {
+      console.error('Estimated delivery email error:', e.message || e);
+    }
+
+    res.json({
+      success: true,
+      message: 'Estimated delivery date updated successfully',
+      order: parsedOrder
+    });
+
+  } catch (error) {
+    console.error('Error updating estimated delivery date:', error);
+    if (connection) connection.release();
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update estimated delivery date: ' + error.message
     });
   }
 });
@@ -7593,9 +7348,7 @@ app.put('/api/orders/:orderId/tracking', async (req, res) => {
 
 // Create product endpoint
 app.post('/api/products', requireAdminAuth, async (req, res) => {
-  let connection;
   try {
-    console.log('POST /api/products - req.body:', JSON.stringify(req.body, null, 2));
     const {
       name,
       description,
@@ -7610,7 +7363,6 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       shipping,
       warranty,
       bulk_discount,
-      discount_ranges,
       sizes,
       colors,
       tags,
@@ -7629,8 +7381,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       stock_status,
       customization_type,
       customization_images,
-      customization_dimensions,
-      allow_customer_size_adjustment
+      customization_dimensions
     } = req.body;
     
     const validation = validateProductPayload(req.body);
@@ -7647,7 +7398,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     // Process sizes
     const processedSizes = processSizes(sizes);
     
-    connection = await pool.getConnection();
+    const connection = await pool.getConnection();
     
     // Check for duplicate SKU
     const [existingProducts] = await connection.query(
@@ -7675,7 +7426,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     // Insert product into database
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageArray);
-    const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount, discount_ranges: discount_ranges || [] });
+    const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount });
 
     // Debug: log customization_mode for incoming create
     console.log('CREATE product - customization_mode:', req.body.customization_mode);
@@ -7687,12 +7438,12 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         discounted_price,
         category,
         stock,
-        moq,
         material,
         care_instructions,
         sku,
         shipping_info,
         warranty,
+        bulk_discount,
         sizes,
         colors,
         tags,
@@ -7715,9 +7466,8 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_type,
         customization_mode,
         customization_images,
-        customization_dimensions,
-        allow_customer_size_adjustment
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        customization_dimensions
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
@@ -7725,12 +7475,12 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
-        moq || 1,
         material,
         care,
         sku,
         shipping,
         warranty,
+        bulk_discount,
         JSON.stringify(processedSizes),
         JSON.stringify(colors),
         JSON.stringify(tags),
@@ -7753,8 +7503,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_type || 'Apparels',
         req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
-        customization_dimensions ? JSON.stringify(customization_dimensions) : null,
-        allow_customer_size_adjustment ? 1 : 0
+        customization_dimensions ? JSON.stringify(customization_dimensions) : null
       ]
     );
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
@@ -7776,7 +7525,6 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     // Auto-regenerate sitemap when a new product is added
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product creation:', err));
   } catch (error) {
-    if (connection) connection.release();
     console.error('Product creation error:', error);
     res.status(500).json({ 
       success: false, 
@@ -7794,7 +7542,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const {
       name,
       description,
-      price,
+      price, // This will be max_price
+      min_price, // This can be custom min price
+      discounted_price, // For setting min_price
       categories,
       stock,
       moq,
@@ -7804,22 +7554,20 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       shipping,
       warranty,
       bulk_discount,
-      discount_ranges,
       sizes,
       colors,
       tags,
       features,
       imageUrls,
+      imagesToDelete = [],
       is_customizable,
       is_preorder,
       stock_status,
       customization_type,
       customization_images,
-      customization_dimensions,
-      allow_customer_size_adjustment
+      customization_dimensions
     } = req.body;
 
-    // Validate product payload
     const validation = validateProductPayload({
       name,
       description,
@@ -7838,51 +7586,72 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       });
     }
 
-    // Get database connection
-    connection = await pool.getConnection();
+    const finalPrice = parseFloat(price);
+    const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
 
-    // Check if product exists
-    const [products] = await connection.query('SELECT sku FROM products WHERE id = ?', [productId]);
+    // Process sizes
+    const processedSizes = processSizes(sizes);
+
+    connection = await pool.getConnection();
+    
+    await connection.beginTransaction();
+    
+    
+    // Get current product data
+    const [products] = await connection.query(
+      'SELECT sku FROM products WHERE id = ?',
+      [productId]
+    );
+    
     if (products.length === 0) {
+      await connection.rollback();
       connection.release();
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    // Check SKU uniqueness
     const currentSku = products[0].sku;
+    
+    // Check if SKU is being changed to one that already exists
     if (sku !== currentSku) {
-      const [skuCheck] = await connection.query('SELECT id FROM products WHERE sku = ? AND id != ?', [sku, productId]);
+      const [skuCheck] = await connection.query(
+        'SELECT id FROM products WHERE sku = ? AND id != ?',
+        [sku, productId]
+      );
+      
       if (skuCheck.length > 0) {
+        await connection.rollback();
         connection.release();
         return res.status(400).json({ success: false, message: 'SKU already exists' });
       }
     }
 
-    // Prepare data
-    const finalPrice = parseFloat(price);
-    const processedSizes = processSizes(sizes);
+    // Delete images from Cloudinary
+    if (imagesToDelete.length > 0) {
+      try {
+        const deletePromises = imagesToDelete.map(publicId => {
+          return cloudinary.uploader.destroy(publicId);
+        });
+        await Promise.all(deletePromises);
+      } catch (err) {
+        console.error('Error deleting images from Cloudinary:', err);
+      }
+    }
+
+    // Update product in database
     const baseSlug = slugify(name);
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageUrls);
-    const metadataJson = JSON.stringify({ 
-      tags, 
-      features, 
-      shipping, 
-      warranty, 
-      bulk_discount, 
-      discount_ranges: discount_ranges || [] 
-    });
+    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, bulk_discount });
 
-    // SEO fields
+    // Auto-generate SEO fields if not provided
     const seo = generateProductSEO(name, description, finalPrice, imageUrls);
     const finalSeoTitle = req.body.seo_title || seo.seo_title;
     const finalSeoDescription = req.body.seo_description || seo.seo_description;
     const finalSeoKeywords = req.body.seo_keywords || seo.seo_keywords;
     const finalSchemaJson = req.body.schema_json ? JSON.stringify(req.body.schema_json) : JSON.stringify(seo.schema_json);
 
-    // Update product (without transaction to avoid ECONNRESET)
-    await connection.query(
+    const [result] = await connection.query(
       `UPDATE products SET 
         product_name = ?,
         product_description = ?,
@@ -7890,12 +7659,12 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         discounted_price = ?,
         category = ?,
         stock = ?,
-        moq = ?,
         material = ?,
         care_instructions = ?,
         sku = ?,
         shipping_info = ?,
         warranty = ?,
+        bulk_discount = ?,
         sizes = ?,
         colors = ?,
         tags = ?,
@@ -7919,22 +7688,21 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         customization_mode = ?,
         customization_images = ?,
         customization_dimensions = ?,
-        allow_customer_size_adjustment = ?,
         updated_at = NOW()
       WHERE id = ?`,
       [
         name,
         description,
         finalPrice,
-        null,
+        finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
-        moq || 1,
         material,
         care,
         sku,
         shipping,
         warranty,
+        bulk_discount,
         JSON.stringify(processedSizes),
         JSON.stringify(colors),
         JSON.stringify(tags),
@@ -7958,12 +7726,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
         customization_dimensions ? JSON.stringify(customization_dimensions) : null,
-        allow_customer_size_adjustment ? 1 : 0,
         productId
       ]
     );
-
-    // Update variants (without transaction)
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
     await connection.query('DELETE FROM product_variants WHERE product_id = ?', [productId]);
     for (const v of variants) {
@@ -7973,7 +7738,8 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         [productId, v && v.color ? String(v.color) : null, v && v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
       );
     }
-
+    
+    await connection.commit();
     connection.release();
 
     res.json({ 
@@ -7981,12 +7747,12 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       message: 'Product updated successfully',
       productId: productId
     });
+
+    // Auto-regenerate sitemap when a product is updated
+    regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product update:', err));
   } catch (error) {
-    if (connection) {
-      try { connection.release(); } catch {}
-    }
+    try { if (connection) await connection.rollback(); } catch {}
     console.error('Product update error:', error);
-    console.error('Error stack:', error.stack);
     res.status(500).json({ 
       success: false, 
       message: 'Failed to update product',
@@ -7997,18 +7763,16 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
 
 // Get single product endpoint
 app.get('/api/products/:id', async (req, res) => {
-  let connection;
   try {
     const productId = req.params.id;
     
-    connection = await pool.getConnection();
+    const connection = await pool.getConnection();
     const [products] = await connection.query(
       'SELECT * FROM products WHERE id = ?',
       [productId]
     );
 
     if (products.length === 0) {
-      connection.release();
       return res.status(404).json({ error: 'Product not found' });
     }
 
@@ -8058,7 +7822,7 @@ app.get('/api/products/:id', async (req, res) => {
       sku: product.sku,
       shipping_info: product.shipping_info,
       warranty: product.warranty,
-      bulk_discount: meta?.bulk_discount || null,
+      bulk_discount: product.bulk_discount,
       sizes: JSON.parse(product.sizes || '[]'),
       colors: JSON.parse(product.colors || '[]'),
       product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]'),
@@ -8096,7 +7860,6 @@ app.get('/api/products/:id', async (req, res) => {
     connection.release();
     res.json(parsedProduct);
   } catch (error) {
-    if (connection) connection.release();
     console.error('Error fetching product:', error);
     res.status(500).json({ error: 'Failed to fetch product' });
   }
@@ -8104,9 +7867,8 @@ app.get('/api/products/:id', async (req, res) => {
 
 // Get all products endpoint
 app.get('/api/products', async (req, res) => {
-  let connection;
   try {
-    connection = await pool.getConnection();
+    const connection = await pool.getConnection();
     const [products] = await connection.query(
       'SELECT * FROM products ORDER BY created_at DESC'
     );
@@ -8185,29 +7947,23 @@ app.get('/api/products', async (req, res) => {
         created_at: product.created_at,
         updated_at: product.updated_at,
         rating: sum.rating,
-        review_count: sum.review_count,
-        moq: product.moq,
-        metadata: meta,
-        bulk_discount: meta?.bulk_discount || null,
-        discount_ranges: meta?.discount_ranges || null
+        review_count: sum.review_count
       };
     });
 
     res.json(parsedProducts);
   } catch (error) {
-    if (connection) connection.release();
     console.error('Error fetching products:', error);
     res.status(500).json({ error: 'Failed to fetch products' });
   }
 });
 
 app.get('/api/products/:id/reviews', async (req, res) => {
-  let connection;
   try {
     const productId = req.params.id;
     const googleUid = (req.query && req.query.google_uid) ? String(req.query.google_uid) : null;
     const token = req.headers.authorization ? req.headers.authorization.replace('Bearer ', '') : null;
-    connection = await pool.getConnection();
+    const connection = await pool.getConnection();
     const [reviews] = await connection.query(
       'SELECT id, user_id, google_uid, reviewer_name, reviewer_photo_url, rating, title, review_text, media_json, is_first_review, created_at FROM user_reviews WHERE product_id = ? AND is_approved = 1 ORDER BY created_at DESC',
       [productId]
@@ -8231,8 +7987,6 @@ app.get('/api/products/:id/reviews', async (req, res) => {
     const summary = sumRows[0] || { avg_rating: null, review_count: 0 };
     res.json({ success: true, reviews, summary, you_have_rated: youHaveRated });
   } catch (error) {
-    if (connection) connection.release();
-    console.error('Error fetching reviews:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch reviews' });
   }
 });
@@ -8292,7 +8046,7 @@ app.post('/api/products/:id/reviews', async (req, res) => {
     let mediaUrls = [];
     const uploadBuffer = (buf) => new Promise((resolve, reject) => {
       try {
-        const stream = cloudinary.uploader.upload_stream({ folder: 'Yokebud Craft/reviews', resource_type: 'auto' }, (err, result) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud crafts/reviews', resource_type: 'auto' }, (err, result) => {
           if (err) return reject(err);
           resolve(result);
         });
@@ -8306,7 +8060,7 @@ app.post('/api/products/:id/reviews', async (req, res) => {
       for (const f of arr) {
         if (f.tempFilePath) {
           try {
-            const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'Yokebud Craft/reviews', resource_type: 'auto' });
+            const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud crafts/reviews', resource_type: 'auto' });
             results.push(r);
           } catch {}
         } else if (f.data) {
@@ -8375,7 +8129,7 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
     let mediaUrls = [];
     const uploadBuffer = (buf) => new Promise((resolve, reject) => {
       try {
-        const stream = cloudinary.uploader.upload_stream({ folder: 'Yokebud Craft/reviews', resource_type: 'auto' }, (err, result) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud crafts/reviews', resource_type: 'auto' }, (err, result) => {
           if (err) return reject(err);
           resolve(result);
         });
@@ -8388,7 +8142,7 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
       const results = [];
       for (const f of arr) {
         if (f.tempFilePath) {
-          try { const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'Yokebud Craft/reviews', resource_type: 'auto' }); results.push(r); } catch {}
+          try { const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud crafts/reviews', resource_type: 'auto' }); results.push(r); } catch {}
         } else if (f.data) {
           try { const r = await uploadBuffer(f.data); results.push(r); } catch {}
         }
@@ -8812,7 +8566,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
       description: String(p.product_description || p.product_details || ''),
       sku: p.sku || String(p.id || ''),
       image: photos.map(absoluteImageUrl).slice(0, 4),
-      brand: { '@type': 'Brand', name: 'Yokebud Craft' },
+      brand: { '@type': 'Brand', name: 'Yokebud Crafts' },
       offers: {
         '@type': 'Offer',
         priceCurrency: 'EUR',
@@ -8823,14 +8577,14 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     };
 
     const tags = `
-      <title>${escapeAttr(name)} | Yokebud Craft</title>
+      <title>${escapeAttr(name)} | Yokebud Crafts</title>
       <meta name="description" content="${escapeAttr(desc)}">
       <link rel="canonical" href="${canonicalUrl}">
       <meta property="og:type" content="product">
       <meta property="og:title" content="${escapeAttr(name)}">
       <meta property="og:description" content="${escapeAttr(desc)}">
       <meta property="og:url" content="${canonicalUrl}">
-      <meta property="og:site_name" content="Yokebud Craft">
+      <meta property="og:site_name" content="Yokebud Crafts">
       <meta property="og:image" content="${firstImage}">
       <meta name="twitter:card" content="summary_large_image">
       <meta name="twitter:title" content="${escapeAttr(name)}">
@@ -8994,7 +8748,7 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
     const productSlugHint = req.body && (req.body.productSlug || req.body.slug);
     const productNameHint = req.body && (req.body.productName || req.body.name);
     const toSlug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    let targetFolder = 'Yokebud Craft/products';
+    let targetFolder = 'yokebud crafts/products';
     if (productId) {
       try {
         const conn = await pool.getConnection();
@@ -9392,61 +9146,39 @@ app.post('/api/admin/verify-otp', async (req, res) => {
 // ==================== ADMIN DASHBOARD AND STATS ====================
 // Admin dashboard
 app.get('/api/admin/dashboard', requireAdminAuth, async (req, res) => {
-  let connection;
   try {
-    connection = await pool.getConnection();
     
-    let unreadMessages = 0, totalMessages = 0, totalProducts = 0, pendingOrders = 0;
+
+    const connection = await pool.getConnection();
     
-    try {
-      const [unreadCount] = await connection.query(
-        'SELECT COUNT(*) as count FROM messages WHERE is_read = 0'
-      );
-      unreadMessages = unreadCount[0].count;
-    } catch (e) {
-      console.warn('Dashboard: messages table not found, defaulting to 0');
-    }
+    const [unreadCount] = await connection.query(
+      'SELECT COUNT(*) as count FROM messages WHERE is_read = 0'
+    );
     
-    try {
-      const [totalCount] = await connection.query(
-        'SELECT COUNT(*) as count FROM messages'
-      );
-      totalMessages = totalCount[0].count;
-    } catch (e) {
-      console.warn('Dashboard: messages table not found, defaulting to 0');
-    }
+    const [totalCount] = await connection.query(
+      'SELECT COUNT(*) as count FROM messages'
+    );
     
-    try {
-      const [productCount] = await connection.query(
-        'SELECT COUNT(*) as count FROM products'
-      );
-      totalProducts = productCount[0].count;
-    } catch (e) {
-      console.warn('Dashboard: products table not found, defaulting to 0');
-    }
+    const [productCount] = await connection.query(
+      'SELECT COUNT(*) as count FROM products'
+    );
     
-    try {
-      const [orderCount] = await connection.query(
-        'SELECT COUNT(*) as count FROM checkout_data WHERE status IN ("Pending", "Processing")'
-      );
-      pendingOrders = orderCount[0].count;
-    } catch (e) {
-      console.warn('Dashboard: checkout_data table not found, defaulting to 0');
-    }
+    const [orderCount] = await connection.query(
+      'SELECT COUNT(*) as count FROM checkout_data WHERE status IN ("Pending", "Processing")'
+    );
     
     connection.release();
 
     res.json({ 
       success: true, 
       stats: {
-        unreadMessages,
-        totalMessages,
-        totalProducts,
-        pendingOrders
+        unreadMessages: unreadCount[0].count,
+        totalMessages: totalCount[0].count,
+        totalProducts: productCount[0].count,
+        pendingOrders: orderCount[0].count
       }
     });
   } catch (error) {
-    if (connection) connection.release();
     console.error('Dashboard error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -9454,9 +9186,10 @@ app.get('/api/admin/dashboard', requireAdminAuth, async (req, res) => {
 
 // Admin: users summary (total users and recent activity)
 app.get('/api/admin/users/summary', requireAdminAuth, async (req, res) => {
-  let connection;
   try {
-    connection = await pool.getConnection();
+    
+
+    const connection = await pool.getConnection();
 
     const [totalRows] = await connection.query(
       'SELECT COUNT(*) as count FROM user_profiles'
@@ -9487,7 +9220,6 @@ app.get('/api/admin/users/summary', requireAdminAuth, async (req, res) => {
       activity: activityRows
     });
   } catch (error) {
-    if (connection) connection.release();
     console.error('Users summary error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -10033,7 +9765,7 @@ async function ensureBlogsSchema() {
         {
           title: 'Best Laser Engraving Gift Ideas in Finland',
           excerpt: 'Discover the most unique and thoughtful personalized gift ideas using professional laser engraving technology in Finland.',
-          content: '<p>Looking for the perfect gift? <strong>Laser engraving Finland</strong> offers a unique way to personalize gifts for your loved ones. From <strong>custom engraved wood</strong> frames to <strong>personalized leather wallets</strong>, the possibilities are endless. At Yokebud Craft, we specialize in creating one-of-a-kind treasures that are both beautiful and durable. Learn more about our <a href="/?category=laser-engraving">laser engraving services</a> today.</p>',
+          content: '<p>Looking for the perfect gift? <strong>Laser engraving Finland</strong> offers a unique way to personalize gifts for your loved ones. From <strong>custom engraved wood</strong> frames to <strong>personalized leather wallets</strong>, the possibilities are endless. At Yokebud Crafts, we specialize in creating one-of-a-kind treasures that are both beautiful and durable. Learn more about our <a href="/?category=laser-engraving">laser engraving services</a> today.</p>',
           category: 'Gift Ideas',
           slug: 'best-laser-engraving-gift-ideas-finland'
         },
@@ -10047,14 +9779,14 @@ async function ensureBlogsSchema() {
         {
           title: 'Laser Cutting vs Traditional Crafting',
           excerpt: 'Comparing modern laser cutting technology with traditional handcrafted methods for creating custom wood and leather products.',
-          content: '<p>While traditional crafting methods have their charm, <strong>laser cutting Helsinki</strong> brings a level of precision and consistency that is hard to match. By combining <strong>handmade in Finland</strong> quality with modern laser technology, Yokebud Craft delivers the best of both worlds. Our <strong>laser-cut wooden crafts</strong> showcase intricate designs that are durable and perfectly finished. Check out our <a href="/?category=laser-cutting-products">laser cutting products</a>.</p>',
+          content: '<p>While traditional crafting methods have their charm, <strong>laser cutting Helsinki</strong> brings a level of precision and consistency that is hard to match. By combining <strong>handmade in Finland</strong> quality with modern laser technology, Yokebud Crafts delivers the best of both worlds. Our <strong>laser-cut wooden crafts</strong> showcase intricate designs that are durable and perfectly finished. Check out our <a href="/?category=laser-cutting-products">laser cutting products</a>.</p>',
           category: 'Craftsmanship',
           slug: 'laser-cutting-vs-traditional-crafting'
         },
         {
           title: 'Personalized Engraved Gift Trends Finland',
           excerpt: 'Stay up to date with the latest trends in personalized and engraved gifts in the Finnish market for 2026.',
-          content: '<p>Personalization is more popular than ever in Finland. The latest trends show a high demand for <strong>custom engraved gifts</strong> that focus on sustainability and local craftsmanship. From <strong>engraved stone decor</strong> to <strong>personalized apparel</strong>, Finnish consumers value quality and uniqueness. Stay ahead of the curve with Yokebud Craft, your hub for <strong>laser engraving Finland</strong>. Discover our <a href="/?category=laser-engraving">latest arrivals</a>.</p>',
+          content: '<p>Personalization is more popular than ever in Finland. The latest trends show a high demand for <strong>custom engraved gifts</strong> that focus on sustainability and local craftsmanship. From <strong>engraved stone decor</strong> to <strong>personalized apparel</strong>, Finnish consumers value quality and uniqueness. Stay ahead of the curve with Yokebud Crafts, your hub for <strong>laser engraving Finland</strong>. Discover our <a href="/?category=laser-engraving">latest arrivals</a>.</p>',
           category: 'Trends',
           slug: 'personalized-engraved-gift-trends-finland'
         }
@@ -10647,7 +10379,7 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
             // Inject Meta Tags
             const metaTags = `
     <!-- Dynamic Meta Tags for ${name} -->
-    <title>${name} | Yokebud Craft</title>
+    <title>${name} | Yokebud Crafts</title>
     <meta name="description" content="${desc}" />
     <meta property="og:title" content="${name}" />
     <meta property="og:description" content="${desc}" />
@@ -11491,1093 +11223,6 @@ app.post('/api/admin/sitemap/revert/:id', requireAdminAuth, async (req, res) => 
       connection.release();
     }
     res.status(500).json({ success: false, message: 'Failed to revert sitemap: ' + error.message });
-  }
-});
-
-// ==================== POPUP ADMIN API ENDPOINTS ====================
-// Get all popups
-app.get('/api/admin/popups', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    connection = await pool.getConnection();
-    const [rows] = await connection.query('SELECT * FROM popups ORDER BY created_at DESC');
-    connection.release();
-    res.json({ success: true, popups: rows });
-  } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to fetch popups: ' + error.message });
-  }
-});
-
-// Create a new popup
-app.post('/api/admin/popups', requireAdminAuth, async (req, res) => {
-  console.log('=== /api/admin/popups POST called ===');
-  console.log('Request body:', req.body);
-  
-  let connection;
-  try {
-    const {
-      title,
-      image_url,
-      description,
-      link_url,
-      link_text,
-      auto_close_duration,
-      start_date,
-      end_date,
-      is_active,
-      position,
-      display_delay
-    } = req.body;
-    
-    if (!title) {
-      return res.status(400).json({ success: false, message: 'Title is required' });
-    }
-
-    connection = await pool.getConnection();
-    const [result] = await connection.query(
-      `INSERT INTO popups (
-        title, image_url, description, link_url, link_text,
-        auto_close_duration, start_date, end_date, is_active, position, display_delay
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        title,
-        image_url || null,
-        description || null,
-        link_url || null,
-        link_text || 'Learn More',
-        auto_close_duration || 10,
-        start_date || null,
-        end_date || null,
-        is_active !== undefined ? (is_active ? 1 : 0) : 1,
-        position || 'center',
-        display_delay || 3
-      ]
-    );
-    console.log('Inserted popup with ID:', result.insertId);
-    connection.release();
-    res.json({ success: true, popupId: result.insertId });
-  } catch (error) {
-    console.error('Error creating popup:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to create popup: ' + error.message });
-  }
-});
-
-// Update popup
-app.put('/api/admin/popups/:id', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    const { id } = req.params;
-    const updates = req.body;
-    
-    if (!id) {
-      return res.status(400).json({ success: false, message: 'Popup ID is required' });
-    }
-
-    const updateFields = [];
-    const updateValues = [];
-    const allowedFields = [
-      'title', 'image_url', 'description', 'link_url', 'link_text',
-      'auto_close_duration', 'start_date', 'end_date', 'is_active', 'position', 'display_delay'
-    ];
-    allowedFields.forEach(field => {
-      if (updates[field] !== undefined) {
-        updateFields.push(`${field} = ?`);
-        if (field === 'is_active') {
-          updateValues.push(updates[field] ? 1 : 0);
-        } else {
-          updateValues.push(updates[field]);
-        }
-      }
-    });
-    updateValues.push(id);
-
-    if (updateFields.length === 0) {
-      return res.status(400).json({ success: false, message: 'No fields to update' });
-    }
-
-    connection = await pool.getConnection();
-    await connection.query(
-      `UPDATE popups SET ${updateFields.join(', ')} WHERE id = ?`,
-      updateValues
-    );
-    connection.release();
-    res.json({ success: true, message: 'Popup updated successfully' });
-  } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to update popup: ' + error.message });
-  }
-});
-
-// Delete popup
-app.delete('/api/admin/popups/:id', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    const { id } = req.params;
-    connection = await pool.getConnection();
-    await connection.query('DELETE FROM popups WHERE id = ?', [id]);
-    connection.release();
-    res.json({ success: true, message: 'Popup deleted successfully' });
-  } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to delete popup: ' + error.message });
-  }
-});
-
-// ==================== POPUP CLIENT API ENDPOINT ====================
-// Get active popups
-app.get('/api/popups', async (req, res) => {
-  let connection;
-  try {
-    connection = await pool.getConnection();
-    console.log('=== /api/popups called ===');
-    const today = new Date().toISOString().slice(0, 10);
-    const todayLocal = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD in local time
-    console.log('Today (UTC):', today);
-    console.log('Today (local):', todayLocal);
-    
-    // First get all popups
-    const [allRows] = await connection.query('SELECT * FROM popups');
-    console.log('All popups in DB:', allRows);
-    
-    // First try without date filtering to see if popups exist
-    const [allActiveRows] = await connection.query(
-      `SELECT * FROM popups 
-       WHERE is_active = 1 
-       ORDER BY created_at ASC`
-    );
-    console.log('All active popups (no date filter):', allActiveRows);
-    
-    // Then try with date filter using local date
-    const [rows] = await connection.query(
-      `SELECT * FROM popups 
-       WHERE is_active = 1 
-       AND (start_date IS NULL OR start_date <= ?)
-       AND (end_date IS NULL OR end_date >= ?)
-       ORDER BY created_at ASC`,
-      [todayLocal, todayLocal]
-    );
-    console.log('Filtered popups (local date):', rows);
-    
-    connection.release();
-    res.json({ success: true, popups: rows.length > 0 ? rows : allActiveRows }); // Fallback to no date filter if empty
-  } catch (error) {
-    console.error('/api/popups error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to fetch popups: ' + error.message });
-  }
-});
-
-// ==================== CUSTOM LASER ORDERS API ENDPOINTS ====================
-
-const uploadCustomLaserImage = (imageSource) => new Promise((resolve) => {
-  if (!imageSource || typeof imageSource !== 'string') return resolve(null);
-  const src = imageSource.trim();
-  if (!src) return resolve(null);
-  if (src.startsWith('http') && src.includes('cloudinary.com')) return resolve(src);
-  if (src.startsWith('http') && !src.startsWith('data:')) return resolve(src);
-  if (!src.startsWith('data:')) return resolve(src);
-
-  cloudinary.uploader.upload(
-    src,
-    { folder: 'Yokebud Craft/custom-laser', resource_type: 'auto' },
-    (err, result) => {
-      if (err) {
-        console.error('Custom laser Cloudinary upload failed:', err.message);
-        resolve(src);
-      } else {
-        resolve(result?.secure_url || src);
-      }
-    }
-  );
-});
-
-const processCustomLaserImages = async (image_url, image_urls) => {
-  let urls = [];
-  if (image_urls) {
-    if (Array.isArray(image_urls)) urls = [...image_urls];
-    else if (typeof image_urls === 'string') {
-      try {
-        const parsed = JSON.parse(image_urls);
-        urls = Array.isArray(parsed) ? parsed : [image_urls];
-      } catch {
-        urls = [image_urls];
-      }
-    }
-  }
-  if (image_url && !urls.includes(image_url)) urls.unshift(image_url);
-
-  const uploaded = await Promise.all(urls.map(uploadCustomLaserImage));
-  const filtered = uploaded.filter(Boolean);
-  return {
-    image_url: filtered[0] || null,
-    image_urls: filtered.length ? filtered : null,
-  };
-};
-
-const orderHasBase64Images = (order) => {
-  const check = (v) => typeof v === 'string' && v.startsWith('data:');
-  if (check(order.image_url)) return true;
-  let urls = order.image_urls;
-  if (typeof urls === 'string') {
-    try { urls = JSON.parse(urls); } catch { return check(urls); }
-  }
-  return Array.isArray(urls) && urls.some(check);
-};
-
-const normalizeCustomOrderImages = (order) => {
-  if (order.image_urls && typeof order.image_urls === 'string') {
-    try {
-      order.image_urls = JSON.parse(order.image_urls);
-    } catch {
-      order.image_urls = order.image_url ? [order.image_url] : [];
-    }
-  }
-  return order;
-};
-
-const migrateCustomOrderImagesIfNeeded = async (connection, order) => {
-  normalizeCustomOrderImages(order);
-  if (!orderHasBase64Images(order)) return order;
-
-  let urls = order.image_urls;
-  if (typeof urls === 'string') {
-    try { urls = JSON.parse(urls); } catch { urls = order.image_url ? [order.image_url] : []; }
-  }
-
-  const processed = await processCustomLaserImages(order.image_url, urls);
-  await connection.query(
-    'UPDATE custom_laser_orders SET image_url = ?, image_urls = ? WHERE id = ?',
-    [processed.image_url, processed.image_urls ? JSON.stringify(processed.image_urls) : null, order.id]
-  );
-
-  order.image_url = processed.image_url;
-  order.image_urls = processed.image_urls || [];
-  return order;
-};
-
-const createCustomLaserInquiry = async (connection, orderId, userId, orderData, customerInfo = {}) => {
-  if (!userId) return null;
-
-  const productId = `custom-laser-${orderId}`;
-  const [existing] = await connection.query(
-    'SELECT id FROM inquiry_conversations WHERE user_id = ? AND product_id = ? LIMIT 1',
-    [userId, productId]
-  );
-  if (existing.length > 0) {
-    await connection.query(
-      'UPDATE custom_laser_orders SET inquiry_id = ? WHERE id = ?',
-      [existing[0].id, orderId]
-    );
-    return existing[0].id;
-  }
-
-  const inquiryId = generateInquiryId(userId, productId);
-  const inquiryNumber = generateInquiryNumber();
-  const imageUrls = Array.isArray(orderData.image_urls)
-    ? orderData.image_urls
-    : (orderData.image_url ? [orderData.image_url] : []);
-  const firstImage = imageUrls[0] || orderData.image_url || null;
-
-  const productPayload = {
-    id: productId,
-    product_name: orderData.title,
-    product_description: orderData.description,
-    price: orderData.price || null,
-    product_photos: firstImage ? [firstImage] : [],
-    is_custom_laser_order: true,
-    custom_laser_order_id: orderId,
-    width: orderData.width,
-    height: orderData.height,
-    depth: orderData.depth,
-    material: orderData.material,
-    category: orderData.category,
-    quantity: 1,
-  };
-
-  const customerName = [customerInfo.firstName, customerInfo.lastName].filter(Boolean).join(' ').trim()
-    || customerInfo.name
-    || 'Customer';
-
-  const initialMessages = [{
-    id: uuidv4(),
-    sender_type: 'user',
-    message: `Custom laser order #${orderId}: ${orderData.title}`,
-    files: [],
-    timestamp: new Date().toISOString(),
-    is_read: true,
-    status: 'sent',
-  }];
-
-  await connection.query(
-    `INSERT INTO inquiry_conversations (
-      id, user_id, product_id, inquiry_number,
-      customer_name, customer_email, customer_phone, customer_country,
-      product_data, messages, status, created_at, updated_at, last_activity, unread_count, admin_unread_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW(), ?, ?)`,
-    [
-      inquiryId,
-      userId,
-      productId,
-      inquiryNumber,
-      customerName,
-      customerInfo.email || null,
-      customerInfo.phone || null,
-      customerInfo.country || null,
-      JSON.stringify(productPayload),
-      JSON.stringify(initialMessages),
-      'new',
-      0,
-      1,
-    ]
-  );
-
-  await connection.query(
-    'UPDATE custom_laser_orders SET inquiry_id = ? WHERE id = ?',
-    [inquiryId, orderId]
-  );
-
-  return inquiryId;
-};
-
-// Create custom laser order
-app.post('/api/custom-laser-orders', async (req, res) => {
-  let connection;
-  try {
-    console.log('=== /api/custom-laser-orders POST called ===');
-    
-    const authHeader = req.headers.authorization || '';
-    const tokenRaw = authHeader.startsWith('Bearer ') ? authHeader.replace('Bearer ', '') : null;
-    let authUserId = null;
-    if (tokenRaw) {
-      try {
-        const decoded = jwt.verify(tokenRaw, JWT_SECRET);
-        authUserId = decoded && decoded.userId ? decoded.userId : null;
-        console.log('Decoded userId:', authUserId);
-      } catch (_) {
-        console.log('Token verification failed');
-      }
-    }
-    console.log('Received tokenRaw:', tokenRaw ? 'yes' : 'no', 'authUserId:', authUserId);
-
-    const { title, description, image_url, image_urls, width, height, depth, material, category } = req.body;
-    console.log('Received data:', { title, description, image_url, image_urls, width, height, depth, material, category });
-    
-    if (!title || !description || !category) {
-      console.log('Validation failed: missing title, description, or category');
-      return res.status(400).json({ success: false, message: 'Title, description, and category are required' });
-    }
-
-    connection = await pool.getConnection();
-    console.log('Database connection acquired');
-
-    const processedImages = await processCustomLaserImages(image_url, image_urls);
-    
-    const [result] = await connection.query(
-      'INSERT INTO custom_laser_orders (user_id, title, description, image_url, image_urls, width, height, depth, material, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        authUserId, 
-        title, 
-        description, 
-        processedImages.image_url, 
-        processedImages.image_urls ? JSON.stringify(processedImages.image_urls) : null, 
-        width || null, 
-        height || null, 
-        depth || null, 
-        material || null,
-        category || null
-      ]
-    );
-    console.log('Insert result:', result);
-
-    const orderId = result.insertId;
-    const orderPayload = {
-      title,
-      description,
-      image_url: processedImages.image_url,
-      image_urls: processedImages.image_urls,
-      width: width || null,
-      height: height || null,
-      depth: depth || null,
-      material: material || null,
-      category: category || null,
-      price: null,
-    };
-
-    // Fetch user data if authUserId exists to send emails / create inquiry
-    let customerInfo = {};
-    if (authUserId) {
-      try {
-        const [userData] = await connection.query(
-          `SELECT uc.email, up.first_name, up.last_name, up.phone,
-           up.house_number, up.apartment, up.landmark, up.address, 
-           up.city, up.state, up.zip_code, up.country
-           FROM user_credentials uc 
-           LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
-           WHERE uc.user_id = ? AND uc.is_active = TRUE`,
-          [authUserId]
-        );
-        if (userData.length > 0) {
-          customerInfo = {
-            email: userData[0].email,
-            firstName: userData[0].first_name,
-            lastName: userData[0].last_name,
-            phone: userData[0].phone,
-            houseNumber: userData[0].house_number,
-            apartment: userData[0].apartment,
-            landmark: userData[0].landmark,
-            address: userData[0].address,
-            city: userData[0].city,
-            state: userData[0].state,
-            zipCode: userData[0].zip_code,
-            country: userData[0].country
-          };
-        }
-      } catch (userErr) {
-        console.error('Error fetching user data for custom order:', userErr);
-      }
-
-      try {
-        await createCustomLaserInquiry(connection, orderId, authUserId, orderPayload, customerInfo);
-      } catch (inqErr) {
-        console.error('Error creating inquiry for custom laser order:', inqErr);
-      }
-    }
-    
-    connection.release();
-    
-    const orderData = { title, description, width, height, depth, material };
-    
-    // Send emails
-    if (customerInfo.email) {
-      try {
-        await sendCustomLaserOrderConfirmationEmail(result.insertId, customerInfo, orderData);
-        await sendAdminNewCustomLaserOrderEmail(result.insertId, customerInfo, orderData);
-      } catch (emailErr) {
-        console.error('Error sending custom order emails:', emailErr);
-      }
-    } else {
-      // Still send admin notification even if no user email
-      try {
-        await sendAdminNewCustomLaserOrderEmail(result.insertId, customerInfo, orderData);
-      } catch (emailErr) {
-        console.error('Error sending admin custom order email:', emailErr);
-      }
-    }
-
-    res.status(201).json({ success: true, orderId: result.insertId, message: 'Custom laser order submitted successfully' });
-  } catch (error) {
-    console.error('/api/custom-laser-orders error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to submit custom laser order: ' + error.message });
-  }
-});
-
-// Get user's custom laser orders
-app.get('/api/custom-laser-orders', async (req, res) => {
-  let connection;
-  try {
-    console.log('=== /api/custom-laser-orders GET called ===');
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'Authentication required' });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const userId = decoded.userId;
-
-    connection = await pool.getConnection();
-    const [orders] = await connection.query(
-      'SELECT * FROM custom_laser_orders WHERE user_id = ? ORDER BY created_at DESC',
-      [userId]
-    );
-    
-    // Parse / migrate image_urls for each order
-    for (let i = 0; i < orders.length; i++) {
-      orders[i] = await migrateCustomOrderImagesIfNeeded(connection, orders[i]);
-    }
-    
-    console.log('Found orders:', orders.length);
-    connection.release();
-
-    res.json({ success: true, orders });
-  } catch (error) {
-    console.error('/api/custom-laser-orders get error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to fetch custom laser orders: ' + error.message });
-  }
-});
-
-// Get all custom laser orders (admin)
-app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    console.log('=== /api/admin/custom-laser-orders GET called ===');
-    connection = await pool.getConnection();
-    
-    // Get all orders first
-    const [orders] = await connection.query(
-      'SELECT * FROM custom_laser_orders ORDER BY created_at DESC'
-    );
-    
-    console.log('Found admin orders:', orders.length);
-    console.log('Orders:', orders);
-    
-    // Parse / migrate images and attach user data
-    for (let i = 0; i < orders.length; i++) {
-      orders[i] = await migrateCustomOrderImagesIfNeeded(connection, orders[i]);
-    }
-    
-    // Now, for each order, get user data if user_id exists
-    for (let i = 0; i < orders.length; i++) {
-      const order = orders[i];
-      if (order.user_id) {
-        try {
-          const [userData] = await connection.query(
-            `SELECT uc.email, up.first_name, up.last_name, up.phone,
-             up.house_number, up.apartment, up.landmark, up.address, 
-             up.city, up.state, up.zip_code, up.country
-             FROM user_credentials uc 
-             LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
-             WHERE uc.user_id = ? AND uc.is_active = TRUE`,
-            [order.user_id]
-          );
-          
-          if (userData.length > 0) {
-            const user = userData[0];
-            orders[i].email = user.email;
-            orders[i].display_name = 
-              user.first_name || user.last_name 
-                ? `${user.first_name || ''} ${user.last_name || ''}`.trim() 
-                : null;
-            orders[i].phone = user.phone;
-            orders[i].house_number = user.house_number;
-            orders[i].apartment = user.apartment;
-            orders[i].landmark = user.landmark;
-            orders[i].address = user.address;
-            orders[i].city = user.city;
-            orders[i].state = user.state;
-            orders[i].zip_code = user.zip_code;
-            orders[i].country = user.country;
-          }
-        } catch (userErr) {
-          console.error('Error getting user for order', order.id, userErr);
-        }
-      }
-    }
-    
-    connection.release();
-    res.json({ success: true, orders });
-  } catch (error) {
-    console.error('/api/admin/custom-laser-orders error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to fetch custom laser orders: ' + error.message });
-  }
-});
-
-// Ensure inquiry conversation exists for a custom laser order (admin)
-app.post('/api/admin/custom-laser-orders/:id/ensure-inquiry', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    const { id } = req.params;
-    connection = await pool.getConnection();
-
-    const [orders] = await connection.query('SELECT * FROM custom_laser_orders WHERE id = ?', [id]);
-    if (!orders.length) {
-      connection.release();
-      return res.status(404).json({ success: false, message: 'Order not found' });
-    }
-
-    const order = orders[0];
-    if (order.inquiry_id) {
-      connection.release();
-      return res.json({ success: true, inquiryId: order.inquiry_id });
-    }
-
-    if (!order.user_id) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Order has no linked user for messaging' });
-    }
-
-    let imageUrls = order.image_urls;
-    if (imageUrls && typeof imageUrls === 'string') {
-      try { imageUrls = JSON.parse(imageUrls); } catch { imageUrls = []; }
-    }
-
-    const [userData] = await connection.query(
-      `SELECT uc.email, up.first_name, up.last_name, up.phone, up.country
-       FROM user_credentials uc
-       LEFT JOIN user_profiles up ON uc.user_id = up.user_id
-       WHERE uc.user_id = ? AND uc.is_active = TRUE`,
-      [order.user_id]
-    );
-    const user = userData[0] || {};
-
-    const inquiryId = await createCustomLaserInquiry(connection, order.id, order.user_id, {
-      title: order.title,
-      description: order.description,
-      image_url: order.image_url,
-      image_urls: imageUrls,
-      width: order.width,
-      height: order.height,
-      depth: order.depth,
-      material: order.material,
-      category: order.category,
-      price: order.price,
-    }, {
-      firstName: user.first_name,
-      lastName: user.last_name,
-      email: user.email,
-      phone: user.phone,
-      country: user.country,
-    });
-
-    connection.release();
-    res.json({ success: true, inquiryId });
-  } catch (error) {
-    console.error('/api/admin/custom-laser-orders ensure-inquiry error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to create inquiry conversation' });
-  }
-});
-
-// Ensure inquiry conversation exists for a custom laser order (user)
-app.post('/api/custom-laser-orders/:id/ensure-inquiry', async (req, res) => {
-  let connection;
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'Authentication required' });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const userId = decoded.userId;
-    const { id } = req.params;
-
-    connection = await pool.getConnection();
-    const [orders] = await connection.query(
-      'SELECT * FROM custom_laser_orders WHERE id = ? AND user_id = ?',
-      [id, userId]
-    );
-
-    if (!orders.length) {
-      connection.release();
-      return res.status(404).json({ success: false, message: 'Order not found' });
-    }
-
-    const order = orders[0];
-    if (order.inquiry_id) {
-      connection.release();
-      return res.json({ success: true, inquiryId: order.inquiry_id });
-    }
-
-    let imageUrls = order.image_urls;
-    if (imageUrls && typeof imageUrls === 'string') {
-      try { imageUrls = JSON.parse(imageUrls); } catch { imageUrls = []; }
-    }
-
-    const [userData] = await connection.query(
-      `SELECT uc.email, up.first_name, up.last_name, up.phone, up.country
-       FROM user_credentials uc
-       LEFT JOIN user_profiles up ON uc.user_id = up.user_id
-       WHERE uc.user_id = ? AND uc.is_active = TRUE`,
-      [userId]
-    );
-    const user = userData[0] || {};
-
-    const inquiryId = await createCustomLaserInquiry(connection, order.id, userId, {
-      title: order.title,
-      description: order.description,
-      image_url: order.image_url,
-      image_urls: imageUrls,
-      width: order.width,
-      height: order.height,
-      depth: order.depth,
-      material: order.material,
-      category: order.category,
-      price: order.price,
-    }, {
-      firstName: user.first_name,
-      lastName: user.last_name,
-      email: user.email,
-      phone: user.phone,
-      country: user.country,
-    });
-
-    connection.release();
-    res.json({ success: true, inquiryId });
-  } catch (error) {
-    console.error('/api/custom-laser-orders ensure-inquiry error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to create inquiry conversation' });
-  }
-});
-
-// Update custom laser order status (admin)
-app.put('/api/admin/custom-laser-orders/:id', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    console.log('=== /api/admin/custom-laser-orders PUT called ===');
-    const { id } = req.params;
-    const { status, notes, price, checkout_active } = req.body;
-    console.log('Updating order', id, 'with status', status, 'price', price, 'checkout_active', checkout_active);
-
-    connection = await pool.getConnection();
-    const [result] = await connection.query(
-      'UPDATE custom_laser_orders SET status = COALESCE(?, status), notes = COALESCE(?, notes), price = COALESCE(?, price), checkout_active = COALESCE(?, checkout_active) WHERE id = ?',
-      [status, notes, price, checkout_active, id]
-    );
-    console.log('Update result:', result);
-    connection.release();
-
-    res.json({ success: true, message: 'Custom laser order updated successfully' });
-  } catch (error) {
-    console.error('/api/admin/custom-laser-orders put error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to update custom laser order: ' + error.message });
-  }
-});
-
-// ==================== PROMO CODE API ENDPOINTS ====================
-
-function normalizePromoProductIds(productIds) {
-  if (!Array.isArray(productIds)) return [];
-  const out = [];
-
-  for (const id of productIds) {
-    if (id == null || id === '') continue;
-    const idStr = String(id).trim();
-    if (!idStr) continue;
-
-    // Customization buy-now: custom-{productId}-{timestamp}
-    const customizedMatch = idStr.match(/^custom-(\d+)-\d+$/);
-    if (customizedMatch) {
-      out.push(Number(customizedMatch[1]));
-      continue;
-    }
-
-    // Custom laser checkout ids (custom-{orderId}) are not catalog product ids
-    if (/^custom-\d+$/.test(idStr)) continue;
-
-    const n = Number(id);
-    out.push(Number.isFinite(n) ? n : idStr);
-  }
-
-  return out.filter((id) => id !== '' && id != null);
-}
-
-function extractPromoProductIdsFromItems(items) {
-  if (!Array.isArray(items)) return [];
-  const ids = [];
-  for (const item of items) {
-    if (!item) continue;
-    const candidates = [item.product_id, item.product?.id, item.id, item._id];
-    for (const candidate of candidates) {
-      if (candidate != null && candidate !== '') ids.push(candidate);
-    }
-  }
-  return normalizePromoProductIds(ids);
-}
-
-function promoProductIdsMatch(productIds, targetProductId) {
-  if (!targetProductId) return true;
-  const normalized = normalizePromoProductIds(productIds);
-  if (!normalized.length) return false;
-
-  const targetStr = String(targetProductId);
-  const targetNum = Number(targetProductId);
-
-  return normalized.some((id) => {
-    const idStr = String(id);
-    const idNum = Number(id);
-    if (Number.isFinite(targetNum) && Number.isFinite(idNum) && idNum === targetNum) return true;
-    return idStr === targetStr;
-  });
-}
-
-async function validatePromoCodeRecord(connection, promoCode, { productIds, userId }) {
-  const now = new Date();
-
-  if (promoCode.valid_from && new Date(promoCode.valid_from) > now) {
-    return { valid: false, message: 'Promo code not yet valid' };
-  }
-
-  if (promoCode.valid_until && new Date(promoCode.valid_until) < now) {
-    return { valid: false, message: 'Promo code has expired' };
-  }
-
-  if (promoCode.usage_limit && promoCode.used_count >= promoCode.usage_limit) {
-    return { valid: false, message: 'Promo code usage limit reached' };
-  }
-
-  if (promoCode.user_specific && promoCode.user_id) {
-    const expectedUser = String(promoCode.user_id);
-    const actualUser = userId != null ? String(userId) : '';
-    if (!actualUser || expectedUser !== actualUser) {
-      return { valid: false, message: 'Promo code not valid for this user' };
-    }
-  }
-
-  if (promoCode.product_id) {
-    const normalized = normalizePromoProductIds(productIds || []);
-    if (!normalized.length || !promoProductIdsMatch(normalized, promoCode.product_id)) {
-      return { valid: false, message: 'Promo code not valid for these products' };
-    }
-  }
-
-  if (userId) {
-    const [usages] = await connection.query(
-      'SELECT id FROM promo_code_usages WHERE promo_code_id = ? AND user_id = ?',
-      [promoCode.id, String(userId)]
-    );
-    if (usages.length > 0) {
-      return { valid: false, message: 'Promo code already used by this user' };
-    }
-  }
-
-  return {
-    valid: true,
-    promoCode: {
-      id: promoCode.id,
-      code: promoCode.code,
-      type: promoCode.type,
-      value: parseFloat(promoCode.value),
-      product_id: promoCode.product_id
-    }
-  };
-}
-
-// Create promo code (admin only)
-app.post('/api/admin/promo-codes', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    console.log('=== /api/admin/promo-codes POST called ===');
-    
-    const {
-      product_id,
-      code,
-      type,
-      value,
-      usage_limit,
-      user_specific,
-      user_id,
-      valid_from,
-      valid_until
-    } = req.body;
-    
-    if (!code || !type || !value) {
-      return res.status(400).json({ success: false, message: 'Code, type, and value are required' });
-    }
-    
-    if (type !== 'percentage' && type !== 'fixed') {
-      return res.status(400).json({ success: false, message: 'Type must be either percentage or fixed' });
-    }
-    
-    connection = await pool.getConnection();
-    
-    const [result] = await connection.query(
-      `INSERT INTO promo_codes 
-       (product_id, code, type, value, usage_limit, user_specific, user_id, valid_from, valid_until) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        product_id || null,
-        code.toUpperCase(),
-        type,
-        parseFloat(value),
-        usage_limit || null,
-        user_specific ? 1 : 0,
-        user_id || null,
-        valid_from || null,
-        valid_until || null
-      ]
-    );
-    
-    connection.release();
-    
-    res.status(201).json({ 
-      success: true, 
-      promoCodeId: result.insertId, 
-      message: 'Promo code created successfully' 
-    });
-  } catch (error) {
-    console.error('/api/admin/promo-codes error:', error);
-    if (connection) connection.release();
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ success: false, message: 'Promo code already exists' });
-    }
-    res.status(500).json({ success: false, message: 'Failed to create promo code: ' + error.message });
-  }
-});
-
-// Validate and apply promo code
-app.post('/api/promo-codes/validate', async (req, res) => {
-  let connection;
-  try {
-    console.log('=== /api/promo-codes/validate POST called ===');
-    
-    const { code, productIds, userId } = req.body;
-    
-    if (!code) {
-      return res.status(400).json({ success: false, message: 'Promo code is required' });
-    }
-    
-    connection = await pool.getConnection();
-    
-    const [promoCodes] = await connection.query(
-      'SELECT * FROM promo_codes WHERE code = ?',
-      [code.toUpperCase()]
-    );
-    
-    if (promoCodes.length === 0) {
-      connection.release();
-      return res.status(404).json({ success: false, message: 'Invalid promo code' });
-    }
-    
-    const promoCode = promoCodes[0];
-    const validation = await validatePromoCodeRecord(connection, promoCode, {
-      productIds: normalizePromoProductIds(productIds),
-      userId
-    });
-
-    connection.release();
-
-    if (!validation.valid) {
-      return res.status(400).json({ success: false, message: validation.message });
-    }
-
-    res.json({ success: true, promoCode: validation.promoCode });
-  } catch (error) {
-    console.error('/api/promo-codes/validate error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to validate promo code: ' + error.message });
-  }
-});
-
-// Get all promo codes (admin)
-app.get('/api/admin/promo-codes', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    console.log('=== /api/admin/promo-codes GET called ===');
-    connection = await pool.getConnection();
-    
-    const [promoCodes] = await connection.query(
-      `SELECT pc.*, p.product_name
-       FROM promo_codes pc
-       LEFT JOIN products p ON pc.product_id = p.id
-       ORDER BY pc.created_at DESC`
-    );
-    
-    connection.release();
-    res.json({ success: true, promoCodes });
-  } catch (error) {
-    console.error('/api/admin/promo-codes error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to fetch promo codes' });
-  }
-});
-
-// Update promo code (admin)
-app.put('/api/admin/promo-codes/:id', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    const { id } = req.params;
-    const {
-      product_id,
-      code,
-      type,
-      value,
-      usage_limit,
-      user_specific,
-      user_id,
-      valid_from,
-      valid_until
-    } = req.body;
-
-    if (!code || !type || !value) {
-      return res.status(400).json({ success: false, message: 'Code, type, and value are required' });
-    }
-
-    if (type !== 'percentage' && type !== 'fixed') {
-      return res.status(400).json({ success: false, message: 'Type must be either percentage or fixed' });
-    }
-
-    connection = await pool.getConnection();
-
-    const [existing] = await connection.query('SELECT id FROM promo_codes WHERE id = ?', [id]);
-    if (!existing.length) {
-      connection.release();
-      return res.status(404).json({ success: false, message: 'Promo code not found' });
-    }
-
-    await connection.query(
-      `UPDATE promo_codes SET
-        product_id = ?, code = ?, type = ?, value = ?, usage_limit = ?,
-        user_specific = ?, user_id = ?, valid_from = ?, valid_until = ?
-       WHERE id = ?`,
-      [
-        product_id || null,
-        code.toUpperCase(),
-        type,
-        parseFloat(value),
-        usage_limit || null,
-        user_specific ? 1 : 0,
-        user_id || null,
-        valid_from || null,
-        valid_until || null,
-        id
-      ]
-    );
-
-    connection.release();
-    res.json({ success: true, message: 'Promo code updated successfully' });
-  } catch (error) {
-    console.error('/api/admin/promo-codes PUT error:', error);
-    if (connection) connection.release();
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ success: false, message: 'Promo code already exists' });
-    }
-    res.status(500).json({ success: false, message: 'Failed to update promo code: ' + error.message });
-  }
-});
-
-// Delete promo code (admin)
-app.delete('/api/admin/promo-codes/:id', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    console.log('=== /api/admin/promo-codes/:id DELETE called ===');
-    const { id } = req.params;
-    
-    connection = await pool.getConnection();
-    await connection.query('DELETE FROM promo_codes WHERE id = ?', [id]);
-    connection.release();
-    
-    res.json({ success: true, message: 'Promo code deleted successfully' });
-  } catch (error) {
-    console.error('/api/admin/promo-codes/:id error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to delete promo code' });
-  }
-});
-
-// Fetch all user profiles (admin)
-app.get('/api/admin/users', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    console.log('=== /api/admin/users GET called ===');
-    connection = await pool.getConnection();
-    const [users] = await connection.query(`
-      SELECT up.user_id, up.first_name, up.last_name, up.phone, uc.email
-      FROM user_profiles up
-      INNER JOIN user_credentials uc ON up.user_id = uc.user_id
-      ORDER BY up.created_at DESC
-    `);
-    connection.release();
-    res.json({ success: true, users });
-  } catch (error) {
-    console.error('/api/admin/users error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to fetch users' });
   }
 });
 
