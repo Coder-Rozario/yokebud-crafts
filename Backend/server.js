@@ -122,11 +122,11 @@ app.use(fileUpload({
 app.use(async (req, res, next) => {
   // Only handle GET requests for potential redirects
   if (req.method !== 'GET') return next();
-  
+
   // Skip API, static files, and sitemap XMLs
-  if (req.path.startsWith('/api') || 
-      req.path.includes('.') || 
-      req.path.endsWith('sitemap.xml')) {
+  if (req.path.startsWith('/api') ||
+    req.path.includes('.') ||
+    req.path.endsWith('sitemap.xml')) {
     return next();
   }
 
@@ -137,7 +137,7 @@ app.use(async (req, res, next) => {
       'SELECT new_path FROM url_redirects WHERE old_path = ? LIMIT 1',
       [req.path]
     );
-    
+
     if (rows.length > 0) {
       console.log(`Redirecting old path ${req.path} to ${rows[0].new_path}`);
       return res.redirect(301, rows[0].new_path);
@@ -236,6 +236,57 @@ async function ensureProductVariantsSchema() {
 
 ensureProductVariantsSchema();
 
+async function ensureCustomLaserOrdersSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS custom_laser_orders (
+        id INT NOT NULL AUTO_INCREMENT,
+        user_id INT NULL,
+        title VARCHAR(255) NOT NULL,
+        description TEXT NOT NULL,
+        image_url TEXT NULL,
+        width DECIMAL(10,2) NULL,
+        height DECIMAL(10,2) NULL,
+        depth DECIMAL(10,2) NULL,
+        material VARCHAR(100) NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        notes TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_user (user_id)
+      )
+    `);
+
+    // Check if columns exist and add if missing
+    const [cols] = await connection.query("SHOW COLUMNS FROM custom_laser_orders");
+    const colNames = new Set(cols.map(c => c.Field));
+
+    if (!colNames.has('inquiry_id')) {
+      await connection.query("ALTER TABLE custom_laser_orders ADD COLUMN inquiry_id VARCHAR(100) NULL");
+      console.log('Added inquiry_id column to custom_laser_orders table.');
+    }
+
+    if (!colNames.has('price')) {
+      await connection.query("ALTER TABLE custom_laser_orders ADD COLUMN price DECIMAL(10,2) NULL DEFAULT 0.00");
+      console.log('Added price column to custom_laser_orders table.');
+    }
+
+    if (!colNames.has('category')) {
+      await connection.query("ALTER TABLE custom_laser_orders ADD COLUMN category VARCHAR(100) NULL");
+      console.log('Added category column to custom_laser_orders table.');
+    }
+  } catch (err) {
+    console.error('Custom laser orders schema setup error:', err.message);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureCustomLaserOrdersSchema();
+
 async function ensureAdminOtpSchema() {
   let connection;
   try {
@@ -288,7 +339,7 @@ async function ensureCategoriesExtendedSchema() {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Check and add missing columns to categories table
     const [categoryCols] = await connection.query(
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
@@ -309,7 +360,7 @@ async function ensureCategoriesExtendedSchema() {
     if (!categoryColNames.has('updated_at')) {
       await connection.query('ALTER TABLE categories ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
     }
-    
+
     // Ensure all categories have a slug if missing
     const [rows] = await connection.query('SELECT id, name FROM categories WHERE slug IS NULL OR slug = ""');
     for (const row of rows) {
@@ -331,7 +382,7 @@ async function ensureSeoSchema() {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Check and add SEO columns to products table
     const [productCols] = await connection.query(
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
@@ -438,7 +489,7 @@ async function ensureSeoSchema() {
         [laserTitle, laserContent]
       );
     }
-    
+
     console.log('✅ SEO schema updated successfully.');
   } catch (e) {
     console.warn('SEO schema update failed:', e.message || e);
@@ -451,7 +502,7 @@ async function ensureCustomizationSchema() {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Check and add customization columns to products table
     const [productCols] = await connection.query(
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
@@ -482,7 +533,7 @@ async function ensureOrdersEstimatedDeliveryDate() {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Check and add estimated_delivery_date column to orders
     try {
       await connection.query('ALTER TABLE orders ADD COLUMN estimated_delivery_date DATE NULL AFTER delivered_at');
@@ -602,7 +653,7 @@ async function ensureSeoContentSchema() {
         PRIMARY KEY (id)
       )`
     );
-    
+
     // Check if home page content exists, if not, insert a placeholder
     const [rows] = await connection.query('SELECT * FROM seo_content WHERE page_name = "home"');
     if (rows.length === 0) {
@@ -623,7 +674,7 @@ async function ensureSitemapSchema() {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Sitemap entries table
     await connection.query(
       `CREATE TABLE IF NOT EXISTS sitemap_entries (
@@ -733,7 +784,7 @@ async function regenerateSitemap() {
   try {
     console.log('🔄 Sitemap regeneration started...');
     connection = await pool.getConnection();
-    
+
     // Fetch ALL sitemap entries directly from DB table
     // This query mirrors:
     // SELECT `id`, `path`, `priority`, `changefreq`, `type`, `is_active`, `created_at`, `updated_at` FROM `sitemap_entries` WHERE 1
@@ -858,7 +909,7 @@ async function regenerateSitemap() {
         console.warn('Category sitemap import skipped due to error:', importErr.message);
       }
     }
-    
+
     const today = new Date().toISOString().slice(0, 10);
     const header = `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
       `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" ` +
@@ -920,12 +971,12 @@ async function regenerateSitemap() {
           type === 'static'
             ? 'Pages'
             : type === 'category'
-            ? 'Categories'
-            : type === 'product'
-            ? 'Products'
-            : type === 'blog'
-            ? 'Blog'
-            : 'Other',
+              ? 'Categories'
+              : type === 'product'
+                ? 'Products'
+                : type === 'blog'
+                  ? 'Blog'
+                  : 'Other',
         images: []
       };
 
@@ -1123,16 +1174,16 @@ const EMAIL_THEME = {
 
 // ==================== PREMIUM EMAIL TEMPLATE COMPONENTS ====================
 
-const renderThemedEmail = ({ 
-  title, 
-  subtitle, 
-  contentHtml, 
-  primaryCtaText, 
+const renderThemedEmail = ({
+  title,
+  subtitle,
+  contentHtml,
+  primaryCtaText,
   primaryCtaUrl,
   secondaryCtaText,
   secondaryCtaUrl,
   footerNote,
-  includeSocial = true 
+  includeSocial = true
 }) => {
   return `
     <!DOCTYPE html>
@@ -1577,7 +1628,7 @@ const sendAdminOtpEmail = async (otpRecord) => {
 
   const adminEmail = otpRecord.email || 'yokebud@gmail.com';
   const html = renderAdminOtpEmail(otpRecord.otp_code);
-  
+
   const mailOptions = {
     from: process.env.EMAIL_FROM || 'Yokebud Security <security@yokebud.com>',
     to: adminEmail,
@@ -1601,7 +1652,7 @@ const sendAdminOtpEmail = async (otpRecord) => {
 // 1. WELCOME EMAIL (NEWSLETTER SUBSCRIPTION)
 const renderWelcomeEmail = (email, token) => {
   const unsubscribeLink = `${PUBLIC_SITE_URL}/UnsubscribePage?token=${token}`;
-  
+
   const contentHtml = `
     <div class="content-section">
       <h2 class="content-title">Welcome to Yokebud Crafts! </h2>
@@ -1627,7 +1678,7 @@ const renderWelcomeEmail = (email, token) => {
       </p>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Welcome to Yokebud Crafts',
     subtitle: 'Your journey to premium wholesale fashion begins here',
@@ -1679,7 +1730,7 @@ const renderAccountWelcomeEmail = (name) => {
 const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
   const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
   const downloadUrl = `${PUBLIC_SITE_URL}/Checkout?orderId=${encodeURIComponent(orderId)}&download=invoice`;
-  
+
   const itemsHtml = `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
       ${items.map(item => `
@@ -1699,7 +1750,7 @@ const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
       `).join('')}
     </table>
   `;
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -1758,7 +1809,7 @@ const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
       </p>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Order Confirmation',
     subtitle: `Order #${orderId}`,
@@ -1792,7 +1843,7 @@ const renderAdminNewOrderEmail = (orderId, customerInfo, items, totals) => {
       `).join('')}
     </table>
   `;
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -1846,7 +1897,7 @@ const renderAdminNewOrderEmail = (orderId, customerInfo, items, totals) => {
       </div>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'New Order Alert',
     subtitle: `Order #${orderId}`,
@@ -1879,7 +1930,7 @@ const renderManualNotificationEmail = (orderId, customerInfo) => {
       </div>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Order Update',
     subtitle: `Order #${orderId}`,
@@ -1918,13 +1969,13 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
               <td colspan="2" style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
                 <strong style="display: block; color: ${EMAIL_THEME.text};">Subscription Date</strong>
                 <span style="color: ${EMAIL_THEME.textLight};">
-                  ${new Date().toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
+                  ${new Date().toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })}
                 </span>
               </td>
             </tr>
@@ -1938,7 +1989,7 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
       </div>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'New Subscriber Alert',
     subtitle: 'Yokebud Crafts Newsletter System',
@@ -1953,7 +2004,7 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
 const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
   const unsubscribeLink = `${PUBLIC_SITE_URL}/UnsubscribePage?token=${token}`;
   const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
-  
+
   const renderProductCards = (products) => {
     return products.map(product => {
       const slug = String(product.product_name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -1966,9 +2017,9 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
         const clean = s.startsWith('/') ? s : `/${s}`;
         return `${backendBase}${clean}`;
       })();
-      
+
       const hasDiscount = product.discounted_price && product.discounted_price < product.price;
-      const displayPrice = hasDiscount 
+      const displayPrice = hasDiscount
         ? `<span style="text-decoration: line-through; color: #999; font-size: 14px;">€${product.price}</span> <span style="color: ${EMAIL_THEME.primary};">€${product.discounted_price}</span>`
         : `<span>€${product.price}</span>`;
 
@@ -2027,7 +2078,7 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
       </div>
     </div>
   ` : '';
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -2053,7 +2104,7 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
       </div>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Weekly Crafts Update',
     subtitle: 'Fresh arrivals & exclusive deals',
@@ -2090,7 +2141,7 @@ const renderUnsubscribeConfirmationEmail = (email) => {
       </p>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Unsubscribed',
     subtitle: 'You have left our newsletter',
@@ -2104,10 +2155,10 @@ const renderUnsubscribeConfirmationEmail = (email) => {
 // 6. OTP VERIFICATION EMAIL - Standalone version without external resources
 const renderOTPEmail = (email, otp, type = 'registration') => {
   const subjectText = type === 'registration' ? 'Verify Your Email Address' : 'Login Verification';
-  const descriptionText = type === 'registration' 
-    ? 'Thank you for signing up with Yokebud Crafts!' 
+  const descriptionText = type === 'registration'
+    ? 'Thank you for signing up with Yokebud Crafts!'
     : 'Use this OTP to login to your Yokebud Crafts account.';
-  
+
   // Standalone HTML without external fonts or images
   return `
     <!DOCTYPE html>
@@ -2309,16 +2360,16 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
 // 7. ORDER STATUS UPDATE EMAIL
 const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNumber = null, estimatedDeliveryDate = null) => {
   const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
-  
+
   const statusConfig = {
     'processing': { color: EMAIL_THEME.primary, icon: '🔄', title: 'Order Processing' },
     'shipped': { color: EMAIL_THEME.accent, icon: '🚚', title: 'Order Shipped' },
     'delivered': { color: EMAIL_THEME.accent, icon: '✅', title: 'Order Delivered' },
     'cancelled': { color: EMAIL_THEME.danger, icon: '❌', title: 'Order Cancelled' }
   };
-  
+
   const config = statusConfig[status.toLowerCase()] || { color: EMAIL_THEME.primary, icon: '📦', title: 'Order Update' };
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -2358,11 +2409,11 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
                 <td colspan="2" style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
                   <strong style="display: block; color: ${EMAIL_THEME.text};">Estimated Delivery Date</strong>
                   <span style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
-                    ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', { 
-                      year: 'numeric', 
-                      month: 'long', 
-                      day: 'numeric'
-                    })}
+                    ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  })}
                   </span>
                 </td>
               </tr>
@@ -2371,13 +2422,13 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
               <td colspan="2" style="padding: 15px 0 0 0;">
                 <strong style="display: block; color: ${EMAIL_THEME.text};">Update Date</strong>
                 <span style="color: ${EMAIL_THEME.textLight};">
-                  ${new Date().toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
+                  ${new Date().toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })}
                 </span>
               </td>
             </tr>
@@ -2393,7 +2444,7 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
       </p>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Order Status Update',
     subtitle: `Order #${orderId}`,
@@ -2407,7 +2458,7 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
 // Render estimated delivery date update email
 const renderEstimatedDeliveryUpdateEmail = (orderId, customerInfo, estimatedDeliveryDate) => {
   const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -2426,11 +2477,11 @@ const renderEstimatedDeliveryUpdateEmail = (orderId, customerInfo, estimatedDeli
                 <td style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
                   <strong style="display: block; color: ${EMAIL_THEME.text};">Estimated Delivery Date</strong>
                   <span style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
-                    ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', { 
-                      year: 'numeric', 
-                      month: 'long', 
-                      day: 'numeric'
-                    })}
+                    ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  })}
                   </span>
                 </td>
                 <td align="right" style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border}; white-space: nowrap; font-size: 24px;">
@@ -2451,13 +2502,13 @@ const renderEstimatedDeliveryUpdateEmail = (orderId, customerInfo, estimatedDeli
               <td colspan="2" style="padding: 15px 0 0 0;">
                 <strong style="display: block; color: ${EMAIL_THEME.text};">Update Date</strong>
                 <span style="color: ${EMAIL_THEME.textLight};">
-                  ${new Date().toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
+                  ${new Date().toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })}
                 </span>
               </td>
             </tr>
@@ -2466,18 +2517,18 @@ const renderEstimatedDeliveryUpdateEmail = (orderId, customerInfo, estimatedDeli
       </div>
       
       <p class="content-text">
-        ${estimatedDeliveryDate 
-          ? `We have updated the estimated delivery date for your order. We aim to deliver your order by ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', { 
-              year: 'numeric', 
-              month: 'long', 
-              day: 'numeric'
-            })}.`
-          : 'We have removed the estimated delivery date for your order. We will update you when we have more information.'
-        }
+        ${estimatedDeliveryDate
+      ? `We have updated the estimated delivery date for your order. We aim to deliver your order by ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      })}.`
+      : 'We have removed the estimated delivery date for your order. We will update you when we have more information.'
+    }
       </p>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Estimated Delivery Update',
     subtitle: `Order #${orderId}`,
@@ -2491,7 +2542,7 @@ const renderEstimatedDeliveryUpdateEmail = (orderId, customerInfo, estimatedDeli
 // 8. CONTACT FORM NOTIFICATION EMAIL (ADMIN)
 const renderContactFormNotificationEmail = (name, email, whatsapp, message) => {
   const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}/messages`;
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -2530,7 +2581,7 @@ const renderContactFormNotificationEmail = (name, email, whatsapp, message) => {
       </p>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'New Contact Message',
     subtitle: 'From website contact form',
@@ -2577,7 +2628,7 @@ const renderContactFormConfirmationEmail = (name, email, message) => {
       </div>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Message Confirmation',
     subtitle: 'We will respond soon',
@@ -2595,7 +2646,7 @@ const renderInquiryNotificationEmail = (recipientName, senderName, inquiryNumber
 
   const title = isToAdmin ? 'New Customer Message' : 'New Message Received';
   const subtitle = isToAdmin ? `From ${senderName} regarding Inquiry #${inquiryNumber}` : `Regarding your inquiry #${inquiryNumber}`;
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -2633,7 +2684,7 @@ const renderInquiryNotificationEmail = (recipientName, senderName, inquiryNumber
 // 10. PASSWORD RESET EMAIL
 const renderPasswordResetEmail = (email, resetToken) => {
   const resetUrl = `${PUBLIC_SITE_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -2674,7 +2725,7 @@ const renderPasswordResetEmail = (email, resetToken) => {
       </div>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Password Reset',
     subtitle: 'Secure your account',
@@ -2697,7 +2748,7 @@ const sendWelcomeEmail = async (email, token) => {
     html,
     priority: 'high'
   };
-  
+
   try {
     const result = await sendMail(mailOptions);
     console.log(`📧 Welcome email sent to ${email} via ${result?.provider || 'provider'}`);
@@ -2738,7 +2789,7 @@ const sendOrderConfirmationEmail = async (orderId, customerInfo, items, totals) 
     html,
     priority: 'high'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Order confirmation email sent for order #${orderId}`);
@@ -2759,7 +2810,7 @@ const sendNewSubscriberNotification = async (subscriberEmail) => {
     html,
     priority: 'normal'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log('📧 New subscriber notification sent to admin');
@@ -2780,7 +2831,7 @@ const sendWeeklyNewsletter = async (subscriber, products) => {
     html,
     priority: 'normal'
   };
-  
+
   try {
     const result = await sendMail(mailOptions);
     console.log(`📧 Weekly newsletter sent to ${subscriber.email} via ${result?.provider || 'provider'}`);
@@ -2801,7 +2852,7 @@ const sendUnsubscribeConfirmation = async (email) => {
     html,
     priority: 'normal'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Unsubscribe confirmation sent to ${email}`);
@@ -2815,12 +2866,12 @@ const sendUnsubscribeConfirmation = async (email) => {
 // Send OTP email with retry mechanism for Render.com network issues
 const sendOTPEmail = async (email, otp, type = 'registration', customFrom = null, retries = 3) => {
   const html = renderOTPEmail(email, otp, type);
-  const subject = type === 'registration' 
-    ? 'Verify Your Email - Yokebud Crafts' 
+  const subject = type === 'registration'
+    ? 'Verify Your Email - Yokebud Crafts'
     : type === 'admin_login'
-    ? '🔐 Admin Login OTP - Yokebud Crafts'
-    : 'Login OTP - Yokebud Crafts';
-  
+      ? '🔐 Admin Login OTP - Yokebud Crafts'
+      : 'Login OTP - Yokebud Crafts';
+
   const mailOptions = {
     from: customFrom || process.env.EMAIL_FROM || `Yokebud Crafts Security <${process.env.EMAIL_USER}>`,
     to: email,
@@ -2829,36 +2880,36 @@ const sendOTPEmail = async (email, otp, type = 'registration', customFrom = null
     text: `Your OTP code is: ${otp}. It expires in 1 minute.`,
     priority: 'high'
   };
-  
+
   // Retry mechanism for connection timeout issues on Render.com
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       console.log(`📤 Attempt ${attempt}/${retries}: Sending ${type} OTP email to ${email}...`);
-      
+
       // Create a promise with timeout
       const sendPromise = sendMail(mailOptions);
-      const timeoutPromise = new Promise((_, reject) => 
+      const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Email send timeout after 55 seconds')), 55000)
       );
-      
+
       await Promise.race([sendPromise, timeoutPromise]);
       console.log(`✅ ${type} OTP email sent successfully to ${email} (attempt ${attempt})`);
       return true;
     } catch (error) {
       const isTimeout = error.code === 'ETIMEDOUT' || error.message.includes('timeout');
       const isLastAttempt = attempt === retries;
-      
+
       console.error(`❌ Attempt ${attempt}/${retries} failed:`, error.message || error.code);
-      
+
       if (isLastAttempt) {
         console.error(`❌ ${type} OTP email failed after ${retries} attempts for ${email}`);
         return false;
       }
-      
+
       // If timeout, wait before retry (exponential backoff)
       if (isTimeout) {
         const waitTime = attempt * 2000; // 2s, 4s, 6s
-        console.log(`⏳ Connection timeout. Retrying in ${waitTime/1000}s...`);
+        console.log(`⏳ Connection timeout. Retrying in ${waitTime / 1000}s...`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
         // For other errors, return immediately
@@ -2867,7 +2918,7 @@ const sendOTPEmail = async (email, otp, type = 'registration', customFrom = null
       }
     }
   }
-  
+
   return false;
 };
 
@@ -2881,7 +2932,7 @@ const sendOrderStatusUpdateEmail = async (orderId, status, customerInfo, trackin
     html,
     priority: 'normal'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Order status update email sent for order #${orderId}`);
@@ -2902,7 +2953,7 @@ const sendEstimatedDeliveryUpdateEmail = async (orderId, customerInfo, estimated
     html,
     priority: 'normal'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Estimated delivery update email sent for order #${orderId}`);
@@ -2923,7 +2974,7 @@ const sendAdminNewOrderEmail = async (orderId, customerInfo, items, totals) => {
     html,
     priority: 'high'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Admin notification sent for order #${orderId}`);
@@ -2944,7 +2995,7 @@ const sendManualNotificationEmail = async (orderId, customerInfo) => {
     html,
     priority: 'normal'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Manual notification sent for order #${orderId}`);
@@ -2966,7 +3017,7 @@ const sendContactFormNotification = async (name, email, whatsapp, message) => {
     html,
     priority: 'high'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Contact form notification sent to admin from ${email}`);
@@ -2987,7 +3038,7 @@ const sendContactFormConfirmation = async (name, email, message) => {
     html,
     priority: 'normal'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Contact form confirmation sent to ${email}`);
@@ -3004,19 +3055,19 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
   const recipientEmail = isToAdmin ? 'yokebud@gmail.com' : inquiry.customer_email;
   const recipientName = isToAdmin ? 'Admin' : inquiry.customer_name;
   const senderName = isToAdmin ? inquiry.customer_name : 'Yokebud Crafts Support';
-  
+
   // Parse product name safely
   let productName = 'Product Inquiry';
   try {
-    const productData = typeof inquiry.product_data === 'string' 
-      ? JSON.parse(inquiry.product_data) 
+    const productData = typeof inquiry.product_data === 'string'
+      ? JSON.parse(inquiry.product_data)
       : inquiry.product_data;
     productName = productData.product_name || 'Product Inquiry';
-  } catch (e) {}
+  } catch (e) { }
 
   const html = renderInquiryNotificationEmail(recipientName, senderName, inquiry.inquiry_number, productName, message, isToAdmin);
-  
-  const subject = isToAdmin 
+
+  const subject = isToAdmin
     ? `📩 New Message: Inquiry #${inquiry.inquiry_number} - ${productName}`
     : `💬 New Message regarding Inquiry #${inquiry.inquiry_number} - Yokebud Crafts`;
 
@@ -3048,7 +3099,7 @@ const sendPasswordResetEmail = async (email, resetToken) => {
     html,
     priority: 'high'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Password reset email sent to ${email}`);
@@ -3070,7 +3121,7 @@ const slugify = (str) => String(str || '')
 
 const generateProductSEO = (name, description, price, imageUrls) => {
   const seo_title = `Personalized Laser Engraved ${name} – Finland Handmade Gift`;
-  
+
   // Create a description focusing on laser engraving
   const baseDescription = description || '';
   const seo_description = `Discover this exquisite ${name}, a premium handmade custom gift from Finland. Our professional laser engraving service ensures each piece is a unique masterpiece of personalization. Perfect for those seeking high-quality engraved treasures in Finland. This handcrafted item showcases the precision of modern laser engraving technology while maintaining the charm of a traditional handmade gift. Experience the best of Finnish craftsmanship with our custom engraving options, tailored specifically for your special occasions. Each ${name} is carefully processed to meet our high standards of excellence. ${baseDescription.slice(0, 300)}...`;
@@ -3126,12 +3177,12 @@ const validateProductPayload = (payload) => {
   if (!description || typeof description !== 'string') return { valid: false, message: 'Invalid description' };
   if (price == null || isNaN(Number(price)) || Number(price) <= 0) return { valid: false, message: 'Invalid price' };
   if (!Array.isArray(categories) || categories.length === 0) return { valid: false, message: 'Invalid categories' };
-  
+
   // Only validate stock if not a preorder
   if (!is_preorder && stock_status !== 'Pre-order') {
     if (stock == null || isNaN(parseInt(stock))) return { valid: false, message: 'Invalid stock' };
   }
-  
+
   if (!sku || typeof sku !== 'string') return { valid: false, message: 'Invalid SKU' };
   const hasImages = (Array.isArray(imageUrls) && imageUrls.length > 0) || (Array.isArray(images) && images.length > 0);
   if (!hasImages) return { valid: false, message: 'At least one image is required' };
@@ -3172,10 +3223,10 @@ async function generateSitemapXmlFromDb({ type = 'all' } = {}) {
         r.type === 'static'
           ? 'Pages'
           : r.type === 'category'
-          ? 'Categories'
-          : r.type === 'product'
-          ? 'Products'
-          : 'Other';
+            ? 'Categories'
+            : r.type === 'product'
+              ? 'Products'
+              : 'Other';
 
       return (
         `  <url>\n` +
@@ -3282,8 +3333,8 @@ app.get('/product-sitemap.xml', async (req, res) => {
           lastmodSource instanceof Date
             ? lastmodSource.toISOString().slice(0, 10)
             : lastmodSource
-            ? new Date(lastmodSource).toISOString().slice(0, 10)
-            : today;
+              ? new Date(lastmodSource).toISOString().slice(0, 10)
+              : today;
 
         const loc = `${PUBLIC_SITE_URL}${e.path}`;
         const priority = e.priority || '0.8';
@@ -3603,8 +3654,8 @@ const checkUnreadMessageReminders = async () => {
         const adminHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
         const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
         const mailAdmin = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: 'yokebud@gmail.com', subject: `${subject} - ${inquiry.customer_name || ''}`, html: adminHtml };
-        try { await sendMail(mailUser); } catch {}
-        try { await sendMail(mailAdmin); } catch {}
+        try { await sendMail(mailUser); } catch { }
+        try { await sendMail(mailAdmin); } catch { }
         messages[i] = { ...msg, reminder_sent: true };
         changed = true;
       }
@@ -3614,7 +3665,7 @@ const checkUnreadMessageReminders = async () => {
         conn2.release();
       }
     }
-  } catch {}
+  } catch { }
 };
 
 setInterval(() => { checkUnreadMessageReminders(); }, 5 * 60 * 1000);
@@ -3724,26 +3775,26 @@ app.put('/api/inquiries/:inquiryId/admin-unread', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { admin_unread_count } = req.body;
-    
+
     connection = await pool.getConnection();
-    
+
     await connection.query(
       'UPDATE inquiry_conversations SET admin_unread_count = ?, updated_at = NOW() WHERE id = ?',
       [admin_unread_count, inquiryId]
     );
-    
+
     connection.release();
-    
-    res.json({ 
-      success: true, 
-      message: 'Admin unread count updated successfully' 
+
+    res.json({
+      success: true,
+      message: 'Admin unread count updated successfully'
     });
   } catch (error) {
     console.error('Error updating admin unread count:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to update admin unread count' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update admin unread count'
     });
   }
 });
@@ -3759,11 +3810,11 @@ io.on('connection', (socket) => {
   socket.on('send_message', async (data) => {
     try {
       const { inquiryId, message, senderType, files = [], temporaryId } = data;
-      
+
       console.log('Received message via socket:', { inquiryId, message, senderType, temporaryId });
 
       const connection = await pool.getConnection();
-      
+
       // Get current inquiry
       const [inquiries] = await connection.query(
         'SELECT * FROM inquiry_conversations WHERE id = ?',
@@ -3778,7 +3829,7 @@ io.on('connection', (socket) => {
 
       const inquiry = inquiries[0];
       const currentMessages = JSON.parse(inquiry.messages || '[]');
-      
+
       // Create new message
       const newMessage = {
         id: uuidv4(),
@@ -3842,7 +3893,7 @@ io.on('connection', (socket) => {
         message: newMessage,
         temporaryId: temporaryId
       });
-      
+
       // REAL-TIME NOTIFICATION: Only show toast for relevant users
       if (senderType === 'admin') {
         // Notify user about new admin message
@@ -3880,9 +3931,9 @@ io.on('connection', (socket) => {
 
     } catch (error) {
       console.error('Socket message error:', error);
-      socket.emit('message_error', { 
-        error: 'Failed to send message', 
-        temporaryId: data.temporaryId 
+      socket.emit('message_error', {
+        error: 'Failed to send message',
+        temporaryId: data.temporaryId
       });
     }
   });
@@ -3902,7 +3953,7 @@ io.on('connection', (socket) => {
       if (inquiries.length > 0) {
         const inquiry = inquiries[0];
         const currentMessages = JSON.parse(inquiry.messages || '[]');
-        
+
         // Mark messages as read based on user type and set status
         const updatedMessages = currentMessages.map(msg => {
           if (userType === 'user' && msg.sender_type === 'admin') {
@@ -4025,7 +4076,7 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { userId, userType } = req.body;
-    
+
     connection = await pool.getConnection();
 
     // Get current inquiry
@@ -4036,15 +4087,15 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
 
     if (inquiries.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
     const inquiry = inquiries[0];
     const currentMessages = JSON.parse(inquiry.messages || '[]');
-    
+
     // Mark messages as read based on user type
     const updatedMessages = currentMessages.map(msg => {
       if (userType === 'user' && msg.sender_type === 'admin') {
@@ -4073,7 +4124,7 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
       'UPDATE inquiry_conversations SET messages = ?, unread_count = ?, admin_unread_count = ?, has_new_message = ?, updated_at = NOW() WHERE id = ?',
       [JSON.stringify(updatedMessages), newUnreadCount, newAdminUnreadCount, hasNewMessage, inquiryId]
     );
-    
+
     connection.release();
 
     // Emit real-time update
@@ -4085,8 +4136,8 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
       hasNewMessage: hasNewMessage
     });
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Messages marked as read',
       newUnreadCount: newUnreadCount,
       newAdminUnreadCount: newAdminUnreadCount,
@@ -4095,9 +4146,9 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
   } catch (error) {
     console.error('Error marking messages as read:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to mark messages as read: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark messages as read: ' + error.message
     });
   }
 });
@@ -4135,11 +4186,11 @@ io.on('connection', (socket) => {
   socket.on('send_message', async (data) => {
     try {
       const { inquiryId, message, senderType, files = [], temporaryId } = data;
-      
+
       console.log('Received message via socket:', { inquiryId, message, senderType, temporaryId });
 
       const connection = await pool.getConnection();
-      
+
       // Get current inquiry with unread_count
       const [inquiries] = await connection.query(
         'SELECT * FROM inquiry_conversations WHERE id = ?',
@@ -4154,7 +4205,7 @@ io.on('connection', (socket) => {
 
       const inquiry = inquiries[0];
       const currentMessages = JSON.parse(inquiry.messages || '[]');
-      
+
       // Duplicate check: block identical content from same sender within 60s
       const lastMsg = currentMessages[currentMessages.length - 1];
       const isDup = lastMsg && lastMsg.sender_type === senderType &&
@@ -4219,7 +4270,7 @@ io.on('connection', (socket) => {
         message: newMessage,
         temporaryId: temporaryId
       });
-      
+
       // REAL-TIME NOTIFICATION: Notify user about new admin message
       if (senderType === 'admin') {
         // Emit to user's personal room
@@ -4247,9 +4298,9 @@ io.on('connection', (socket) => {
 
     } catch (error) {
       console.error('Socket message error:', error);
-      socket.emit('message_error', { 
-        error: 'Failed to send message', 
-        temporaryId: data.temporaryId 
+      socket.emit('message_error', {
+        error: 'Failed to send message',
+        temporaryId: data.temporaryId
       });
     }
   });
@@ -4269,7 +4320,7 @@ io.on('connection', (socket) => {
       if (inquiries.length > 0) {
         const inquiry = inquiries[0];
         const currentMessages = JSON.parse(inquiry.messages || '[]');
-        
+
         // Mark messages as read and update status
         const updatedMessages = currentMessages.map(msg => {
           if (messageIds.includes(msg.id) || (messageIds.length === 0 && msg.sender_type === 'admin')) {
@@ -4279,7 +4330,7 @@ io.on('connection', (socket) => {
         });
 
         // Calculate EXACT unread count - only unread admin messages
-        const newUnreadCount = updatedMessages.filter(msg => 
+        const newUnreadCount = updatedMessages.filter(msg =>
           msg.sender_type === 'admin' && !msg.is_read
         ).length;
 
@@ -4296,8 +4347,8 @@ io.on('connection', (socket) => {
         // Notify all clients in the room
         io.to(inquiryId).emit('messages_read', {
           inquiryId: inquiryId,
-          messageIds: messageIds.length === 0 ? 
-            currentMessages.filter(msg => msg.sender_type === 'admin').map(msg => msg.id) : 
+          messageIds: messageIds.length === 0 ?
+            currentMessages.filter(msg => msg.sender_type === 'admin').map(msg => msg.id) :
             messageIds,
           newUnreadCount: newUnreadCount
         });
@@ -4411,16 +4462,16 @@ io.on('connection', (socket) => {
 // ==================== ENHANCED TIME FORMATTING ====================
 const formatTimeForDisplay = (timestamp) => {
   if (!timestamp) return 'Unknown';
-  
+
   try {
     const now = new Date();
     const time = new Date(timestamp);
-    
+
     // Validate the date
     if (isNaN(time.getTime())) {
       return 'Invalid date';
     }
-    
+
     const diffMs = now - time;
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
@@ -4430,7 +4481,7 @@ const formatTimeForDisplay = (timestamp) => {
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
-    
+
     // For older dates, show actual date and time
     return time.toLocaleDateString('en-US', {
       month: 'short',
@@ -4453,11 +4504,11 @@ io.on('connection', (socket) => {
   socket.on('send_message', async (data) => {
     try {
       const { inquiryId, message, senderType, files = [], temporaryId } = data;
-      
+
       console.log('Received message via socket:', { inquiryId, message, senderType, temporaryId });
 
       const connection = await pool.getConnection();
-      
+
       // Get current inquiry
       const [inquiries] = await connection.query(
         'SELECT * FROM inquiry_conversations WHERE id = ?',
@@ -4472,7 +4523,7 @@ io.on('connection', (socket) => {
 
       const inquiry = inquiries[0];
       const currentMessages = JSON.parse(inquiry.messages || '[]');
-      
+
       // Duplicate check: block identical content from same sender within 60s
       const lastMsg = currentMessages[currentMessages.length - 1];
       const isDup = lastMsg && lastMsg.sender_type === senderType &&
@@ -4538,7 +4589,7 @@ io.on('connection', (socket) => {
         message: newMessage,
         temporaryId: temporaryId
       });
-      
+
       // REAL-TIME NOTIFICATION: Only show toast for admin messages
       if (senderType === 'admin') {
         // Emit to user's personal room
@@ -4567,9 +4618,9 @@ io.on('connection', (socket) => {
 
     } catch (error) {
       console.error('Socket message error:', error);
-      socket.emit('message_error', { 
-        error: 'Failed to send message', 
-        temporaryId: data.temporaryId 
+      socket.emit('message_error', {
+        error: 'Failed to send message',
+        temporaryId: data.temporaryId
       });
     }
   });
@@ -4583,9 +4634,9 @@ app.put('/api/inquiries/mark-all-read', async (req, res) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication required' 
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -4622,16 +4673,16 @@ app.put('/api/inquiries/mark-all-read', async (req, res) => {
       totalUnread: 0
     });
 
-    res.json({ 
-      success: true, 
-      message: 'All messages marked as read' 
+    res.json({
+      success: true,
+      message: 'All messages marked as read'
     });
   } catch (error) {
     console.error('Error marking all messages as read:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to mark messages as read' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark messages as read'
     });
   }
 });
@@ -4642,9 +4693,9 @@ app.get('/api/user/unread-count', async (req, res) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication required' 
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -4662,16 +4713,16 @@ app.get('/api/user/unread-count', async (req, res) => {
 
     const totalUnread = result[0].total_unread || 0;
 
-    res.json({ 
-      success: true, 
-      totalUnread: totalUnread 
+    res.json({
+      success: true,
+      totalUnread: totalUnread
     });
   } catch (error) {
     console.error('Error getting unread count:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get unread count' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get unread count'
     });
   }
 });
@@ -4683,17 +4734,17 @@ app.post('/api/inquiries', async (req, res) => {
   let connection;
   try {
     const { userId, product, customerInfo } = req.body;
-    
+
     if (!userId || !product || !customerInfo) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Missing required fields' 
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields'
       });
     }
 
     // NEW: Check for initial message to prevent empty inquiry creation
     const { initialMessage } = req.body;
-    
+
     connection = await pool.getConnection();
 
     // Check if inquiry already exists for this user-product combination
@@ -4703,11 +4754,11 @@ app.post('/api/inquiries', async (req, res) => {
     );
 
     let inquiry;
-    
+
     if (existingInquiries.length > 0) {
       // Existing inquiry found - use the existing one
       inquiry = existingInquiries[0];
-      
+
       // Update inquiry timestamp but keep unread_count
       await connection.query(
         'UPDATE inquiry_conversations SET last_activity = NOW(), updated_at = NOW() WHERE id = ?',
@@ -4718,16 +4769,16 @@ app.post('/api/inquiries', async (req, res) => {
     } else {
       // If creating NEW inquiry, REQUIRE an initial message
       if (!initialMessage || !initialMessage.trim()) {
-         connection.release();
-         // If no message, we return success: false but with a specific code or just don't create it.
-         // However, the frontend expects a success if it wants to just "check".
-         // But "check" should be done via GET /api/inquiries/user/... or similar.
-         // This POST is for CREATION/RETRIEVAL.
-         // If we strictly want to prevent empty creation, we fail here.
-         return res.status(400).json({
-            success: false,
-            message: 'Initial message required for new inquiry'
-         });
+        connection.release();
+        // If no message, we return success: false but with a specific code or just don't create it.
+        // However, the frontend expects a success if it wants to just "check".
+        // But "check" should be done via GET /api/inquiries/user/... or similar.
+        // This POST is for CREATION/RETRIEVAL.
+        // If we strictly want to prevent empty creation, we fail here.
+        return res.status(400).json({
+          success: false,
+          message: 'Initial message required for new inquiry'
+        });
       }
 
       const inquiryId = generateInquiryId(userId, product.id);
@@ -4735,13 +4786,13 @@ app.post('/api/inquiries', async (req, res) => {
 
       // Prepare initial messages array
       const initialMessages = [{
-          id: uuidv4(),
-          sender_type: 'user',
-          message: initialMessage,
-          files: [],
-          timestamp: new Date().toISOString(),
-          is_read: true, // User's own message is read
-          status: 'sent'
+        id: uuidv4(),
+        sender_type: 'user',
+        message: initialMessage,
+        files: [],
+        timestamp: new Date().toISOString(),
+        is_read: true, // User's own message is read
+        status: 'sent'
       }];
 
       // Create new inquiry with unread_count = 0 (or 1? No, user sent it, admin hasn't read it? 
@@ -4752,7 +4803,7 @@ app.post('/api/inquiries', async (req, res) => {
       // Wait, line 2610: "if (senderType === 'admin') newUnreadCount += 1".
       // So unread_count is "Unread by User".
       // So creating new inquiry (by User), unread_count = 0.
-      
+
       await connection.query(
         `INSERT INTO inquiry_conversations (
           id, user_id, product_id, inquiry_number, 
@@ -4783,7 +4834,7 @@ app.post('/api/inquiries', async (req, res) => {
         'SELECT * FROM inquiry_conversations WHERE id = ?',
         [inquiryId]
       );
-      
+
       inquiry = newInquiries[0];
       console.log('New inquiry created:', inquiryId, 'unread_count: 0');
 
@@ -4817,8 +4868,8 @@ app.post('/api/inquiries', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       inquiry: {
         ...inquiry,
         product_data: JSON.parse(inquiry.product_data),
@@ -4830,9 +4881,9 @@ app.post('/api/inquiries', async (req, res) => {
   } catch (error) {
     console.error('Error managing inquiry:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to manage inquiry: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to manage inquiry: ' + error.message
     });
   }
 });
@@ -4842,9 +4893,9 @@ app.get('/api/inquiries/user/:userId', async (req, res) => {
   let connection;
   try {
     const { userId } = req.params;
-    
+
     connection = await pool.getConnection();
-    
+
     const [inquiries] = await connection.query(
       'SELECT * FROM inquiry_conversations WHERE user_id = ? ORDER BY last_activity DESC',
       [userId]
@@ -4859,16 +4910,16 @@ app.get('/api/inquiries/user/:userId', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
-      inquiries: parsedInquiries 
+    res.json({
+      success: true,
+      inquiries: parsedInquiries
     });
   } catch (error) {
     console.error('Error fetching user inquiries:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch user inquiries: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user inquiries: ' + error.message
     });
   }
 });
@@ -4878,9 +4929,9 @@ app.get('/api/inquiries/:inquiryId', async (req, res) => {
   let connection;
   try {
     const { inquiryId } = req.params;
-    
+
     connection = await pool.getConnection();
-    
+
     const [inquiries] = await connection.query(
       'SELECT * FROM inquiry_conversations WHERE id = ?',
       [inquiryId]
@@ -4888,9 +4939,9 @@ app.get('/api/inquiries/:inquiryId', async (req, res) => {
 
     if (inquiries.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
@@ -4904,16 +4955,16 @@ app.get('/api/inquiries/:inquiryId', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
-      inquiry: parsedInquiry 
+    res.json({
+      success: true,
+      inquiry: parsedInquiry
     });
   } catch (error) {
     console.error('Error fetching inquiry details:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch inquiry details: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch inquiry details: ' + error.message
     });
   }
 });
@@ -4923,7 +4974,7 @@ app.get('/api/inquiries', async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     const [inquiries] = await connection.query(
       'SELECT * FROM inquiry_conversations ORDER BY last_activity DESC'
     );
@@ -4944,9 +4995,9 @@ app.get('/api/inquiries', async (req, res) => {
   } catch (error) {
     console.error('Error fetching inquiries:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch inquiries: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch inquiries: ' + error.message
     });
   }
 });
@@ -4957,11 +5008,11 @@ app.post('/api/inquiries/:inquiryId/messages', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { message, senderType, files = [] } = req.body;
-    
+
     if ((!message || !message.trim()) && files.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Message or files are required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Message or files are required'
       });
     }
 
@@ -4975,15 +5026,15 @@ app.post('/api/inquiries/:inquiryId/messages', async (req, res) => {
 
     if (inquiries.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
     const inquiry = inquiries[0];
     const currentMessages = JSON.parse(inquiry.messages || '[]');
-    
+
     // Create new message
     const newMessage = {
       id: uuidv4(),
@@ -5070,8 +5121,8 @@ app.post('/api/inquiries/:inquiryId/messages', async (req, res) => {
       console.error('Failed to send inquiry notification email:', emailError);
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Message sent successfully',
       messageData: newMessage,
       status: newStatus,
@@ -5080,9 +5131,9 @@ app.post('/api/inquiries/:inquiryId/messages', async (req, res) => {
   } catch (error) {
     console.error('Error sending message:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to send message: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send message: ' + error.message
     });
   }
 });
@@ -5093,7 +5144,7 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { messageIds, userId } = req.body;
-    
+
     connection = await pool.getConnection();
 
     // Get current inquiry
@@ -5104,15 +5155,15 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
 
     if (inquiries.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
     const inquiry = inquiries[0];
     const currentMessages = JSON.parse(inquiry.messages || '[]');
-    
+
     // Mark messages as read
     const updatedMessages = currentMessages.map(msg => {
       if (messageIds && messageIds.includes(msg.id)) {
@@ -5124,7 +5175,7 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
     });
 
     // Calculate EXACT new unread count - only unread admin messages
-    const newUnreadCount = updatedMessages.filter(msg => 
+    const newUnreadCount = updatedMessages.filter(msg =>
       msg.sender_type === 'admin' && !msg.is_read
     ).length;
 
@@ -5161,17 +5212,17 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
       });
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Messages marked as read',
       newUnreadCount: newUnreadCount
     });
   } catch (error) {
     console.error('Error marking messages as read:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to mark messages as read: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark messages as read: ' + error.message
     });
   }
 });
@@ -5182,11 +5233,11 @@ app.put('/api/inquiries/:inquiryId/status', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { status } = req.body;
-    
+
     if (!status) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Status is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Status is required'
       });
     }
 
@@ -5209,22 +5260,22 @@ app.put('/api/inquiries/:inquiryId/status', async (req, res) => {
     connection.release();
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
-    res.json({ 
-      success: true, 
-      message: 'Status updated successfully' 
+    res.json({
+      success: true,
+      message: 'Status updated successfully'
     });
   } catch (error) {
     console.error('Error updating inquiry status:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to update status: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update status: ' + error.message
     });
   }
 });
@@ -5235,11 +5286,11 @@ app.put('/api/inquiries/:inquiryId/activate-checkout', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { prices, status = 'completed' } = req.body;
-    
+
     if (!prices || Object.keys(prices).length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Price data is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Price data is required'
       });
     }
 
@@ -5260,23 +5311,23 @@ app.put('/api/inquiries/:inquiryId/activate-checkout', async (req, res) => {
     connection.release();
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Checkout activated successfully',
       status: status
     });
   } catch (error) {
     console.error('Error activating checkout:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to activate checkout: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to activate checkout: ' + error.message
     });
   }
 });
@@ -5286,9 +5337,9 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
   let connection;
   try {
     if (!req.files || Object.keys(req.files).length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No files were uploaded.' 
+      return res.status(400).json({
+        success: false,
+        message: 'No files were uploaded.'
       });
     }
 
@@ -5305,9 +5356,9 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
 
     if (inquiries.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
@@ -5327,14 +5378,14 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
         const userSlug = toSlug(name);
         inquiryFolder = `yokebud crafts/users/${userSlug}/inquiries/${inquiryId}`;
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // Upload each file to Cloudinary
     for (const file of files) {
       const allowedTypes = [
         'image/jpeg', 'image/png', 'image/webp', 'image/gif',
-        'application/pdf', 
-        'text/plain', 
+        'application/pdf',
+        'text/plain',
         'application/msword',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'application/vnd.ms-excel',
@@ -5342,12 +5393,12 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
         'application/zip',
         'application/vnd.rar'
       ];
-      
+
       if (!allowedTypes.includes(file.mimetype)) {
         connection.release();
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid file type. Only images, PDF, documents, and archives are allowed.' 
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid file type. Only images, PDF, documents, and archives are allowed.'
         });
       }
 
@@ -5386,18 +5437,18 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: `${uploadResults.length} file(s) uploaded successfully`,
-      files: uploadResults 
+      files: uploadResults
     });
   } catch (error) {
     console.error('Upload endpoint error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to upload files',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -5408,17 +5459,17 @@ app.get('/health', async (req, res) => {
     const connection = await pool.getConnection();
     await connection.query('SELECT 1');
     connection.release();
-    
-    res.status(200).json({ 
-      status: 'OK', 
+
+    res.status(200).json({
+      status: 'OK',
       timestamp: new Date().toISOString(),
       uptime: process.uptime()
     });
   } catch (error) {
-    res.status(500).json({ 
-      status: 'Error', 
+    res.status(500).json({
+      status: 'Error',
       message: 'Database connection failed',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -5457,13 +5508,13 @@ app.post('/api/user/register/send-otp', async (req, res) => {
   let connection;
   try {
     const { email } = req.body;
-    
+
     console.log('Registration OTP request for email:', email);
-    
+
     if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
       });
     }
 
@@ -5486,9 +5537,9 @@ app.post('/api/user/register/send-otp', async (req, res) => {
 
     if (existingUsers.length > 0) {
       connection.release();
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email already registered' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email already registered'
       });
     }
 
@@ -5520,17 +5571,17 @@ app.post('/api/user/register/send-otp', async (req, res) => {
     }
 
     console.log('Registration OTP sent successfully to:', email);
-    
-    res.json({ 
-      success: true, 
-      message: 'OTP sent successfully' 
+
+    res.json({
+      success: true,
+      message: 'OTP sent successfully'
     });
   } catch (error) {
     console.error('Send OTP error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to send OTP: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send OTP: ' + error.message
     });
   }
 });
@@ -5540,13 +5591,13 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
   let connection;
   try {
     const { email, otp, userData } = req.body;
-    
+
     console.log('Registration OTP verification request:', { email, otp, userData });
-    
+
     if (!email || !otp) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email and OTP are required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email and OTP are required'
       });
     }
 
@@ -5573,28 +5624,28 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
          WHERE email = ? AND otp_code = ? AND otp_type = ?`,
         [email, otp, 'registration']
       );
-      
+
       if (expiredOtps.length > 0) {
         if (expiredOtps[0].is_used) {
           console.log('Registration OTP already used');
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has already been used' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has already been used'
           });
         } else if (expiredOtps[0].attempt_count >= 5) {
           console.log('Registration OTP exceeded max attempts');
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has been blocked due to too many failed attempts. Please request a new OTP.' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has been blocked due to too many failed attempts. Please request a new OTP.'
           });
         } else {
           console.log('Registration OTP expired at:', expiredOtps[0].expires_at);
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has expired' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has expired'
           });
         }
       } else {
@@ -5617,9 +5668,9 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
 
         console.log('No valid registration OTP found for this email and code');
         connection.release();
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid OTP code' 
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid OTP code'
         });
       }
     }
@@ -5642,9 +5693,9 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
       if (existingUsers.length > 0) {
         await connection.rollback();
         connection.release();
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Email already registered' 
+        return res.status(400).json({
+          success: false,
+          message: 'Email already registered'
         });
       }
 
@@ -5710,7 +5761,7 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
       }
 
       const user = userDataResult[0];
-      
+
       // Check if profile needs completion
       const needsProfileCompletion = !user.first_name || !user.last_name || !user.phone;
 
@@ -5731,9 +5782,9 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
       }
 
       console.log('Registration completed successfully for user:', email, 'User ID:', userId);
-      
-      res.json({ 
-        success: true, 
+
+      res.json({
+        success: true,
         message: 'Registration successful',
         token,
         user: user,
@@ -5752,9 +5803,9 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
       await connection.rollback();
       connection.release();
     }
-    res.status(500).json({ 
-      success: false, 
-      message: 'Registration failed: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Registration failed: ' + error.message
     });
   }
 });
@@ -5764,13 +5815,13 @@ app.post('/api/user/login/send-otp', async (req, res) => {
   let connection;
   try {
     const { email } = req.body;
-    
+
     console.log('Login OTP request for email:', email);
-    
+
     if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
       });
     }
 
@@ -5793,9 +5844,9 @@ app.post('/api/user/login/send-otp', async (req, res) => {
 
     if (users.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Email not registered' 
+      return res.status(404).json({
+        success: false,
+        message: 'Email not registered'
       });
     }
 
@@ -5823,17 +5874,17 @@ app.post('/api/user/login/send-otp', async (req, res) => {
     await sendEnhancedOTPEmail(email, otp, 'email_verification');
 
     console.log('Login OTP sent successfully to:', email);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'OTP sent successfully'
     });
   } catch (error) {
     console.error('Login OTP error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to send OTP: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send OTP: ' + error.message
     });
   }
 });
@@ -5843,13 +5894,13 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
   let connection;
   try {
     const { email, otp } = req.body;
-    
+
     console.log('Login OTP verification request:', { email, otp });
-    
+
     if (!email || !otp) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email and OTP are required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email and OTP are required'
       });
     }
 
@@ -5876,28 +5927,28 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
          WHERE email = ? AND otp_code = ? AND otp_type = ?`,
         [email, otp, 'email_verification']
       );
-      
+
       if (expiredOtps.length > 0) {
         if (expiredOtps[0].is_used) {
           console.log('Login OTP already used');
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has already been used' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has already been used'
           });
         } else if (expiredOtps[0].attempt_count >= 5) {
           console.log('Login OTP exceeded max attempts');
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has been blocked due to too many failed attempts. Please request a new OTP.' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has been blocked due to too many failed attempts. Please request a new OTP.'
           });
         } else {
           console.log('Login OTP expired at:', expiredOtps[0].expires_at);
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has expired' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has expired'
           });
         }
       } else {
@@ -5920,9 +5971,9 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
 
         console.log('No valid login OTP found for this email and code');
         connection.release();
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid OTP code' 
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid OTP code'
         });
       }
     }
@@ -5942,14 +5993,14 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
 
     if (users.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
       });
     }
 
     const user = users[0];
-    
+
     // Check if profile needs completion
     const needsProfileCompletion = !user.first_name || !user.last_name || !user.phone;
 
@@ -5972,9 +6023,9 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
     const token = generateToken(user.user_id);
 
     console.log('Login OTP verification successful for user:', user.email);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'Login successful',
       token,
       user: user,
@@ -5984,9 +6035,9 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
   } catch (error) {
     console.error('Login verify error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Login failed: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Login failed: ' + error.message
     });
   }
 });
@@ -5998,7 +6049,7 @@ app.post('/api/user/forgot-password', async (req, res) => {
   let connection;
   try {
     const { email } = req.body;
-    
+
     if (!email) {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
@@ -6101,13 +6152,13 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
   let connection;
   try {
     const { user: firebaseUser } = req.body;
-    
+
     console.log('Firebase Google auth request:', { email: firebaseUser?.email });
-    
+
     if (!firebaseUser) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Firebase user data is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Firebase user data is required'
       });
     }
 
@@ -6151,17 +6202,17 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
       // User exists
       const existingUser = users[0];
       userId = existingUser.user_id;
-      
+
       // Check if profile needs completion
       needsProfileCompletion = !existingUser.first_name || !existingUser.last_name || !existingUser.phone;
-      
+
       console.log('Existing user profile completion status:', {
         first_name: existingUser.first_name,
         last_name: existingUser.last_name,
         phone: existingUser.phone,
         needsCompletion: needsProfileCompletion
       });
-      
+
       // Update Firebase UID if not set or different
       if (!existingUser.firebase_uid || existingUser.firebase_uid !== firebaseUid) {
         await connection.query(
@@ -6232,7 +6283,7 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
     }
 
     const user = userData[0];
-    
+
     // Double check needsProfileCompletion status
     const finalNeedsProfileCompletion = !user.first_name || !user.last_name || !user.phone;
 
@@ -6249,9 +6300,9 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
     }
 
     console.log('Firebase Google auth successful for user:', email, 'isNewUser:', isNewUser, 'needsProfileCompletion:', finalNeedsProfileCompletion);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: isNewUser ? 'Registration successful' : 'Login successful',
       token,
       user: user,
@@ -6261,9 +6312,9 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
   } catch (error) {
     console.error('Firebase Google auth error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Firebase authentication failed: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Firebase authentication failed: ' + error.message
     });
   }
 });
@@ -6273,11 +6324,11 @@ app.get('/api/user/profile', async (req, res) => {
   let connection;
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
-    
+
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication required' 
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -6298,24 +6349,24 @@ app.get('/api/user/profile', async (req, res) => {
 
     if (users.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
       });
     }
 
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       user: users[0]
     });
   } catch (error) {
     console.error('Get profile error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get profile: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get profile: ' + error.message
     });
   }
 });
@@ -6325,11 +6376,11 @@ app.put('/api/user/profile', async (req, res) => {
   let connection;
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
-    
+
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication required' 
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -6397,59 +6448,59 @@ app.put('/api/user/profile', async (req, res) => {
     connection.release();
 
     if (users.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
       });
     }
 
     console.log('Profile updated successfully for user:', userId);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'Profile updated successfully',
       user: users[0]
     });
   } catch (error) {
     console.error('Update profile error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to update profile: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update profile: ' + error.message
     });
   }
 });
 
-    // Get countries list (try DB, fallback to static list)
-    app.get('/api/countries', async (req, res) => {
-      let connection;
-      try {
-        connection = await pool.getConnection();
+// Get countries list (try DB, fallback to static list)
+app.get('/api/countries', async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
 
-        // Try to query a countries table if it exists
-        try {
-          const [rows] = await connection.query('SELECT code, name FROM countries ORDER BY name');
-          connection.release();
-          if (rows && rows.length > 0) {
-            return res.json({ success: true, countries: rows });
-          }
-        } catch (dbErr) {
-          // If table doesn't exist or query fails, fall back to static list
-          connection.release();
-        }
-
-        // Fallback static list (code, name)
-        const staticCountries = [
-          { code: 'AF', name: 'Afghanistan' },{ code: 'AL', name: 'Albania' },{ code: 'DZ', name: 'Algeria' },{ code: 'AD', name: 'Andorra' },{ code: 'AO', name: 'Angola' },{ code: 'AR', name: 'Argentina' },{ code: 'AM', name: 'Armenia' },{ code: 'AU', name: 'Australia' },{ code: 'AT', name: 'Austria' },{ code: 'AZ', name: 'Azerbaijan' },{ code: 'BD', name: 'Bangladesh' },{ code: 'BB', name: 'Barbados' },{ code: 'BY', name: 'Belarus' },{ code: 'BE', name: 'Belgium' },{ code: 'BJ', name: 'Benin' },{ code: 'BT', name: 'Bhutan' },{ code: 'BO', name: 'Bolivia' },{ code: 'BA', name: 'Bosnia and Herzegovina' },{ code: 'BW', name: 'Botswana' },{ code: 'BR', name: 'Brazil' },{ code: 'BN', name: 'Brunei' },{ code: 'BG', name: 'Bulgaria' },{ code: 'BF', name: 'Burkina Faso' },{ code: 'BI', name: 'Burundi' },{ code: 'KH', name: 'Cambodia' },{ code: 'CM', name: 'Cameroon' },{ code: 'CA', name: 'Canada' },{ code: 'CV', name: 'Cabo Verde' },{ code: 'CL', name: 'Chile' },{ code: 'CN', name: 'China' },{ code: 'CO', name: 'Colombia' },{ code: 'CR', name: 'Costa Rica' },{ code: 'HR', name: 'Croatia' },{ code: 'CU', name: 'Cuba' },{ code: 'CY', name: 'Cyprus' },{ code: 'CZ', name: 'Czech Republic' },{ code: 'DK', name: 'Denmark' },{ code: 'DO', name: 'Dominican Republic' },{ code: 'EC', name: 'Ecuador' },{ code: 'EG', name: 'Egypt' },{ code: 'SV', name: 'El Salvador' },{ code: 'EE', name: 'Estonia' },{ code: 'ET', name: 'Ethiopia' },{ code: 'FI', name: 'Finland' },{ code: 'FR', name: 'France' },{ code: 'DE', name: 'Germany' },{ code: 'GH', name: 'Ghana' },{ code: 'GR', name: 'Greece' },{ code: 'GT', name: 'Guatemala' },{ code: 'GN', name: 'Guinea' },{ code: 'GY', name: 'Guyana' },{ code: 'HT', name: 'Haiti' },{ code: 'HN', name: 'Honduras' },{ code: 'HU', name: 'Hungary' },{ code: 'IS', name: 'Iceland' },{ code: 'IN', name: 'India' },{ code: 'ID', name: 'Indonesia' },{ code: 'IR', name: 'Iran' },{ code: 'IQ', name: 'Iraq' },{ code: 'IE', name: 'Ireland' },{ code: 'IL', name: 'Israel' },{ code: 'IT', name: 'Italy' },{ code: 'JP', name: 'Japan' },{ code: 'JO', name: 'Jordan' },{ code: 'KZ', name: 'Kazakhstan' },{ code: 'KE', name: 'Kenya' },{ code: 'KR', name: 'South Korea' },{ code: 'KW', name: 'Kuwait' },{ code: 'KG', name: 'Kyrgyzstan' },{ code: 'LV', name: 'Latvia' },{ code: 'LB', name: 'Lebanon' },{ code: 'LT', name: 'Lithuania' },{ code: 'LU', name: 'Luxembourg' },{ code: 'MK', name: 'North Macedonia' },{ code: 'MG', name: 'Madagascar' },{ code: 'MW', name: 'Malawi' },{ code: 'MY', name: 'Malaysia' },{ code: 'MV', name: 'Maldives' },{ code: 'ML', name: 'Mali' },{ code: 'MT', name: 'Malta' },{ code: 'MH', name: 'Marshall Islands' },{ code: 'MR', name: 'Mauritania' },{ code: 'MU', name: 'Mauritius' },{ code: 'MX', name: 'Mexico' },{ code: 'MD', name: 'Moldova' },{ code: 'MC', name: 'Monaco' },{ code: 'MN', name: 'Mongolia' },{ code: 'ME', name: 'Montenegro' },{ code: 'MA', name: 'Morocco' },{ code: 'MZ', name: 'Mozambique' },{ code: 'MM', name: 'Myanmar' },{ code: 'NA', name: 'Namibia' },{ code: 'NP', name: 'Nepal' },{ code: 'NL', name: 'Netherlands' },{ code: 'NZ', name: 'New Zealand' },{ code: 'NI', name: 'Nicaragua' },{ code: 'NG', name: 'Nigeria' },{ code: 'NO', name: 'Norway' },{ code: 'OM', name: 'Oman' },{ code: 'PK', name: 'Pakistan' },{ code: 'PW', name: 'Palau' },{ code: 'PA', name: 'Panama' },{ code: 'PG', name: 'Papua New Guinea' },{ code: 'PY', name: 'Paraguay' },{ code: 'PE', name: 'Peru' },{ code: 'PH', name: 'Philippines' },{ code: 'PL', name: 'Poland' },{ code: 'PT', name: 'Portugal' },{ code: 'QA', name: 'Qatar' },{ code: 'RO', name: 'Romania' },{ code: 'RU', name: 'Russia' },{ code: 'SA', name: 'Saudi Arabia' },{ code: 'SN', name: 'Senegal' },{ code: 'RS', name: 'Serbia' },{ code: 'SC', name: 'Seychelles' },{ code: 'SL', name: 'Sierra Leone' },{ code: 'SG', name: 'Singapore' },{ code: 'SK', name: 'Slovakia' },{ code: 'SI', name: 'Slovenia' },{ code: 'SB', name: 'Solomon Islands' },{ code: 'SO', name: 'Somalia' },{ code: 'ZA', name: 'South Africa' },{ code: 'ES', name: 'Spain' },{ code: 'LK', name: 'Sri Lanka' },{ code: 'SD', name: 'Sudan' },{ code: 'SR', name: 'Suriname' },{ code: 'SE', name: 'Sweden' },{ code: 'CH', name: 'Switzerland' },{ code: 'SY', name: 'Syria' },{ code: 'TW', name: 'Taiwan' },{ code: 'TJ', name: 'Tajikistan' },{ code: 'TZ', name: 'Tanzania' },{ code: 'TH', name: 'Thailand' },{ code: 'TL', name: 'Timor-Leste' },{ code: 'TG', name: 'Togo' },{ code: 'TO', name: 'Tonga' },{ code: 'TT', name: 'Trinidad and Tobago' },{ code: 'TN', name: 'Tunisia' },{ code: 'TR', name: 'Turkey' },{ code: 'TM', name: 'Turkmenistan' },{ code: 'TV', name: 'Tuvalu' },{ code: 'UG', name: 'Uganda' },{ code: 'UA', name: 'Ukraine' },{ code: 'AE', name: 'United Arab Emirates' },{ code: 'GB', name: 'United Kingdom' },{ code: 'US', name: 'United States' },{ code: 'UY', name: 'Uruguay' },{ code: 'UZ', name: 'Uzbekistan' },{ code: 'VU', name: 'Vanuatu' },{ code: 'VA', name: 'Vatican City' },{ code: 'VE', name: 'Venezuela' },{ code: 'VN', name: 'Vietnam' },{ code: 'YE', name: 'Yemen' },{ code: 'ZM', name: 'Zambia' },{ code: 'ZW', name: 'Zimbabwe' }
-        ];
-
-        return res.json({ success: true, countries: staticCountries });
-      } catch (error) {
-        console.error('Countries endpoint error:', error);
-        if (connection) connection.release();
-        res.status(500).json({ success: false, message: 'Failed to get countries' });
+    // Try to query a countries table if it exists
+    try {
+      const [rows] = await connection.query('SELECT code, name FROM countries ORDER BY name');
+      connection.release();
+      if (rows && rows.length > 0) {
+        return res.json({ success: true, countries: rows });
       }
-    });
+    } catch (dbErr) {
+      // If table doesn't exist or query fails, fall back to static list
+      connection.release();
+    }
+
+    // Fallback static list (code, name)
+    const staticCountries = [
+      { code: 'AF', name: 'Afghanistan' }, { code: 'AL', name: 'Albania' }, { code: 'DZ', name: 'Algeria' }, { code: 'AD', name: 'Andorra' }, { code: 'AO', name: 'Angola' }, { code: 'AR', name: 'Argentina' }, { code: 'AM', name: 'Armenia' }, { code: 'AU', name: 'Australia' }, { code: 'AT', name: 'Austria' }, { code: 'AZ', name: 'Azerbaijan' }, { code: 'BD', name: 'Bangladesh' }, { code: 'BB', name: 'Barbados' }, { code: 'BY', name: 'Belarus' }, { code: 'BE', name: 'Belgium' }, { code: 'BJ', name: 'Benin' }, { code: 'BT', name: 'Bhutan' }, { code: 'BO', name: 'Bolivia' }, { code: 'BA', name: 'Bosnia and Herzegovina' }, { code: 'BW', name: 'Botswana' }, { code: 'BR', name: 'Brazil' }, { code: 'BN', name: 'Brunei' }, { code: 'BG', name: 'Bulgaria' }, { code: 'BF', name: 'Burkina Faso' }, { code: 'BI', name: 'Burundi' }, { code: 'KH', name: 'Cambodia' }, { code: 'CM', name: 'Cameroon' }, { code: 'CA', name: 'Canada' }, { code: 'CV', name: 'Cabo Verde' }, { code: 'CL', name: 'Chile' }, { code: 'CN', name: 'China' }, { code: 'CO', name: 'Colombia' }, { code: 'CR', name: 'Costa Rica' }, { code: 'HR', name: 'Croatia' }, { code: 'CU', name: 'Cuba' }, { code: 'CY', name: 'Cyprus' }, { code: 'CZ', name: 'Czech Republic' }, { code: 'DK', name: 'Denmark' }, { code: 'DO', name: 'Dominican Republic' }, { code: 'EC', name: 'Ecuador' }, { code: 'EG', name: 'Egypt' }, { code: 'SV', name: 'El Salvador' }, { code: 'EE', name: 'Estonia' }, { code: 'ET', name: 'Ethiopia' }, { code: 'FI', name: 'Finland' }, { code: 'FR', name: 'France' }, { code: 'DE', name: 'Germany' }, { code: 'GH', name: 'Ghana' }, { code: 'GR', name: 'Greece' }, { code: 'GT', name: 'Guatemala' }, { code: 'GN', name: 'Guinea' }, { code: 'GY', name: 'Guyana' }, { code: 'HT', name: 'Haiti' }, { code: 'HN', name: 'Honduras' }, { code: 'HU', name: 'Hungary' }, { code: 'IS', name: 'Iceland' }, { code: 'IN', name: 'India' }, { code: 'ID', name: 'Indonesia' }, { code: 'IR', name: 'Iran' }, { code: 'IQ', name: 'Iraq' }, { code: 'IE', name: 'Ireland' }, { code: 'IL', name: 'Israel' }, { code: 'IT', name: 'Italy' }, { code: 'JP', name: 'Japan' }, { code: 'JO', name: 'Jordan' }, { code: 'KZ', name: 'Kazakhstan' }, { code: 'KE', name: 'Kenya' }, { code: 'KR', name: 'South Korea' }, { code: 'KW', name: 'Kuwait' }, { code: 'KG', name: 'Kyrgyzstan' }, { code: 'LV', name: 'Latvia' }, { code: 'LB', name: 'Lebanon' }, { code: 'LT', name: 'Lithuania' }, { code: 'LU', name: 'Luxembourg' }, { code: 'MK', name: 'North Macedonia' }, { code: 'MG', name: 'Madagascar' }, { code: 'MW', name: 'Malawi' }, { code: 'MY', name: 'Malaysia' }, { code: 'MV', name: 'Maldives' }, { code: 'ML', name: 'Mali' }, { code: 'MT', name: 'Malta' }, { code: 'MH', name: 'Marshall Islands' }, { code: 'MR', name: 'Mauritania' }, { code: 'MU', name: 'Mauritius' }, { code: 'MX', name: 'Mexico' }, { code: 'MD', name: 'Moldova' }, { code: 'MC', name: 'Monaco' }, { code: 'MN', name: 'Mongolia' }, { code: 'ME', name: 'Montenegro' }, { code: 'MA', name: 'Morocco' }, { code: 'MZ', name: 'Mozambique' }, { code: 'MM', name: 'Myanmar' }, { code: 'NA', name: 'Namibia' }, { code: 'NP', name: 'Nepal' }, { code: 'NL', name: 'Netherlands' }, { code: 'NZ', name: 'New Zealand' }, { code: 'NI', name: 'Nicaragua' }, { code: 'NG', name: 'Nigeria' }, { code: 'NO', name: 'Norway' }, { code: 'OM', name: 'Oman' }, { code: 'PK', name: 'Pakistan' }, { code: 'PW', name: 'Palau' }, { code: 'PA', name: 'Panama' }, { code: 'PG', name: 'Papua New Guinea' }, { code: 'PY', name: 'Paraguay' }, { code: 'PE', name: 'Peru' }, { code: 'PH', name: 'Philippines' }, { code: 'PL', name: 'Poland' }, { code: 'PT', name: 'Portugal' }, { code: 'QA', name: 'Qatar' }, { code: 'RO', name: 'Romania' }, { code: 'RU', name: 'Russia' }, { code: 'SA', name: 'Saudi Arabia' }, { code: 'SN', name: 'Senegal' }, { code: 'RS', name: 'Serbia' }, { code: 'SC', name: 'Seychelles' }, { code: 'SL', name: 'Sierra Leone' }, { code: 'SG', name: 'Singapore' }, { code: 'SK', name: 'Slovakia' }, { code: 'SI', name: 'Slovenia' }, { code: 'SB', name: 'Solomon Islands' }, { code: 'SO', name: 'Somalia' }, { code: 'ZA', name: 'South Africa' }, { code: 'ES', name: 'Spain' }, { code: 'LK', name: 'Sri Lanka' }, { code: 'SD', name: 'Sudan' }, { code: 'SR', name: 'Suriname' }, { code: 'SE', name: 'Sweden' }, { code: 'CH', name: 'Switzerland' }, { code: 'SY', name: 'Syria' }, { code: 'TW', name: 'Taiwan' }, { code: 'TJ', name: 'Tajikistan' }, { code: 'TZ', name: 'Tanzania' }, { code: 'TH', name: 'Thailand' }, { code: 'TL', name: 'Timor-Leste' }, { code: 'TG', name: 'Togo' }, { code: 'TO', name: 'Tonga' }, { code: 'TT', name: 'Trinidad and Tobago' }, { code: 'TN', name: 'Tunisia' }, { code: 'TR', name: 'Turkey' }, { code: 'TM', name: 'Turkmenistan' }, { code: 'TV', name: 'Tuvalu' }, { code: 'UG', name: 'Uganda' }, { code: 'UA', name: 'Ukraine' }, { code: 'AE', name: 'United Arab Emirates' }, { code: 'GB', name: 'United Kingdom' }, { code: 'US', name: 'United States' }, { code: 'UY', name: 'Uruguay' }, { code: 'UZ', name: 'Uzbekistan' }, { code: 'VU', name: 'Vanuatu' }, { code: 'VA', name: 'Vatican City' }, { code: 'VE', name: 'Venezuela' }, { code: 'VN', name: 'Vietnam' }, { code: 'YE', name: 'Yemen' }, { code: 'ZM', name: 'Zambia' }, { code: 'ZW', name: 'Zimbabwe' }
+    ];
+
+    return res.json({ success: true, countries: staticCountries });
+  } catch (error) {
+    console.error('Countries endpoint error:', error);
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to get countries' });
+  }
+});
 
 // Get User Orders
 app.get('/api/user/orders', async (req, res) => {
@@ -6485,12 +6536,12 @@ app.get('/api/user/orders', async (req, res) => {
       let items = o.items;
       let totals = o.totals;
       let shipping_address = o.shipping_address;
-      try { customer_info = typeof customer_info === 'string' ? JSON.parse(customer_info) : customer_info; } catch {}
-      try { items = typeof items === 'string' ? JSON.parse(items) : items; } catch {}
-      try { totals = typeof totals === 'string' ? JSON.parse(totals) : totals; } catch {}
-      try { shipping_address = typeof shipping_address === 'string' ? JSON.parse(shipping_address) : shipping_address; } catch {}
+      try { customer_info = typeof customer_info === 'string' ? JSON.parse(customer_info) : customer_info; } catch { }
+      try { items = typeof items === 'string' ? JSON.parse(items) : items; } catch { }
+      try { totals = typeof totals === 'string' ? JSON.parse(totals) : totals; } catch { }
+      try { shipping_address = typeof shipping_address === 'string' ? JSON.parse(shipping_address) : shipping_address; } catch { }
       const firstItem = Array.isArray(items) && items[0] ? items[0] : null;
-      const product_details = firstItem ? { 
+      const product_details = firstItem ? {
         product_name: firstItem.product_name || firstItem.name || 'N/A',
         image: firstItem.image || null,
         price: firstItem.price || 0,
@@ -6556,7 +6607,7 @@ app.get('/api/user/wishlist', async (req, res) => {
         if (Array.isArray(imgs) && imgs.length > 0) {
           firstImage = imgs[0] || null;
         }
-      } catch {}
+      } catch { }
       const image = firstImage
         ? (String(firstImage).startsWith('http') ? firstImage : `https://api.yokebud.fi${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
         : null;
@@ -6690,11 +6741,11 @@ app.delete('/api/user/account', async (req, res) => {
   let connection;
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
-    
+
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication required' 
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -6714,17 +6765,17 @@ app.delete('/api/user/account', async (req, res) => {
     connection.release();
 
     console.log('Account deleted successfully for user:', userId);
-    
-    res.json({ 
-      success: true, 
-      message: 'Account deleted successfully' 
+
+    res.json({
+      success: true,
+      message: 'Account deleted successfully'
     });
   } catch (error) {
     console.error('Delete account error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to delete account: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete account: ' + error.message
     });
   }
 });
@@ -6733,22 +6784,22 @@ app.delete('/api/user/account', async (req, res) => {
 app.post('/api/user/logout', async (req, res) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
-    
+
     if (token) {
       // In a real app, you might want to blacklist the token
       // For now, we'll just return success
       console.log('User logout with token');
     }
 
-    res.json({ 
-      success: true, 
-      message: 'Logged out successfully' 
+    res.json({
+      success: true,
+      message: 'Logged out successfully'
     });
   } catch (error) {
     console.error('Logout error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Logout failed: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Logout failed: ' + error.message
     });
   }
 });
@@ -6757,7 +6808,7 @@ app.post('/api/user/logout', async (req, res) => {
 // ==================== ORDER MANAGEMENT API ====================
 
 // Save order from checkout
-  app.post('/api/checkout', async (req, res) => {
+app.post('/api/checkout', async (req, res) => {
   let connection;
   try {
     const {
@@ -6796,7 +6847,7 @@ app.post('/api/user/logout', async (req, res) => {
       try {
         const decoded = jwt.verify(tokenRaw, JWT_SECRET);
         authUserId = decoded && decoded.userId ? decoded.userId : null;
-      } catch (_) {}
+      } catch (_) { }
     }
 
     if (paymentId) {
@@ -6824,7 +6875,7 @@ app.post('/api/user/logout', async (req, res) => {
         if (!pid || qty <= 0) continue;
         const [prodRows] = await connection.query('SELECT stock, stock_status, is_preorder FROM products WHERE id = ? FOR UPDATE', [pid]);
         if (!prodRows || prodRows.length === 0) throw new Error('Product not found');
-        
+
         const isPreorder = prodRows[0].stock_status === 'Pre-order' || prodRows[0].is_preorder === 1;
         const currentStock = Number(prodRows[0].stock || 0);
 
@@ -6864,7 +6915,7 @@ app.post('/api/user/logout', async (req, res) => {
         }
       }
     } catch (e) {
-      try { await connection.rollback(); } catch {}
+      try { await connection.rollback(); } catch { }
       connection.release();
       return res.status(400).json({ success: false, message: e.message || 'Stock update failed' });
     }
@@ -6964,10 +7015,10 @@ app.post('/api/checkout/upload-design', async (req, res) => {
 
       try {
         const result = await new Promise((resolve, reject) => {
-          const uploadOptions = { 
-            folder: 'yokebud-crafts/checkout/designs', 
-            public_id: `design_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, 
-            resource_type: 'auto' 
+          const uploadOptions = {
+            folder: 'yokebud-crafts/checkout/designs',
+            public_id: `design_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            resource_type: 'auto'
           };
 
           // If useTempFiles is true, use the temp file path
@@ -6985,12 +7036,12 @@ app.post('/api/checkout/upload-design', async (req, res) => {
           }
         });
 
-        uploadResults.push({ 
-          url: result.secure_url, 
-          public_id: result.public_id, 
-          name: file.name, 
-          type: file.mimetype, 
-          size: file.size 
+        uploadResults.push({
+          url: result.secure_url,
+          public_id: result.public_id,
+          name: file.name,
+          type: file.mimetype,
+          size: file.size
         });
       } catch (e) {
         console.error('Cloudinary upload error:', e);
@@ -7022,13 +7073,13 @@ app.get('/api/orders', async (req, res) => {
       let design_files = order.design_files;
       let shipping_address = order.shipping_address;
       let billing_address = order.billing_address;
-      try { customer_info = typeof customer_info === 'string' ? JSON.parse(customer_info) : customer_info; } catch {}
-      try { items = typeof items === 'string' ? JSON.parse(items) : items; } catch {}
-      try { totals = typeof totals === 'string' ? JSON.parse(totals) : totals; } catch {}
-      try { customization_data = typeof customization_data === 'string' ? JSON.parse(customization_data) : customization_data; } catch {}
-      try { design_files = typeof design_files === 'string' ? JSON.parse(design_files) : design_files; } catch {}
-      try { shipping_address = typeof shipping_address === 'string' ? JSON.parse(shipping_address) : shipping_address; } catch {}
-      try { billing_address = typeof billing_address === 'string' ? JSON.parse(billing_address) : billing_address; } catch {}
+      try { customer_info = typeof customer_info === 'string' ? JSON.parse(customer_info) : customer_info; } catch { }
+      try { items = typeof items === 'string' ? JSON.parse(items) : items; } catch { }
+      try { totals = typeof totals === 'string' ? JSON.parse(totals) : totals; } catch { }
+      try { customization_data = typeof customization_data === 'string' ? JSON.parse(customization_data) : customization_data; } catch { }
+      try { design_files = typeof design_files === 'string' ? JSON.parse(design_files) : design_files; } catch { }
+      try { shipping_address = typeof shipping_address === 'string' ? JSON.parse(shipping_address) : shipping_address; } catch { }
+      try { billing_address = typeof billing_address === 'string' ? JSON.parse(billing_address) : billing_address; } catch { }
       const product_name = (Array.isArray(items) && items[0] && (items[0].product_name || items[0].name)) || order.product_name || 'N/A';
       return {
         ...order,
@@ -7061,7 +7112,7 @@ app.get('/api/orders/:orderId', async (req, res) => {
   let connection;
   try {
     const { orderId } = req.params;
-    
+
     connection = await pool.getConnection();
     await connection.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
     await connection.query("SET collation_connection = 'utf8mb4_unicode_ci'");
@@ -7091,12 +7142,12 @@ app.get('/api/orders/:orderId', async (req, res) => {
     }
 
     const order = orders[0];
-    
+
     // Parse all JSON fields
     const safeParse = (val) => {
       try {
         if (typeof val === 'string' && val.trim()) return JSON.parse(val);
-      } catch (_) {}
+      } catch (_) { }
       return val;
     };
 
@@ -7134,21 +7185,21 @@ app.post('/api/orders/:orderId/send-email', requireAdminAuth, async (req, res) =
   try {
     const { orderId } = req.params;
     connection = await pool.getConnection();
-    
+
     const [orders] = await connection.query('SELECT customer_info FROM orders WHERE order_id = ?', [orderId]);
     if (orders.length === 0) {
       connection.release();
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
-    
+
     const order = orders[0];
     let customerInfo = order.customer_info;
-    try { customerInfo = typeof customerInfo === 'string' ? JSON.parse(customerInfo) : customerInfo; } catch {}
-    
+    try { customerInfo = typeof customerInfo === 'string' ? JSON.parse(customerInfo) : customerInfo; } catch { }
+
     connection.release();
-    
+
     await sendManualNotificationEmail(orderId, customerInfo);
-    
+
     res.json({ success: true, message: 'Email sent successfully' });
   } catch (error) {
     if (connection) connection.release();
@@ -7195,15 +7246,15 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
     );
 
     const order = orders[0];
-    
+
     // Parse JSON fields
     const parsedOrder = {
       ...order,
-      customer_info: typeof order.customer_info === 'string' ? 
+      customer_info: typeof order.customer_info === 'string' ?
         JSON.parse(order.customer_info) : order.customer_info,
-      items: typeof order.items === 'string' ? 
+      items: typeof order.items === 'string' ?
         JSON.parse(order.items) : order.items,
-      totals: typeof order.totals === 'string' ? 
+      totals: typeof order.totals === 'string' ?
         JSON.parse(order.totals) : order.totals
     };
 
@@ -7261,15 +7312,15 @@ app.put('/api/orders/:orderId/estimated-delivery', requireAdminAuth, async (req,
     );
 
     const order = orders[0];
-    
+
     // Parse JSON fields
     const parsedOrder = {
       ...order,
-      customer_info: typeof order.customer_info === 'string' ? 
+      customer_info: typeof order.customer_info === 'string' ?
         JSON.parse(order.customer_info) : order.customer_info,
-      items: typeof order.items === 'string' ? 
+      items: typeof order.items === 'string' ?
         JSON.parse(order.items) : order.items,
-      totals: typeof order.totals === 'string' ? 
+      totals: typeof order.totals === 'string' ?
         JSON.parse(order.totals) : order.totals
     };
 
@@ -7333,7 +7384,7 @@ app.put('/api/orders/:orderId/tracking', async (req, res) => {
           console.error('Tracking email error:', e.message || e);
         }
       }
-    } catch {}
+    } catch { }
     connection.release();
     res.json({ success: true, order: parsed });
   } catch (error) {
@@ -7383,11 +7434,11 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       customization_images,
       customization_dimensions
     } = req.body;
-    
+
     const validation = validateProductPayload(req.body);
     if (!validation.valid) {
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         message: validation.message
       });
     }
@@ -7397,15 +7448,15 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
 
     // Process sizes
     const processedSizes = processSizes(sizes);
-    
+
     const connection = await pool.getConnection();
-    
+
     // Check for duplicate SKU
     const [existingProducts] = await connection.query(
       'SELECT id FROM products WHERE sku = ?',
       [sku]
     );
-    
+
     if (existingProducts.length > 0) {
       connection.release();
       return res.status(400).json({ success: false, message: 'SKU already exists' });
@@ -7467,7 +7518,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_mode,
         customization_images,
         customization_dimensions
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
@@ -7516,20 +7567,20 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     }
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Product created successfully',
-      productId: result.insertId 
+      productId: result.insertId
     });
 
     // Auto-regenerate sitemap when a new product is added
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product creation:', err));
   } catch (error) {
     console.error('Product creation error:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to create product',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -7580,8 +7631,8 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       stock_status
     });
     if (!validation.valid) {
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         message: validation.message
       });
     }
@@ -7593,16 +7644,16 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const processedSizes = processSizes(sizes);
 
     connection = await pool.getConnection();
-    
+
     await connection.beginTransaction();
-    
-    
+
+
     // Get current product data
     const [products] = await connection.query(
       'SELECT sku FROM products WHERE id = ?',
       [productId]
     );
-    
+
     if (products.length === 0) {
       await connection.rollback();
       connection.release();
@@ -7610,14 +7661,14 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     }
 
     const currentSku = products[0].sku;
-    
+
     // Check if SKU is being changed to one that already exists
     if (sku !== currentSku) {
       const [skuCheck] = await connection.query(
         'SELECT id FROM products WHERE sku = ? AND id != ?',
         [sku, productId]
       );
-      
+
       if (skuCheck.length > 0) {
         await connection.rollback();
         connection.release();
@@ -7738,12 +7789,12 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         [productId, v && v.color ? String(v.color) : null, v && v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
       );
     }
-    
+
     await connection.commit();
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Product updated successfully',
       productId: productId
     });
@@ -7751,12 +7802,12 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     // Auto-regenerate sitemap when a product is updated
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product update:', err));
   } catch (error) {
-    try { if (connection) await connection.rollback(); } catch {}
+    try { if (connection) await connection.rollback(); } catch { }
     console.error('Product update error:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to update product',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -7765,7 +7816,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
 app.get('/api/products/:id', async (req, res) => {
   try {
     const productId = req.params.id;
-    
+
     const connection = await pool.getConnection();
     const [products] = await connection.query(
       'SELECT * FROM products WHERE id = ?',
@@ -7789,7 +7840,7 @@ app.get('/api/products/:id', async (req, res) => {
     );
     const avgRating = sumRows[0] && sumRows[0].avg_rating != null ? Number(sumRows[0].avg_rating) : null;
     const reviewCount = sumRows[0] && sumRows[0].review_count != null ? Number(sumRows[0].review_count) : 0;
-    
+
     // Parse categories
     let categories;
     try {
@@ -7907,7 +7958,7 @@ app.get('/api/products', async (req, res) => {
       } catch (e) {
         categories = [product.category];
       }
-      
+
       const meta = product.metadata ? JSON.parse(product.metadata) : null;
       const priceRange = meta && meta.price_range && typeof meta.price_range === 'object' ? meta.price_range : null;
 
@@ -7978,7 +8029,7 @@ app.get('/api/products/:id/reviews', async (req, res) => {
         const decoded = jwt.verify(token, JWT_SECRET);
         const [rows] = await connection.query('SELECT 1 FROM user_reviews WHERE product_id = ? AND user_id IN (SELECT id FROM user_profiles WHERE user_id = ?) AND is_first_review = 1 LIMIT 1', [productId, decoded.userId]);
         youHaveRated = rows.length > 0;
-      } catch {}
+      } catch { }
     } else if (googleUid) {
       const [rows] = await connection.query('SELECT 1 FROM user_reviews WHERE product_id = ? AND google_uid = ? AND is_first_review = 1 LIMIT 1', [productId, googleUid]);
       youHaveRated = rows.length > 0;
@@ -8015,7 +8066,7 @@ app.post('/api/products/:id/reviews', async (req, res) => {
             nameResolved = `${fn} ${ln}`.trim();
           }
         }
-      } catch {}
+      } catch { }
     }
     if (!profileId && !google_uid) {
       return res.status(400).json({ success: false, message: 'User identity required' });
@@ -8062,16 +8113,16 @@ app.post('/api/products/:id/reviews', async (req, res) => {
           try {
             const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud crafts/reviews', resource_type: 'auto' });
             results.push(r);
-          } catch {}
+          } catch { }
         } else if (f.data) {
           try {
             const r = await uploadBuffer(f.data);
             results.push(r);
-          } catch {}
+          } catch { }
         }
       }
       mediaUrls = results.map(r => r.secure_url);
-    } catch {}
+    } catch { }
 
     try {
       const hasContent = (review_text && review_text.trim().length > 0) || mediaUrls.length > 0 || title;
@@ -8116,7 +8167,7 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
         const decoded = jwt.verify(token, JWT_SECRET);
         ownerClause = 'user_id IN (SELECT id FROM user_profiles WHERE user_id = ?)';
         ownerParams.push(decoded.userId);
-      } catch {}
+      } catch { }
     } else if (google_uid) {
       ownerClause = 'google_uid = ?';
       ownerParams.push(google_uid);
@@ -8142,13 +8193,13 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
       const results = [];
       for (const f of arr) {
         if (f.tempFilePath) {
-          try { const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud crafts/reviews', resource_type: 'auto' }); results.push(r); } catch {}
+          try { const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud crafts/reviews', resource_type: 'auto' }); results.push(r); } catch { }
         } else if (f.data) {
-          try { const r = await uploadBuffer(f.data); results.push(r); } catch {}
+          try { const r = await uploadBuffer(f.data); results.push(r); } catch { }
         }
       }
       mediaUrls = results.map(r => r.secure_url);
-    } catch {}
+    } catch { }
 
     const text = (req.body && req.body.review_text) || null;
     const title = (req.body && req.body.title) || null;
@@ -8158,7 +8209,7 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
       if (incoming) {
         existingFromClient = Array.isArray(incoming) ? incoming : JSON.parse(incoming);
       }
-    } catch {}
+    } catch { }
     const merged = [...existingFromClient, ...mediaUrls].filter(Boolean);
 
     await connection.query(
@@ -8190,7 +8241,7 @@ app.delete('/api/products/:id/reviews/:reviewId', async (req, res) => {
         const decoded = jwt.verify(token, JWT_SECRET);
         ownerClause = 'user_id IN (SELECT id FROM user_profiles WHERE user_id = ?)';
         ownerParams.push(decoded.userId);
-      } catch {}
+      } catch { }
     } else if (google_uid) {
       ownerClause = 'google_uid = ?';
       ownerParams.push(google_uid);
@@ -8237,7 +8288,7 @@ app.get('/api/categories', async (req, res) => {
       await connection.query("SELECT parent_id FROM categories LIMIT 1");
     } catch (err) {
       if (err.code === 'ER_BAD_FIELD_ERROR') {
-         await connection.query("ALTER TABLE categories ADD COLUMN parent_id INT DEFAULT NULL");
+        await connection.query("ALTER TABLE categories ADD COLUMN parent_id INT DEFAULT NULL");
       }
     }
 
@@ -8256,7 +8307,7 @@ app.post('/api/categories', requireAdminAuth, async (req, res) => {
   try {
     const { name, parent_id, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content } = req.body;
     if (!name) return res.status(400).json({ success: false, message: 'Name is required' });
-    
+
     const finalSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
     connection = await pool.getConnection();
@@ -8264,7 +8315,7 @@ app.post('/api/categories', requireAdminAuth, async (req, res) => {
       'INSERT INTO categories (name, parent_id, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [name, parent_id || null, type || 'crafts', image_url || null, finalSlug, seo_title || null, seo_description || null, seo_keywords || null, seo_content || null]
     );
-    
+
     connection.release();
     res.json({ success: true, message: 'Category created', category: { id: result.insertId, name, parent_id, type, image_url, slug: finalSlug } });
   } catch (error) {
@@ -8280,7 +8331,7 @@ app.delete('/api/categories/:id', requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     connection = await pool.getConnection();
-    
+
     // Check if category exists
     const [rows] = await connection.query('SELECT * FROM categories WHERE id = ?', [id]);
     if (rows.length === 0) {
@@ -8302,15 +8353,15 @@ app.delete('/api/categories/:id', requireAdminAuth, async (req, res) => {
 app.delete('/api/products/:id', requireAdminAuth, async (req, res) => {
   try {
     const productId = req.params.id;
-    
+
     const connection = await pool.getConnection();
-    
+
     // Get product details for image cleanup
     const [products] = await connection.query(
       'SELECT images FROM products WHERE id = ?',
       [productId]
     );
-    
+
     if (products.length === 0) {
       connection.release();
       return res.status(404).json({ error: 'Product not found' });
@@ -8318,13 +8369,13 @@ app.delete('/api/products/:id', requireAdminAuth, async (req, res) => {
 
     const { images } = products[0];
     const photos = JSON.parse(images || '[]');
-    
+
     // Delete the product from database
     await connection.query(
       'DELETE FROM products WHERE id = ?',
       [productId]
     );
-    
+
     connection.release();
 
     // Delete product images from Cloudinary
@@ -8342,7 +8393,7 @@ app.delete('/api/products/:id', requireAdminAuth, async (req, res) => {
     }
 
     res.json({ success: true, message: 'Product deleted successfully' });
-    
+
     // Auto-regenerate sitemap when a product is deleted
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product deletion:', err));
   } catch (error) {
@@ -8420,7 +8471,7 @@ app.delete('/api/products/:id/images', requireAdminAuth, async (req, res) => {
     }
     return res.json({ success: true });
   } catch (error) {
-    try { if (connection) await connection.rollback(); } catch {}
+    try { if (connection) await connection.rollback(); } catch { }
     if (connection) connection.release();
     return res.status(500).json({ success: false, message: 'Failed to delete image' });
   }
@@ -8431,15 +8482,15 @@ app.get('/api/products/:id/related', async (req, res) => {
   try {
     const productId = req.params.id;
     const limit = parseInt(req.query.limit) || 4;
-    
+
     const connection = await pool.getConnection();
-    
+
     // First get the product's categories
     const [products] = await connection.query(
       'SELECT category FROM products WHERE id = ?',
       [productId]
     );
-    
+
     if (products.length === 0) {
       connection.release();
       return res.status(404).json({ error: 'Product not found' });
@@ -8465,7 +8516,7 @@ app.get('/api/products/:id/related', async (req, res) => {
        LIMIT ?`,
       [productId, JSON.stringify(categories), limit]
     );
-    
+
     connection.release();
 
     const parsedProducts = relatedProducts.map(product => ({
@@ -8475,7 +8526,7 @@ app.get('/api/products/:id/related', async (req, res) => {
       min_price: product.discounted_price || product.price,
       max_price: product.price,
       discounted_price: product.discounted_price,
-      firstImage: product.images ? 
+      firstImage: product.images ?
         (JSON.parse(product.images) || [])[0] : null
     }));
 
@@ -8533,12 +8584,12 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     }
 
     let photos = [];
-    try { 
-      photos = p.images ? JSON.parse(p.images) : JSON.parse(p.product_photos || '[]'); 
-    } catch { 
-      photos = []; 
+    try {
+      photos = p.images ? JSON.parse(p.images) : JSON.parse(p.product_photos || '[]');
+    } catch {
+      photos = [];
     }
-    
+
     // Allow selecting specific image via ?img=INDEX
     let imgIdx = 0;
     if (req.query.img) {
@@ -8592,14 +8643,14 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
       <meta name="twitter:image" content="${firstImage}">
       <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>
       <script type="application/ld+json">${JSON.stringify({
-        '@context': 'https://schema.org',
-        '@type': 'BreadcrumbList',
-        itemListElement: [
-          { '@type': 'ListItem', position: 1, name: 'Home', item: siteBase },
-          { '@type': 'ListItem', position: 2, name: String(p.category || 'Products') || 'Products', item: `${siteBase}/` },
-          { '@type': 'ListItem', position: 3, name: name, item: canonicalUrl }
-        ]
-      })}</script>
+      '@context': 'https://schema.org',
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Home', item: siteBase },
+        { '@type': 'ListItem', position: 2, name: String(p.category || 'Products') || 'Products', item: `${siteBase}/` },
+        { '@type': 'ListItem', position: 3, name: name, item: canonicalUrl }
+      ]
+    })}</script>
     `;
 
     const html = `<!doctype html><html lang="en"><head>
@@ -8614,7 +8665,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.status(200).send(html);
   } catch (e) {
-    try { if (connection) connection.release(); } catch {}
+    try { if (connection) connection.release(); } catch { }
     res.status(500).send('<!doctype html><html><head><meta charset="utf-8"><title>Error</title></head><body>Unexpected error</body></html>');
   }
 });
@@ -8725,9 +8776,9 @@ app.put('/api/products/bulk', requireAdminAuth, async (req, res) => {
 app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
   try {
     if (!req.files || Object.keys(req.files).length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No files were uploaded.' 
+      return res.status(400).json({
+        success: false,
+        message: 'No files were uploaded.'
       });
     }
 
@@ -8739,10 +8790,10 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
       });
     }
 
-    const files = Array.isArray(fileField) 
-      ? fileField 
+    const files = Array.isArray(fileField)
+      ? fileField
       : [fileField];
-    
+
     const uploadResults = [];
     const productId = req.params.productId;
     const productSlugHint = req.body && (req.body.productSlug || req.body.slug);
@@ -8773,9 +8824,9 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
     for (const file of files) {
       const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'];
       if (!allowedTypes.includes(file.mimetype)) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid file type. Only JPEG, PNG, WebP and MP4/WEBM/OGG/MOV videos are allowed.' 
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid file type. Only JPEG, PNG, WebP and MP4/WEBM/OGG/MOV videos are allowed.'
         });
       }
 
@@ -8783,7 +8834,7 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
         const result = await new Promise((resolve, reject) => {
           const isVideo = String(file.mimetype || '').toLowerCase().startsWith('video/');
           const rtype = isVideo ? 'video' : 'image';
-          
+
           // Generate SEO-friendly public_id for images
           let publicId;
           if (!isVideo) {
@@ -8792,7 +8843,7 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
               .replace(/[^a-z0-9]/g, '-')
               .replace(/-+/g, '-')
               .replace(/^-|-$/g, '');
-            
+
             // Add SEO keywords like "custom", "handmade", "finland" if not present
             let seoBase = cleanHint;
             if (!seoBase.includes('laser') && !seoBase.includes('engraved')) {
@@ -8801,7 +8852,7 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
             if (!seoBase.includes('finland')) {
               seoBase = `${seoBase}-finland`;
             }
-            
+
             publicId = `${seoBase}-${uuidv4().slice(0, 8)}`;
           } else {
             publicId = uuidv4();
@@ -8878,24 +8929,24 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
           await connection.rollback();
         }
       } catch (e) {
-        try { await connection.rollback(); } catch {}
+        try { await connection.rollback(); } catch { }
         throw e;
       } finally {
         connection.release();
       }
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Files uploaded successfully',
-      images: uploadResults 
+      images: uploadResults
     });
   } catch (error) {
     console.error('Upload endpoint error:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to upload files',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -9062,7 +9113,7 @@ app.post('/api/admin/send-otp-email', async (req, res) => {
     if (connection) {
       try {
         connection.release();
-      } catch (e) {}
+      } catch (e) { }
     }
     res.status(500).json({
       success: false,
@@ -9133,7 +9184,7 @@ app.post('/api/admin/verify-otp', async (req, res) => {
 
   } catch (error) {
     console.error('Verify Error:', error);
-    if (connection) try { connection.release() } catch(e) {};
+    if (connection) try { connection.release() } catch (e) { };
     res.status(500).json({ success: false, message: 'Verification Error' });
   }
 });
@@ -9147,30 +9198,30 @@ app.post('/api/admin/verify-otp', async (req, res) => {
 // Admin dashboard
 app.get('/api/admin/dashboard', requireAdminAuth, async (req, res) => {
   try {
-    
+
 
     const connection = await pool.getConnection();
-    
+
     const [unreadCount] = await connection.query(
       'SELECT COUNT(*) as count FROM messages WHERE is_read = 0'
     );
-    
+
     const [totalCount] = await connection.query(
       'SELECT COUNT(*) as count FROM messages'
     );
-    
+
     const [productCount] = await connection.query(
       'SELECT COUNT(*) as count FROM products'
     );
-    
+
     const [orderCount] = await connection.query(
       'SELECT COUNT(*) as count FROM checkout_data WHERE status IN ("Pending", "Processing")'
     );
-    
+
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       stats: {
         unreadMessages: unreadCount[0].count,
         totalMessages: totalCount[0].count,
@@ -9187,7 +9238,7 @@ app.get('/api/admin/dashboard', requireAdminAuth, async (req, res) => {
 // Admin: users summary (total users and recent activity)
 app.get('/api/admin/users/summary', requireAdminAuth, async (req, res) => {
   try {
-    
+
 
     const connection = await pool.getConnection();
 
@@ -9260,7 +9311,7 @@ app.get('/api/user-profiles/count', async (req, res) => {
 app.post('/api/contact', async (req, res) => {
   try {
     const { name, email, whatsapp, message } = req.body;
-    
+
     if (!name || !email || !whatsapp || !message) {
       return res.status(400).json({ success: false, message: 'All fields are required' });
     }
@@ -9303,7 +9354,7 @@ app.get('/api/messages', async (req, res) => {
 app.put('/api/messages/:id/read', async (req, res) => {
   try {
     const messageId = req.params.id;
-    
+
     const connection = await pool.getConnection();
     await connection.query(
       'UPDATE messages SET is_read = 1 WHERE id = ?',
@@ -9344,11 +9395,11 @@ app.post('/api/subscribe', async (req, res) => {
   let emailSaved = false;
   try {
     const { email } = req.body;
-    
+
     if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
       });
     }
 
@@ -9372,13 +9423,13 @@ app.post('/api/subscribe', async (req, res) => {
 
     if (existingSubscribers.length > 0) {
       const subscriber = existingSubscribers[0];
-      
+
       if (subscriber.is_active) {
         console.log(`Email ${email} is already subscribed`);
         connection.release();
-        return res.json({ 
-          success: true, 
-          message: 'You are already subscribed to our newsletter!' 
+        return res.json({
+          success: true,
+          message: 'You are already subscribed to our newsletter!'
         });
       } else {
         // Reactivate subscription
@@ -9408,7 +9459,7 @@ app.post('/api/subscribe', async (req, res) => {
             setTimeout(async () => {
               try {
                 await sendWelcomeEmail(email, token);
-              } catch {}
+              } catch { }
             }, 3000);
           }
         } catch (emailError) {
@@ -9416,16 +9467,16 @@ app.post('/api/subscribe', async (req, res) => {
           // We'll still return success since the DB was updated
         }
 
-        return res.json({ 
-          success: true, 
-          message: 'Successfully resubscribed to our newsletter!' 
+        return res.json({
+          success: true,
+          message: 'Successfully resubscribed to our newsletter!'
         });
       }
     }
 
     // Create new subscription
     const subscriptionToken = generateSubscriptionToken();
-    
+
     await connection.query(
       'INSERT INTO subscribers (email, subscription_token, is_active) VALUES (?, ?, ?)',
       [email, subscriptionToken, true]
@@ -9459,7 +9510,7 @@ app.post('/api/subscribe', async (req, res) => {
         }
       }, 3000);
     }
-    
+
     // Send notification to admin with retry mechanism
     try {
       console.log(`Sending notification email to admin`);
@@ -9490,27 +9541,27 @@ app.post('/api/subscribe', async (req, res) => {
     }, 1500);
 
     // Always return success if the email was saved to the database
-    res.json({ 
-      success: true, 
-      message: emailSent 
-        ? 'Thank you for subscribing to our newsletter! Please check your email for confirmation.' 
+    res.json({
+      success: true,
+      message: emailSent
+        ? 'Thank you for subscribing to our newsletter! Please check your email for confirmation.'
         : 'Thank you for subscribing to our newsletter! You have been added to our mailing list.'
     });
   } catch (error) {
     console.error('❌ Subscription error:', error);
     if (connection) connection.release();
-    
+
     // If we already saved the email to the database but encountered other errors
     if (emailSaved) {
-      return res.json({ 
-        success: true, 
+      return res.json({
+        success: true,
         message: 'Thank you for subscribing to our newsletter! You have been added to our mailing list.'
       });
     }
-    
-    res.status(500).json({ 
-      success: false, 
-      message: 'Subscription failed. Please try again.' 
+
+    res.status(500).json({
+      success: false,
+      message: 'Subscription failed. Please try again.'
     });
   }
 });
@@ -9520,23 +9571,23 @@ app.post('/api/unsubscribe', async (req, res) => {
   let connection;
   try {
     const { token, email } = req.body;
-    
+
     if (!token && !email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Unsubscribe token or email is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Unsubscribe token or email is required'
       });
     }
 
     console.log(`🔄 Processing unsubscription request: ${token ? 'Using token' : `For email: ${email}`}`);
-    
+
     // Set a timeout for database operations
     const getConnectionWithTimeout = async (timeout = 15000) => {
       return new Promise(async (resolve, reject) => {
         const timer = setTimeout(() => {
           reject(new Error('Database connection timed out'));
         }, timeout);
-        
+
         try {
           const conn = await pool.getConnection();
           clearTimeout(timer);
@@ -9547,13 +9598,13 @@ app.post('/api/unsubscribe', async (req, res) => {
         }
       });
     };
-    
+
     // Get connection with timeout
     connection = await getConnectionWithTimeout();
     console.log('✅ Database connection established');
 
     let subscriber;
-    
+
     if (token) {
       // Unsubscribe by token (from email link)
       console.log(`🔍 Looking up subscriber by token: ${token.substring(0, 8)}...`);
@@ -9575,9 +9626,9 @@ app.post('/api/unsubscribe', async (req, res) => {
     if (!subscriber) {
       console.log(`⚠️ No active subscription found for ${token ? 'token' : email}`);
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Subscription not found or already unsubscribed' 
+      return res.status(404).json({
+        success: false,
+        message: 'Subscription not found or already unsubscribed'
       });
     }
 
@@ -9586,13 +9637,13 @@ app.post('/api/unsubscribe', async (req, res) => {
     // Deactivate subscription with transaction
     try {
       await connection.beginTransaction();
-      
+
       console.log(`🔄 Deactivating subscription for: ${subscriber.email}`);
       await connection.query(
         'UPDATE subscribers SET is_active = FALSE, updated_at = NOW() WHERE id = ?',
         [subscriber.id]
       );
-      
+
       await connection.commit();
       console.log(`✅ Successfully deactivated subscription for: ${subscriber.email}`);
     } catch (transactionError) {
@@ -9617,16 +9668,16 @@ app.post('/api/unsubscribe', async (req, res) => {
         console.error(`❌ Error sending unsubscribe confirmation to ${subscriber.email}:`, emailError);
       });
 
-    res.json({ 
-      success: true, 
-      message: 'You have been successfully unsubscribed from our newsletter.' 
+    res.json({
+      success: true,
+      message: 'You have been successfully unsubscribed from our newsletter.'
     });
   } catch (error) {
     console.error('❌ Unsubscribe error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Unsubscribe failed. Please try again later.' 
+    res.status(500).json({
+      success: false,
+      message: 'Unsubscribe failed. Please try again later.'
     });
   }
 });
@@ -9636,11 +9687,11 @@ app.get('/api/subscription-status', async (req, res) => {
   let connection;
   try {
     const { email } = req.query;
-    
+
     if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
       });
     }
 
@@ -9655,16 +9706,16 @@ app.get('/api/subscription-status', async (req, res) => {
 
     const isSubscribed = subscribers.length > 0 && subscribers[0].is_active;
 
-    res.json({ 
-      success: true, 
-      isSubscribed 
+    res.json({
+      success: true,
+      isSubscribed
     });
   } catch (error) {
     console.error('❌ Subscription status error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to check subscription status' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to check subscription status'
     });
   }
 });
@@ -9697,17 +9748,17 @@ app.get('/api/subscribers/count', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       total: totalResult[0].total,
       today: todayResult[0].today
     });
   } catch (error) {
     console.error('❌ Subscriber count error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get subscriber count' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get subscriber count'
     });
   }
 });
@@ -9835,19 +9886,19 @@ app.get('/api/blogs/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
     connection = await pool.getConnection();
-    
+
     // Increment view count
     await connection.query('UPDATE blogs SET view_count = view_count + 1 WHERE slug = ?', [slug]);
-    
+
     const [blogs] = await connection.query(
       'SELECT * FROM blogs WHERE slug = ?',
       [slug]
     );
-    
+
     if (blogs.length === 0) {
       return res.status(404).json({ error: 'Blog not found' });
     }
-    
+
     res.status(200).json(blogs[0]);
   } catch (error) {
     console.error('Error fetching blog:', error);
@@ -9862,17 +9913,17 @@ app.post('/api/blogs', requireAdminAuth, async (req, res) => {
   let connection;
   try {
     const { title, excerpt, content, category, author, image_url } = req.body;
-    
+
     if (!title || !content) {
       return res.status(400).json({ message: 'Title and content are required' });
     }
-    
+
     let imageUrl = image_url || null;
-    
+
     // Handle image upload to Cloudinary if a file is sent
     if (req.files && req.files.image) {
       const imageFile = req.files.image;
-      
+
       try {
         const uploadResult = await cloudinary.uploader.upload(imageFile.tempFilePath, {
           folder: 'yokebud_blogs',
@@ -9880,9 +9931,9 @@ app.post('/api/blogs', requireAdminAuth, async (req, res) => {
             { width: 1200, height: 675, crop: 'fill', quality: 'auto:good' }
           ]
         });
-        
+
         imageUrl = uploadResult.secure_url;
-        
+
         if (fs.existsSync(imageFile.tempFilePath)) {
           fs.unlinkSync(imageFile.tempFilePath);
         }
@@ -9890,19 +9941,19 @@ app.post('/api/blogs', requireAdminAuth, async (req, res) => {
         console.error('Error uploading blog image:', uploadError);
       }
     }
-    
+
     connection = await pool.getConnection();
     const slug = await ensureUniqueSlug(connection, slugify(title), 'blogs');
-    
+
     const [result] = await connection.query(
       'INSERT INTO blogs (title, slug, excerpt, content, category, author, image_url, is_published) VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)',
       [title, slug, excerpt || '', content, category || null, author || 'Admin', imageUrl]
     );
-    
-    res.status(201).json({ 
-      success: true, 
-      message: 'Blog created successfully', 
-      blogId: result.insertId 
+
+    res.status(201).json({
+      success: true,
+      message: 'Blog created successfully',
+      blogId: result.insertId
     });
   } catch (error) {
     console.error('Error creating blog:', error);
@@ -9918,44 +9969,44 @@ app.put('/api/blogs/:id', requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { title, excerpt, content, category, author, image_url } = req.body;
-    
+
     if (!title || !content) {
       return res.status(400).json({ message: 'Title and content are required' });
     }
-    
+
     connection = await pool.getConnection();
-    
+
     // Get current blog data to check for existing image
     const [currentBlog] = await connection.query('SELECT image_url FROM blogs WHERE id = ?', [id]);
-    
+
     if (currentBlog.length === 0) {
       return res.status(404).json({ message: 'Blog not found' });
     }
-    
-    let imageUrl = (typeof image_url === 'string' && image_url.trim()) 
-      ? image_url 
+
+    let imageUrl = (typeof image_url === 'string' && image_url.trim())
+      ? image_url
       : currentBlog[0].image_url;
-    
+
     // Handle new image upload
     if (req.files && req.files.image) {
       const imageFile = req.files.image;
-      
+
       try {
         if (imageUrl && imageUrl.includes('cloudinary')) {
           const parts = imageUrl.split('/');
           const filename = parts.pop();
           const publicId = filename.split('.')[0];
         }
-        
+
         const uploadResult = await cloudinary.uploader.upload(imageFile.tempFilePath, {
           folder: 'yokebud_blogs',
           transformation: [
             { width: 1200, height: 675, crop: 'fill', quality: 'auto:good' }
           ]
         });
-        
+
         imageUrl = uploadResult.secure_url;
-        
+
         if (fs.existsSync(imageFile.tempFilePath)) {
           fs.unlinkSync(imageFile.tempFilePath);
         }
@@ -9963,17 +10014,17 @@ app.put('/api/blogs/:id', requireAdminAuth, async (req, res) => {
         console.error('Error uploading blog image:', uploadError);
       }
     }
-    
+
     const slug = await ensureUniqueSlug(connection, slugify(title), 'blogs');
-    
+
     await connection.query(
       'UPDATE blogs SET title = ?, slug = ?, excerpt = ?, content = ?, category = ?, author = ?, image_url = ?, updated_at = NOW() WHERE id = ?',
       [title, slug, excerpt || '', content, category || null, author || 'Admin', imageUrl, id]
     );
-    
-    res.status(200).json({ 
-      success: true, 
-      message: 'Blog updated successfully' 
+
+    res.status(200).json({
+      success: true,
+      message: 'Blog updated successfully'
     });
   } catch (error) {
     console.error('Error updating blog:', error);
@@ -9989,22 +10040,22 @@ app.delete('/api/blogs/:id', requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     connection = await pool.getConnection();
-    
+
     // Get blog data to delete image
     const [blog] = await connection.query('SELECT image_url FROM blogs WHERE id = ?', [id]);
-    
+
     if (blog.length === 0) {
       return res.status(404).json({ message: 'Blog not found' });
     }
-    
+
     // Optional: Delete image from Cloudinary logic here if needed
-    
+
     // Delete blog from database
     await connection.query('DELETE FROM blogs WHERE id = ?', [id]);
-    
-    res.status(200).json({ 
-      success: true, 
-      message: 'Blog deleted successfully' 
+
+    res.status(200).json({
+      success: true,
+      message: 'Blog deleted successfully'
     });
   } catch (error) {
     console.error('Error deleting blog:', error);
@@ -10020,15 +10071,15 @@ const normalizeNewsletterProducts = (productList) => {
   return (productList || []).map(product => {
     let photos = [];
     try {
-      photos = typeof product.images === 'string' 
-        ? JSON.parse(product.images) 
+      photos = typeof product.images === 'string'
+        ? JSON.parse(product.images)
         : product.images || typeof product.product_photos === 'string'
-        ? JSON.parse(product.product_photos)
-        : product.product_photos || [];
+          ? JSON.parse(product.product_photos)
+          : product.product_photos || [];
     } catch (e) {
       photos = [];
     }
-    
+
     return {
       ...product,
       firstImage: photos.length > 0 ? photos[0] : null,
@@ -10090,7 +10141,7 @@ const sendWeeklyNewsletters = async () => {
   let connection;
   try {
     console.log('🚀 Starting weekly newsletter distribution...');
-    
+
     connection = await pool.getConnection();
 
     // Get all active subscribers
@@ -10124,7 +10175,7 @@ const sendWeeklyNewsletters = async () => {
         } else {
           errorCount++;
         }
-        
+
         // Add delay between emails to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
@@ -10134,9 +10185,9 @@ const sendWeeklyNewsletters = async () => {
     }
 
     connection.release();
-    
+
     console.log(`✅ Weekly newsletter distribution completed. Success: ${successCount}, Errors: ${errorCount}`);
-    
+
   } catch (error) {
     console.error('❌ Weekly newsletter distribution error:', error);
     if (connection) connection.release();
@@ -10175,7 +10226,7 @@ app.post('/api/send-test-newsletter', async (req, res) => {
   if (process.env.NODE_ENV === 'production') {
     return res.status(403).json({ success: false, message: 'Not allowed in production' });
   }
-  
+
   try {
     await sendWeeklyNewsletters();
     res.json({ success: true, message: 'Test newsletter sent' });
@@ -10197,16 +10248,16 @@ app.get('/api/admin/subscribers', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
-      subscribers 
+    res.json({
+      success: true,
+      subscribers
     });
   } catch (error) {
     console.error('❌ Get subscribers error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get subscribers' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get subscribers'
     });
   }
 });
@@ -10214,10 +10265,10 @@ app.get('/api/admin/subscribers', async (req, res) => {
 // This will help keep the Render instance awake by pinging itself
 const keepAlive = () => {
   const https = require('https');
-  
+
   if (process.env.RENDER_EXTERNAL_URL) {
     console.log('Setting up keep-alive ping for:', process.env.RENDER_EXTERNAL_URL);
-    
+
     setInterval(() => {
       https.get(`${process.env.RENDER_EXTERNAL_URL}/health`, (res) => {
         console.log(`Keep-alive ping successful - Status: ${res.statusCode}`);
@@ -10231,8 +10282,8 @@ const keepAlive = () => {
 // ==================== ERROR HANDLING MIDDLEWARE ====================
 app.use((error, req, res, next) => {
   console.error('Unhandled error:', error);
-  res.status(500).json({ 
-    success: false, 
+  res.status(500).json({
+    success: false,
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
   });
@@ -10347,7 +10398,7 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
       res.setHeader('Expires', '0');
 
       const indexPath = path.join(distDir, 'index.html');
-      
+
       // If the request is for a product page, inject dynamic meta tags
       const productMatch = req.path.match(/\/products\/(\d+)/);
       if (productMatch) {
@@ -10364,7 +10415,7 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
 
             const name = product.product_name || 'Product';
             const desc = (product.product_description || '').replace(/<[^>]*>?/gm, '').slice(0, 160);
-            
+
             let imageUrl = 'https://www.yokebud.fi/logo.jpg';
             try {
               const images = JSON.parse(product.images || product.product_photos || '[]');
@@ -10372,7 +10423,7 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
                 const firstImg = images[0];
                 imageUrl = firstImg.startsWith('http') ? firstImg : `https://api.yokebud.fi${firstImg.startsWith('/') ? '' : '/'}${firstImg}`;
               }
-            } catch (e) {}
+            } catch (e) { }
 
             const url = `https://www.yokebud.fi${req.originalUrl}`;
 
@@ -10398,7 +10449,7 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
             html = html.replace(/<meta name="description" content=".*?" \/>/, '');
             html = html.replace(/<meta property="og:.*?" content=".*?" \/>/g, '');
             html = html.replace(/<meta name="twitter:.*?" content=".*?" \/>/g, '');
-            
+
             html = html.replace('<head>', `<head>${metaTags}`);
 
             return res.send(html);
@@ -10526,7 +10577,7 @@ app.post('/api/admin/sitemap', requireAdminAuth, async (req, res) => {
   try {
     const { path, priority, changefreq, type } = req.body;
     connection = await pool.getConnection();
-    
+
     await connection.beginTransaction();
 
     const [result] = await connection.query(
@@ -10643,7 +10694,7 @@ app.put('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
     const { id } = req.params;
     const { path: newPath, priority, changefreq, type, is_active } = req.body;
     connection = await pool.getConnection();
-    
+
     await connection.beginTransaction();
 
     // Get old data
@@ -10679,15 +10730,15 @@ app.put('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
     // If it's a product URL, update the slug in the products table
     const oldProductId = getProductIdFromPath(oldEntry.path);
     const newProductId = getProductIdFromPath(newPath);
-    
+
     if (oldProductId && newProductId && oldProductId === newProductId && oldEntry.path !== newPath) {
-        const newSlug = newPath.split('/').pop();
-        if (newSlug) {
-            await connection.query(
-                'UPDATE products SET slug = ? WHERE id = ?',
-                [newSlug, newProductId]
-            );
-        }
+      const newSlug = newPath.split('/').pop();
+      if (newSlug) {
+        await connection.query(
+          'UPDATE products SET slug = ? WHERE id = ?',
+          [newSlug, newProductId]
+        );
+      }
     }
 
     // Record revision
@@ -10719,7 +10770,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
     const { id } = req.params;
     const { path, priority, changefreq, type, is_active, syncRelated = true } = req.body;
     connection = await pool.getConnection();
-    
+
     await connection.beginTransaction();
 
     // Get old data
@@ -10753,7 +10804,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
       const generateNewPath = (oldPath, newPath, id) => {
         const oldParts = oldPath.split('/');
         const newParts = newPath.split('/');
-        
+
         // Keep the ID and any trailing slug parts
         const idIndex = oldParts.findIndex(part => part === id.toString());
         if (idIndex !== -1) {
@@ -10771,7 +10822,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
             'SELECT * FROM sitemap_entries WHERE path LIKE ? AND id != ?',
             [`/products/${productId}/%`, id]
           );
-          
+
           for (const entry of relatedEntries) {
             const newRelatedPath = generateNewPath(entry.path, newPath, productId);
             await connection.query(
@@ -10796,7 +10847,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
             'SELECT * FROM sitemap_entries WHERE path LIKE ? AND id != ? AND type = ?',
             [`/blogs/${blogId}/%`, id, 'blog']
           );
-          
+
           for (const entry of relatedEntries) {
             const newRelatedPath = generateNewPath(entry.path, newPath, blogId);
             await connection.query(
@@ -10821,7 +10872,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
             'SELECT * FROM sitemap_entries WHERE path LIKE ? AND id != ?',
             [`/category/${categoryId}%`, id]
           );
-          
+
           for (const entry of relatedEntries) {
             const newRelatedPath = generateNewPath(entry.path, newPath, categoryId);
             await connection.query(
@@ -10842,7 +10893,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
     // Record revision
     await connection.query(
       'INSERT INTO sitemap_revisions (action, entry_id, old_data, new_data, admin_id) VALUES (?, ?, ?, ?, ?)',
-      ['UPDATE_SYNC', id, JSON.stringify(oldEntry), JSON.stringify({...req.body, syncResults}), ADMIN_ID]
+      ['UPDATE_SYNC', id, JSON.stringify(oldEntry), JSON.stringify({ ...req.body, syncResults }), ADMIN_ID]
     );
 
     await connection.commit();
@@ -10861,8 +10912,8 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
     // Trigger regeneration
     regenerateSitemap().catch(err => console.error('Regeneration error after UPDATE_SYNC:', err));
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Sitemap entry updated successfully with URL synchronization',
       syncResults: syncResults,
       syncedCount: syncResults.length
@@ -10882,7 +10933,7 @@ app.delete('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     connection = await pool.getConnection();
-    
+
     await connection.beginTransaction();
 
     // Get old data
@@ -11045,20 +11096,20 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Get all XML files in client/public directory
     const fs = require('fs');
     const path = require('path');
     const publicDir = path.join(__dirname, '..', 'client', 'public');
     const xmlFiles = fs.readdirSync(publicDir).filter(file => file.endsWith('-sitemap.xml') && file !== 'sitemap.xml');
-    
+
     let totalSynced = 0;
     const baseUrl = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
-    
+
     for (const xmlFile of xmlFiles) {
       const xmlPath = path.join(publicDir, xmlFile);
       const xmlContent = fs.readFileSync(xmlPath, 'utf8');
-      
+
       // Extract URLs from XML
       const urlRegex = /<loc>(.*?)<\/loc>/g;
       const urls = [];
@@ -11066,16 +11117,16 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
       while ((match = urlRegex.exec(xmlContent)) !== null) {
         urls.push(match[1]);
       }
-      
+
       // Extract other metadata
       const lastmodRegex = /<lastmod>(.*?)<\/lastmod>/g;
       const changefreqRegex = /<changefreq>(.*?)<\/changefreq>/g;
       const priorityRegex = /<priority>(.*?)<\/priority>/g;
-      
+
       const lastmods = [];
       const changefreqs = [];
       const priorities = [];
-      
+
       while ((match = lastmodRegex.exec(xmlContent)) !== null) {
         lastmods.push(match[1]);
       }
@@ -11085,31 +11136,31 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
       while ((match = priorityRegex.exec(xmlContent)) !== null) {
         priorities.push(match[1]);
       }
-      
+
       // Determine type from filename
       let type = 'static';
       if (xmlFile.includes('category')) type = 'category';
       else if (xmlFile.includes('product')) type = 'product';
       else if (xmlFile.includes('blog')) type = 'blog';
       else if (xmlFile.includes('page')) type = 'static';
-      
+
       // Insert or update each URL in database
       for (let i = 0; i < urls.length; i++) {
         const url = urls[i];
         let path = url.startsWith(baseUrl) ? url.substring(baseUrl.length) : url;
         // Decode HTML entities
         path = path.replace(/&amp;/g, '&');
-        
+
         const lastmod = lastmods[i] || new Date().toISOString().slice(0, 10);
         const changefreq = changefreqs[i] || 'weekly';
         const priority = priorities[i] || '0.6';
-        
+
         // Check if entry already exists
         const [existing] = await connection.query(
           'SELECT id FROM sitemap_entries WHERE path = ?',
           [path]
         );
-        
+
         if (existing.length === 0) {
           // Insert new entry
           const [result] = await connection.query(
@@ -11117,14 +11168,14 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
              VALUES (?, ?, ?, ?, TRUE, ?, ?)`,
             [path, priority, changefreq, type, lastmod, lastmod]
           );
-          
+
           // Log the action in revisions
           await connection.query(
             `INSERT INTO sitemap_revisions (entry_id, action, new_data, admin_id)
              VALUES (?, 'ADD', ?, 1)`,
             [result.insertId, JSON.stringify({ path, priority, changefreq, type })]
           );
-          
+
           totalSynced++;
         } else {
           // Update existing entry
@@ -11137,11 +11188,11 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
         }
       }
     }
-    
-    res.json({ 
-      success: true, 
-      message: `XML files synced successfully. ${totalSynced} new entries added.`, 
-      synced: totalSynced 
+
+    res.json({
+      success: true,
+      message: `XML files synced successfully. ${totalSynced} new entries added.`,
+      synced: totalSynced
     });
   } catch (error) {
     if (connection) connection.release();
@@ -11171,7 +11222,7 @@ app.post('/api/admin/sitemap/revert/:id', requireAdminAuth, async (req, res) => 
   try {
     const { id } = req.params;
     connection = await pool.getConnection();
-    
+
     const [revisions] = await connection.query('SELECT * FROM sitemap_revisions WHERE id = ?', [id]);
     if (revisions.length === 0) {
       connection.release();
@@ -11227,16 +11278,621 @@ app.post('/api/admin/sitemap/revert/:id', requireAdminAuth, async (req, res) => 
 });
 
 // Redirect sitemap-indexed product paths
-  app.get(['/products/:id/:slug', '/p/:id/:slug', '/p/:id'], async (req, res, next) => {
-    // This handles the standard SEO paths from sitemap
-    // But we need to check if this is actually a valid product or needs to be served by React
-    next(); 
+app.get(['/products/:id/:slug', '/p/:id/:slug', '/p/:id'], async (req, res, next) => {
+  // This handles the standard SEO paths from sitemap
+  // But we need to check if this is actually a valid product or needs to be served by React
+  next();
+});
+
+// ==================== PROMO CODE SYSTEM ====================
+
+// Ensure promo_codes and promo_code_usage tables exist
+(async () => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS promo_codes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(50) NOT NULL UNIQUE,
+        type ENUM('percentage','fixed') NOT NULL DEFAULT 'percentage',
+        value DECIMAL(10,2) NOT NULL,
+        usage_limit INT NULL,
+        used_count INT NOT NULL DEFAULT 0,
+        user_specific TINYINT(1) NOT NULL DEFAULT 0,
+        user_id VARCHAR(100) NULL,
+        valid_from DATETIME NULL,
+        valid_until DATETIME NULL,
+        product_id INT NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS promo_code_usage (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        promo_code_id INT NOT NULL,
+        user_id VARCHAR(100) NULL,
+        order_id VARCHAR(100) NULL,
+        used_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (promo_code_id) REFERENCES promo_codes(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Check if is_active column exists in promo_codes table, if not add it
+    const [cols] = await conn.query("SHOW COLUMNS FROM promo_codes LIKE 'is_active'");
+    if (cols.length === 0) {
+      await conn.query("ALTER TABLE promo_codes ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1");
+      console.log('Added is_active column to promo_codes table.');
+    }
+
+    conn.release();
+    console.log('Promo code tables ready.');
+  } catch (err) {
+    if (conn) conn.release();
+    console.error('Promo code table setup error:', err.message);
+  }
+})();
+
+// GET /api/admin/users — list all users
+app.get('/api/admin/users', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(`
+      SELECT uc.user_id, up.first_name, up.last_name, uc.email
+      FROM user_credentials uc
+      LEFT JOIN user_profiles up ON up.user_id = uc.user_id
+      ORDER BY up.first_name ASC, up.last_name ASC
+    `);
+    conn.release();
+    res.json({ success: true, users: rows });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/admin/promo-codes — list all promo codes
+app.get('/api/admin/promo-codes', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(`
+      SELECT pc.*, p.product_name
+      FROM promo_codes pc
+      LEFT JOIN products p ON p.id = pc.product_id
+      ORDER BY pc.created_at DESC
+    `);
+    conn.release();
+    res.json({ success: true, promoCodes: rows });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/admin/promo-codes — create a new promo code
+app.post('/api/admin/promo-codes', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const { code, type, value, usage_limit, user_specific, user_id, valid_from, valid_until, product_id } = req.body;
+    if (!code || !value) return res.status(400).json({ success: false, message: 'Code and value are required' });
+
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO promo_codes (code, type, value, usage_limit, user_specific, user_id, valid_from, valid_until, product_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        String(code).toUpperCase().trim(),
+        type || 'percentage',
+        parseFloat(value),
+        usage_limit ? parseInt(usage_limit) : null,
+        user_specific ? 1 : 0,
+        user_id || null,
+        valid_from || null,
+        valid_until || null,
+        product_id ? parseInt(product_id) : null
+      ]
+    );
+    conn.release();
+    res.json({ success: true, message: 'Promo code created' });
+  } catch (err) {
+    if (conn) conn.release();
+    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ success: false, message: 'Promo code already exists' });
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// PUT /api/admin/promo-codes/:id — update a promo code
+app.put('/api/admin/promo-codes/:id', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const { id } = req.params;
+    const { code, type, value, usage_limit, user_specific, user_id, valid_from, valid_until, product_id } = req.body;
+
+    conn = await pool.getConnection();
+    await conn.query(
+      `UPDATE promo_codes SET code=?, type=?, value=?, usage_limit=?, user_specific=?, user_id=?, valid_from=?, valid_until=?, product_id=?, updated_at=NOW()
+       WHERE id=?`,
+      [
+        String(code).toUpperCase().trim(),
+        type || 'percentage',
+        parseFloat(value),
+        usage_limit ? parseInt(usage_limit) : null,
+        user_specific ? 1 : 0,
+        user_id || null,
+        valid_from || null,
+        valid_until || null,
+        product_id ? parseInt(product_id) : null,
+        id
+      ]
+    );
+    conn.release();
+    res.json({ success: true, message: 'Promo code updated' });
+  } catch (err) {
+    if (conn) conn.release();
+    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ success: false, message: 'Promo code already exists' });
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// DELETE /api/admin/promo-codes/:id — delete a promo code
+app.delete('/api/admin/promo-codes/:id', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const { id } = req.params;
+    conn = await pool.getConnection();
+    await conn.query('DELETE FROM promo_codes WHERE id = ?', [id]);
+    conn.release();
+    res.json({ success: true, message: 'Promo code deleted' });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/promo-codes/validate — validate a promo code at checkout
+app.post('/api/promo-codes/validate', async (req, res) => {
+  let conn;
+  try {
+    const { code, productIds, userId } = req.body;
+    if (!code) return res.status(400).json({ success: false, message: 'Promo code is required' });
+
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(
+      'SELECT * FROM promo_codes WHERE code = ? AND is_active = 1 LIMIT 1',
+      [String(code).toUpperCase().trim()]
+    );
+
+    if (rows.length === 0) {
+      conn.release();
+      return res.status(404).json({ success: false, message: 'Invalid promo code' });
+    }
+
+    const promo = rows[0];
+    const now = new Date();
+
+    // Check validity dates
+    if (promo.valid_from && new Date(promo.valid_from) > now) {
+      conn.release();
+      return res.status(400).json({ success: false, message: 'Promo code is not yet active' });
+    }
+    if (promo.valid_until && new Date(promo.valid_until) < now) {
+      conn.release();
+      return res.status(400).json({ success: false, message: 'Promo code has expired' });
+    }
+
+    // Check usage limit
+    if (promo.usage_limit !== null && promo.used_count >= promo.usage_limit) {
+      conn.release();
+      return res.status(400).json({ success: false, message: 'Promo code usage limit reached' });
+    }
+
+    // Check user-specific restriction
+    if (promo.user_specific && promo.user_id) {
+      if (!userId || String(userId) !== String(promo.user_id)) {
+        conn.release();
+        return res.status(403).json({ success: false, message: 'This promo code is not valid for your account' });
+      }
+    }
+
+    // Check product-specific restriction
+    if (promo.product_id) {
+      const ids = Array.isArray(productIds) ? productIds.map(String) : [];
+      const promoProductIdStr = String(promo.product_id);
+      const matches = ids.some((pid) => {
+        // Handle custom product IDs like "custom-123-0"
+        const customMatch = pid.match(/^custom-(\d+)/);
+        const resolvedId = customMatch ? customMatch[1] : pid;
+        return resolvedId === promoProductIdStr;
+      });
+      if (!matches) {
+        conn.release();
+        return res.status(400).json({ success: false, message: 'This promo code is not valid for the products in your cart' });
+      }
+    }
+
+    conn.release();
+
+    // Return the valid promo code data
+    res.json({
+      success: true,
+      promoCode: {
+        id: promo.id,
+        code: promo.code,
+        type: promo.type,
+        value: parseFloat(promo.value),
+        product_id: promo.product_id || null
+      }
+    });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/promo-codes/use — mark a promo code as used after successful order
+app.post('/api/promo-codes/use', async (req, res) => {
+  let conn;
+  try {
+    const { code, userId, orderId } = req.body;
+    if (!code) return res.status(400).json({ success: false, message: 'Code is required' });
+
+    conn = await pool.getConnection();
+    const [rows] = await conn.query('SELECT * FROM promo_codes WHERE code = ? AND is_active = 1 LIMIT 1', [String(code).toUpperCase().trim()]);
+    if (rows.length === 0) { conn.release(); return res.status(404).json({ success: false, message: 'Promo code not found' }); }
+
+    const promo = rows[0];
+    await conn.query('UPDATE promo_codes SET used_count = used_count + 1 WHERE id = ?', [promo.id]);
+    await conn.query(
+      'INSERT INTO promo_code_usage (promo_code_id, user_id, order_id) VALUES (?, ?, ?)',
+      [promo.id, userId || null, orderId || null]
+    );
+    conn.release();
+    res.json({ success: true, message: 'Promo code usage recorded' });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ==================== END PROMO CODE SYSTEM ====================
+
+// ==================== CUSTOM LASER ORDERS SYSTEM ====================
+
+// Helper function to upload base64 images to Cloudinary
+async function uploadToCloudinaryIfBase64(imageUrlOrBase64) {
+  if (!imageUrlOrBase64 || typeof imageUrlOrBase64 !== 'string') return null;
+  if (imageUrlOrBase64.startsWith('data:')) {
+    try {
+      const res = await cloudinary.uploader.upload(imageUrlOrBase64, {
+        folder: 'yokebud crafts/custom_orders',
+        resource_type: 'auto'
+      });
+      return res.secure_url;
+    } catch (e) {
+      console.error('Cloudinary upload error in custom order:', e.message || e);
+      throw new Error('Failed to upload image: ' + (e.message || String(e)));
+    }
+  }
+  return imageUrlOrBase64;
+}
+
+// User: Submit a custom laser order
+app.post('/api/custom-laser-orders', async (req, res) => {
+  let conn;
+  try {
+    const { title, description, image_url, image_urls, width, height, depth, material, category } = req.body;
+    if (!title || !description) {
+      return res.status(400).json({ success: false, message: 'Title and description are required' });
+    }
+
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.replace('Bearer ', '') : null;
+    let profileId = null;
+
+    conn = await pool.getConnection();
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const userId = decoded.userId;
+        const [profileRows] = await conn.query('SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1', [userId]);
+        if (profileRows.length > 0) {
+          profileId = profileRows[0].id;
+        }
+      } catch (err) {
+        console.warn('Token verification failed for custom laser order:', err.message);
+      }
+    }
+
+    // Handle Cloudinary upload if images are base64
+    let uploadedUrls = [];
+    if (Array.isArray(image_urls) && image_urls.length > 0) {
+      for (const img of image_urls) {
+        const uploaded = await uploadToCloudinaryIfBase64(img);
+        if (uploaded) uploadedUrls.push(uploaded);
+      }
+    } else if (image_url) {
+      const uploaded = await uploadToCloudinaryIfBase64(image_url);
+      if (uploaded) uploadedUrls.push(uploaded);
+    }
+
+    const [result] = await conn.query(
+      `INSERT INTO custom_laser_orders (user_id, title, description, image_url, width, height, depth, material, status, category)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      [
+        profileId,
+        title,
+        description,
+        uploadedUrls.length > 0 ? JSON.stringify(uploadedUrls) : null,
+        width ? parseFloat(width) : null,
+        height ? parseFloat(height) : null,
+        depth ? parseFloat(depth) : null,
+        material || null,
+        category || null
+      ]
+    );
+
+    conn.release();
+    res.json({ success: true, message: 'Custom laser order submitted successfully', orderId: result.insertId });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Helper function to format order images
+function formatOrderImages(rows) {
+  return rows.map(order => {
+    let images = [];
+    if (order.image_url) {
+      const trimmed = order.image_url.trim();
+      if (trimmed.startsWith('[')) {
+        try {
+          images = JSON.parse(trimmed);
+        } catch (_) {
+          images = [trimmed];
+        }
+      } else {
+        images = [trimmed];
+      }
+    }
+    return {
+      ...order,
+      image_url: images[0] || null,
+      image_urls: images
+    };
   });
+}
+
+// User: Get own custom laser orders
+app.get('/api/custom-laser-orders', async (req, res) => {
+  let conn;
+  try {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.replace('Bearer ', '') : null;
+    if (!token) return res.status(401).json({ success: false, message: 'Authentication required' });
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const userId = decoded.userId;
+
+    conn = await pool.getConnection();
+
+    // Find profile integer ID
+    const [profileRows] = await conn.query('SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1', [userId]);
+    if (profileRows.length === 0) {
+      conn.release();
+      return res.json({ success: true, orders: [] });
+    }
+    const profileId = profileRows[0].id;
+
+    const [rows] = await conn.query(`
+      SELECT clo.*, 
+             up.first_name, up.last_name, up.phone,
+             up.house_number, up.apartment, up.landmark,
+             up.address, up.city, up.state, up.zip_code, up.country,
+             uc.email
+      FROM custom_laser_orders clo
+      LEFT JOIN user_profiles up ON up.id = clo.user_id
+      LEFT JOIN user_credentials uc ON uc.user_id = up.user_id
+      WHERE clo.user_id = ?
+      ORDER BY clo.created_at DESC
+    `, [profileId]);
+
+    conn.release();
+    res.json({ success: true, orders: formatOrderImages(rows) });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Admin: Get all custom laser orders
+app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(`
+      SELECT clo.*, 
+             up.first_name, up.last_name, up.phone,
+             up.house_number, up.apartment, up.landmark,
+             up.address, up.city, up.state, up.zip_code, up.country,
+             uc.email
+      FROM custom_laser_orders clo
+      LEFT JOIN user_profiles up ON up.id = clo.user_id
+      LEFT JOIN user_credentials uc ON uc.user_id = up.user_id
+      ORDER BY clo.created_at DESC
+    `);
+    conn.release();
+    res.json({ success: true, orders: formatOrderImages(rows) });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Admin: Update a custom laser order (status, price, and/or notes)
+app.put('/api/admin/custom-laser-orders/:id', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const { id } = req.params;
+    const { status, price, notes } = req.body;
+
+    conn = await pool.getConnection();
+
+    // Build update query dynamically
+    const updates = [];
+    const values = [];
+
+    if (status !== undefined) {
+      updates.push('status = ?');
+      values.push(status);
+    }
+    if (price !== undefined) {
+      updates.push('price = ?');
+      values.push(price ? parseFloat(price) : 0.00);
+    }
+    if (notes !== undefined) {
+      updates.push('notes = ?');
+      values.push(notes);
+    }
+
+    if (updates.length === 0) {
+      conn.release();
+      return res.status(400).json({ success: false, message: 'No fields to update' });
+    }
+
+    values.push(id);
+    await conn.query(
+      `UPDATE custom_laser_orders SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
+      values
+    );
+
+    // If checkout was activated, update inquiry checkout state if linked
+    if (status === 'quote_ready' || status === 'approved') {
+      const [orders] = await conn.query('SELECT inquiry_id, price FROM custom_laser_orders WHERE id = ?', [id]);
+      if (orders.length > 0 && orders[0].inquiry_id) {
+        const order = orders[0];
+        const priceVal = order.price || 0.00;
+        await conn.query(
+          'UPDATE inquiry_conversations SET is_checkout_active = TRUE, price_data = ?, status = ?, updated_at = NOW() WHERE id = ?',
+          [JSON.stringify({ price: priceVal }), 'quote_ready', order.inquiry_id]
+        );
+      }
+    }
+
+    conn.release();
+    res.json({ success: true, message: 'Custom laser order updated successfully' });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Helper function to ensure inquiry exists for a custom laser order
+const ensureInquiryForCustomOrder = async (orderId, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const [orders] = await conn.query('SELECT * FROM custom_laser_orders WHERE id = ?', [orderId]);
+    if (orders.length === 0) {
+      conn.release();
+      return res.status(404).json({ success: false, message: 'Custom order not found' });
+    }
+    const order = orders[0];
+
+    if (order.inquiry_id) {
+      conn.release();
+      return res.json({ success: true, inquiryId: order.inquiry_id });
+    }
+
+    const [userRows] = await conn.query(`
+      SELECT uc.user_id as uuid, uc.email, up.first_name, up.last_name, up.phone, up.country
+      FROM user_profiles up
+      JOIN user_credentials uc ON uc.user_id = up.user_id
+      WHERE up.id = ?
+    `, [order.user_id]);
+
+    if (userRows.length === 0) {
+      conn.release();
+      return res.status(404).json({ success: false, message: 'User profile not found for this order' });
+    }
+    const userData = userRows[0];
+
+    const inquiryId = `INQ-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+    const inquiryNumber = `INQ-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    const initialMessages = [{
+      sender: 'user',
+      message: `I have submitted a custom order request: "${order.title}". Description: ${order.description}`,
+      files: [],
+      timestamp: new Date().toISOString(),
+      is_read: true,
+      status: 'sent'
+    }];
+
+    const productData = {
+      id: 0,
+      product_name: `Custom Order: ${order.title}`,
+      isCustomOrder: true,
+      customOrderId: order.id,
+      description: order.description,
+      width: order.width,
+      height: order.height,
+      depth: order.depth,
+      material: order.material,
+      category: order.category,
+      price: order.price || 0
+    };
+
+    await conn.query(
+      `INSERT INTO inquiry_conversations (
+        id, user_id, product_id, inquiry_number, 
+        customer_name, customer_email, customer_phone, customer_country,
+        product_data, messages, status, created_at, updated_at, last_activity, unread_count, admin_unread_count
+      ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'new', NOW(), NOW(), NOW(), 0, 1)`,
+      [
+        inquiryId,
+        userData.uuid,
+        inquiryNumber,
+        `${userData.first_name} ${userData.last_name}`,
+        userData.email,
+        userData.phone || '',
+        userData.country || '',
+        JSON.stringify(productData),
+        JSON.stringify(initialMessages)
+      ]
+    );
+
+    await conn.query('UPDATE custom_laser_orders SET inquiry_id = ? WHERE id = ?', [inquiryId, order.id]);
+
+    conn.release();
+    res.json({ success: true, inquiryId });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Admin: Ensure inquiry exists for a custom laser order
+app.post('/api/admin/custom-laser-orders/:id/ensure-inquiry', requireAdminAuth, async (req, res) => {
+  await ensureInquiryForCustomOrder(req.params.id, res);
+});
+
+// User: Ensure inquiry exists for a custom laser order
+app.post('/api/custom-laser-orders/:id/ensure-inquiry', async (req, res) => {
+  await ensureInquiryForCustomOrder(req.params.id, res);
+});
+
+// ==================== END CUSTOM LASER ORDERS SYSTEM ====================
 
 app.use('*', (req, res) => {
-  res.status(404).json({ 
-    success: false, 
-    message: 'Endpoint not found' 
+  res.status(404).json({
+    success: false,
+    message: 'Endpoint not found'
   });
 });
 
@@ -11244,7 +11900,7 @@ app.use('*', (req, res) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
-  
+
   // Initial sitemap generation on startup
   try {
     await regenerateSitemap();
@@ -11254,7 +11910,7 @@ server.listen(PORT, async () => {
 
   console.log(`Enhanced Socket.IO server with persistent unread count initialized`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  
+
   // Initialize schemas
   try {
     await ensureSeoContentSchema();
