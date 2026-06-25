@@ -17,7 +17,6 @@ const http = require('http');
 const socketIo = require('socket.io');
 const crypto = require('crypto');
 const path = require('path');
-const productSocialSeo = require('./productSocialSeo');
 
 const app = express();
 // Serve static files (e.g. sitemap.xsl) from Backend/public
@@ -756,6 +755,233 @@ const { exec } = require('child_process');
 
 // Public site URL for SEO
 const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
+const PUBLIC_API_BASE = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
+
+const productSocialSeo = (() => {
+  const DEFAULT_OG_IMAGE = `${PUBLIC_API_BASE}/logo.jpg`;
+
+  function escapeAttr(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function stripHtml(s) {
+    return String(s || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function toSlug(str) {
+    try {
+      return String(str || '')
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .slice(0, 80);
+    } catch {
+      return 'product';
+    }
+  }
+
+  function extractProductIdFromRequestPath(reqPath) {
+    try {
+      const pathValue = String(reqPath || '').split('?')[0].replace(/\/+$/, '');
+      const match = pathValue.match(/^\/(?:products|p)\/(.+)$/i);
+      if (!match) return null;
+
+      const segment = match[1];
+      const parts = segment.split('/');
+
+      if (parts.length >= 2 && /^\d+$/.test(parts[0])) {
+        return parts[0];
+      }
+
+      const first = parts[0];
+      if (/^\d+$/.test(first)) return first;
+
+      const lastHyphenPart = first.split('-').pop();
+      if (/^\d+$/.test(lastHyphenPart)) return lastHyphenPart;
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getProductIdFromSitemapPath(pathStr) {
+    try {
+      const pathValue = String(pathStr || '');
+      const legacy = pathValue.match(/^\/products\/(\d+)\//);
+      if (legacy) return legacy[1];
+      const slugId = pathValue.match(/\/products\/[^/]*-(\d+)$/);
+      if (slugId) return slugId[1];
+      const bare = pathValue.match(/^\/products\/(\d+)$/);
+      if (bare) return bare[1];
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
+    if (!imgPath) return DEFAULT_OG_IMAGE;
+    const s = String(imgPath);
+    if (s.startsWith('http://') || s.startsWith('https://')) return s;
+    const clean = s.startsWith('/') ? s : `/${s}`;
+    return `${backendBase}${clean}`;
+  }
+
+  function parseProductPhotos(product) {
+    try {
+      const raw = product.images || product.product_photos || '[]';
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function resolveProductSitemapPath(connection, productId) {
+    const [rows] = await connection.query(
+      `SELECT path FROM sitemap_entries
+       WHERE type = 'product' AND (is_active = TRUE OR is_active = 1)
+       AND (path LIKE ? OR path LIKE ? OR path = ?)
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [`/products/${productId}/%`, `/products/%-${productId}`, `/products/${productId}`]
+    );
+    return rows.length > 0 ? rows[0].path : null;
+  }
+
+  function buildCanonicalProductPath(product, sitemapPath, productId) {
+    if (sitemapPath) return sitemapPath;
+    const slug = product.slug || toSlug(product.product_name || 'product');
+    return `/products/${slug}-${productId}`;
+  }
+
+  function buildProductSocialMetaTags(product, { canonicalUrl, imageUrl, siteName = 'Yokebud Craft' } = {}) {
+    const name = product.product_name || 'Product';
+    const desc = stripHtml(
+      product.seo_description || product.product_details || product.product_description || ''
+    ).slice(0, 200);
+    const title = escapeAttr(`${name} | ${siteName}`);
+    const safeName = escapeAttr(name);
+    const safeDesc = escapeAttr(desc);
+    const safeUrl = escapeAttr(canonicalUrl);
+    const safeImage = escapeAttr(imageUrl);
+    const imageAlt = escapeAttr(name);
+
+    const tags = `
+    <!-- Dynamic product social meta -->
+    <title>${title}</title>
+    <meta name="description" content="${safeDesc}" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="${safeUrl}" />
+    <meta property="og:site_name" content="${escapeAttr(siteName)}" />
+    <meta property="og:title" content="${safeName}" />
+    <meta property="og:description" content="${safeDesc}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="${safeUrl}" />
+    <meta property="og:image" content="${safeImage}" />
+    <meta property="og:image:secure_url" content="${safeImage}" />
+    <meta property="og:image:alt" content="${imageAlt}" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@yokebud" />
+    <meta name="twitter:creator" content="@yokebud" />
+    <meta name="twitter:title" content="${safeName}" />
+    <meta name="twitter:description" content="${safeDesc}" />
+    <meta name="twitter:image" content="${safeImage}" />
+    <meta name="twitter:image:alt" content="${imageAlt}" />
+  `;
+
+    const noscriptBody = `
+    <noscript id="product-seo-fallback">
+      <article style="max-width:720px;margin:0 auto;padding:24px;font-family:system-ui,sans-serif;color:#111;">
+        <h1 style="font-size:1.5rem;margin:0 0 12px;">${safeName}</h1>
+        <p style="line-height:1.5;margin:0 0 16px;">${safeDesc}</p>
+        <img src="${safeImage}" alt="${imageAlt}" style="max-width:100%;height:auto;border-radius:8px;" />
+        <p style="margin-top:16px;"><a href="${safeUrl}">View product on Yokebud Craft</a></p>
+      </article>
+    </noscript>
+  `;
+
+    return { tags, noscriptBody };
+  }
+
+  function injectSocialMetaIntoHtml(html, { tags, noscriptBody }) {
+    let result = String(html || '');
+    result = result.replace(/<title>[\s\S]*?<\/title>/i, '');
+    result = result.replace(/<meta\s+name="description"[^>]*\/?>/gi, '');
+    result = result.replace(/<meta\s+name="robots"[^>]*\/?>/gi, '');
+    result = result.replace(/<link\s+rel="canonical"[^>]*\/?>/gi, '');
+    result = result.replace(/<meta\s+property="og:[^"]*"[^>]*\/?>/gi, '');
+    result = result.replace(/<meta\s+name="twitter:[^"]*"[^>]*\/?>/gi, '');
+
+    result = result.replace(/<head>/i, `<head>${tags}`);
+
+    if (noscriptBody && !result.includes('id="product-seo-fallback"')) {
+      result = result.replace(/<body([^>]*)>/i, `<body$1>${noscriptBody}`);
+    }
+
+    return result;
+  }
+
+  async function buildProductSocialHtml(pool, reqPath, html) {
+    const productId = extractProductIdFromRequestPath(reqPath);
+    if (!productId) return null;
+
+    let connection;
+    try {
+      connection = await pool.getConnection();
+      const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
+      if (!rows.length) {
+        connection.release();
+        return null;
+      }
+
+      const product = rows[0];
+      const sitemapPath = await resolveProductSitemapPath(connection, productId);
+      connection.release();
+      connection = null;
+
+      const canonicalPath = buildCanonicalProductPath(product, sitemapPath, productId);
+      const canonicalUrl = `${PUBLIC_SITE_URL}${canonicalPath}`;
+      const photos = parseProductPhotos(product);
+      const imageUrl = absoluteImageUrl(photos[0]);
+      const meta = buildProductSocialMetaTags(product, { canonicalUrl, imageUrl });
+
+      return injectSocialMetaIntoHtml(html, meta);
+    } catch (err) {
+      if (connection) connection.release();
+      throw err;
+    }
+  }
+
+  return {
+    PUBLIC_SITE_URL,
+    PUBLIC_API_BASE,
+    DEFAULT_OG_IMAGE,
+    escapeAttr,
+    stripHtml,
+    toSlug,
+    extractProductIdFromRequestPath,
+    getProductIdFromSitemapPath,
+    absoluteImageUrl,
+    parseProductPhotos,
+    resolveProductSitemapPath,
+    buildCanonicalProductPath,
+    buildProductSocialMetaTags,
+    injectSocialMetaIntoHtml,
+    buildProductSocialHtml,
+  };
+})();
 
 // Helper: extract productId from a sitemap path like `/products/slug-id`
 function getProductIdFromPath(pathStr) {
