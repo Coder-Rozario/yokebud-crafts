@@ -17,6 +17,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const crypto = require('crypto');
 const path = require('path');
+const productSocialSeo = require('./productSocialSeo');
 
 const app = express();
 // Serve static files (e.g. sitemap.xsl) from Backend/public
@@ -758,16 +759,7 @@ const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
 
 // Helper: extract productId from a sitemap path like `/products/slug-id`
 function getProductIdFromPath(pathStr) {
-  try {
-    const parts = String(pathStr || '').split('-');
-    const lastPart = parts[parts.length - 1];
-    if (/^\d+$/.test(lastPart)) return lastPart;
-    // Support legacy pattern /products/123/slug
-    const m = String(pathStr || '').match(/^\/products\/(\d+)\//);
-    return m ? m[1] : null;
-  } catch {
-    return null;
-  }
+  return productSocialSeo.getProductIdFromSitemapPath(pathStr);
 }
 
 async function regenerateSitemap() {
@@ -7827,11 +7819,7 @@ app.get('/api/products/:id', async (req, res) => {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    const [sitemapPathRows] = await connection.query(
-      'SELECT path FROM sitemap_entries WHERE path LIKE ? AND type = "product" LIMIT 1',
-      [`/products/${productId}/%`]
-    );
-    const sitemapPath = sitemapPathRows.length > 0 ? sitemapPathRows[0].path : null;
+    const sitemapPath = await productSocialSeo.resolveProductSitemapPath(connection, productId);
 
     const product = products[0];
     const [sumRows] = await connection.query(
@@ -7941,9 +7929,9 @@ app.get('/api/products', async (req, res) => {
 
     const sitemapMap = new Map();
     for (const entry of sitemapEntries) {
-      const match = entry.path.match(/\/products\/(\d+)\//);
-      if (match) {
-        sitemapMap.set(Number(match[1]), entry.path);
+      const pid = productSocialSeo.getProductIdFromSitemapPath(entry.path);
+      if (pid) {
+        sitemapMap.set(Number(pid), entry.path);
       }
     }
 
@@ -8544,80 +8532,44 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     const { id } = req.params;
     connection = await pool.getConnection();
     const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [id]);
-    connection.release();
     if (!rows || rows.length === 0) {
+      connection.release();
       res.status(404).send('<!doctype html><html><head><meta charset="utf-8"><title>Product Not Found</title></head><body>Product not found</body></html>');
       return;
     }
 
     const p = rows[0];
-    const siteBase = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
-    const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
+    const siteBase = productSocialSeo.PUBLIC_SITE_URL;
+    const sitemapPath = await productSocialSeo.resolveProductSitemapPath(connection, id);
+    connection.release();
+    connection = null;
 
-    function toSlug(str) {
-      try {
-        return String(str || '')
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9\s-]/g, '')
-          .replace(/\s+/g, '-')
-          .replace(/-+/g, '-')
-          .slice(0, 80);
-      } catch { return ''; }
-    }
-
-    function escapeAttr(s) {
-      return String(s || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-    }
-
-    function absoluteImageUrl(path) {
-      if (!path) return 'https://www.yokebud.fi/src/assades/LOGO.png';
-      const s = String(path);
-      if (s.startsWith('http')) return s;
-      const clean = s.startsWith('/') ? s : `/${s}`;
-      return `${backendBase}${clean}`;
-    }
-
-    let photos = [];
-    try {
-      photos = p.images ? JSON.parse(p.images) : JSON.parse(p.product_photos || '[]');
-    } catch {
-      photos = [];
-    }
-
-    // Allow selecting specific image via ?img=INDEX
+    const photos = productSocialSeo.parseProductPhotos(p);
     let imgIdx = 0;
     if (req.query.img) {
-      const parsed = parseInt(req.query.img);
-      if (!isNaN(parsed) && parsed >= 0 && parsed < photos.length) {
+      const parsed = parseInt(req.query.img, 10);
+      if (!Number.isNaN(parsed) && parsed >= 0 && parsed < photos.length) {
         imgIdx = parsed;
       }
     }
-    const firstImage = absoluteImageUrl(photos && photos[imgIdx]);
+    const firstImage = productSocialSeo.absoluteImageUrl(photos[imgIdx]);
+    const canonicalPath = productSocialSeo.buildCanonicalProductPath(p, sitemapPath, id);
+    const canonicalUrl = `${siteBase}${canonicalPath}`;
+    const meta = productSocialSeo.buildProductSocialMetaTags(p, { canonicalUrl, imageUrl: firstImage });
 
     const name = p.product_name || 'Product';
-    const desc = String(p.product_details || p.product_description || '').slice(0, 160);
-    const slug = toSlug(name);
-    const [sitemapRows] = await connection.query(
-      'SELECT path FROM sitemap_entries WHERE path LIKE ? AND type = "product" LIMIT 1',
-      [`/products/${p.id}/%`]
-    );
-    const sitemapPath = sitemapRows.length > 0 ? sitemapRows[0].path : `/products/${p.id}/${slug}`;
-    const canonicalUrl = `${siteBase}${sitemapPath}`;
+    const desc = productSocialSeo.stripHtml(
+      p.seo_description || p.product_details || p.product_description || ''
+    ).slice(0, 200);
 
     const jsonLd = {
       '@context': 'https://schema.org/',
       '@type': 'Product',
       name,
-      description: String(p.product_description || p.product_details || ''),
+      description: desc,
       sku: p.sku || String(p.id || ''),
-      image: photos.map(absoluteImageUrl).slice(0, 4),
-      brand: { '@type': 'Brand', name: 'Yokebud Crafts' },
+      image: photos.map((photo) => productSocialSeo.absoluteImageUrl(photo)).slice(0, 4),
+      brand: { '@type': 'Brand', name: 'Yokebud Craft' },
       offers: {
         '@type': 'Offer',
         priceCurrency: 'EUR',
@@ -8627,39 +8579,28 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
       }
     };
 
-    const tags = `
-      <title>${escapeAttr(name)} | Yokebud Crafts</title>
-      <meta name="description" content="${escapeAttr(desc)}">
-      <link rel="canonical" href="${canonicalUrl}">
-      <meta property="og:type" content="product">
-      <meta property="og:title" content="${escapeAttr(name)}">
-      <meta property="og:description" content="${escapeAttr(desc)}">
-      <meta property="og:url" content="${canonicalUrl}">
-      <meta property="og:site_name" content="Yokebud Crafts">
-      <meta property="og:image" content="${firstImage}">
-      <meta name="twitter:card" content="summary_large_image">
-      <meta name="twitter:title" content="${escapeAttr(name)}">
-      <meta name="twitter:description" content="${escapeAttr(desc)}">
-      <meta name="twitter:image" content="${firstImage}">
+    const schemaScripts = `
       <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>
       <script type="application/ld+json">${JSON.stringify({
-      '@context': 'https://schema.org',
-      '@type': 'BreadcrumbList',
-      itemListElement: [
-        { '@type': 'ListItem', position: 1, name: 'Home', item: siteBase },
-        { '@type': 'ListItem', position: 2, name: String(p.category || 'Products') || 'Products', item: `${siteBase}/` },
-        { '@type': 'ListItem', position: 3, name: name, item: canonicalUrl }
-      ]
-    })}</script>
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: 'Home', item: siteBase },
+          { '@type': 'ListItem', position: 2, name: String(p.category || 'Products') || 'Products', item: `${siteBase}/` },
+          { '@type': 'ListItem', position: 3, name: name, item: canonicalUrl }
+        ]
+      })}</script>
     `;
 
     const html = `<!doctype html><html lang="en"><head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      ${tags}
-      <meta http-equiv="refresh" content="0; url=${canonicalUrl}">
+      ${meta.tags}
+      ${schemaScripts}
+      <meta http-equiv="refresh" content="0; url=${productSocialSeo.escapeAttr(canonicalUrl)}">
     </head><body>
-      <a href="${canonicalUrl}" style="font-family: sans-serif; padding: 20px; display: inline-block;">Open product</a>
+      ${meta.noscriptBody}
+      <a href="${productSocialSeo.escapeAttr(canonicalUrl)}" style="font-family: sans-serif; padding: 20px; display: inline-block;">Open product</a>
     </body></html>`;
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -10399,64 +10340,16 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
 
       const indexPath = path.join(distDir, 'index.html');
 
-      // If the request is for a product page, inject dynamic meta tags
-      const productMatch = req.path.match(/\/products\/(\d+)/);
-      if (productMatch) {
-        const productId = productMatch[1];
-        let connection;
+      // Product pages: inject server-rendered Open Graph / Twitter Card meta for social crawlers
+      if (productSocialSeo.extractProductIdFromRequestPath(req.path)) {
         try {
-          connection = await pool.getConnection();
-          const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
-          connection.release();
-
-          if (rows.length > 0) {
-            const product = rows[0];
-            let html = fs.readFileSync(indexPath, 'utf8');
-
-            const name = product.product_name || 'Product';
-            const desc = (product.product_description || '').replace(/<[^>]*>?/gm, '').slice(0, 160);
-
-            let imageUrl = 'https://www.yokebud.fi/logo.jpg';
-            try {
-              const images = JSON.parse(product.images || product.product_photos || '[]');
-              if (images.length > 0) {
-                const firstImg = images[0];
-                imageUrl = firstImg.startsWith('http') ? firstImg : `https://api.yokebud.fi${firstImg.startsWith('/') ? '' : '/'}${firstImg}`;
-              }
-            } catch (e) { }
-
-            const url = `https://www.yokebud.fi${req.originalUrl}`;
-
-            // Inject Meta Tags
-            const metaTags = `
-    <!-- Dynamic Meta Tags for ${name} -->
-    <title>${name} | Yokebud Crafts</title>
-    <meta name="description" content="${desc}" />
-    <meta property="og:title" content="${name}" />
-    <meta property="og:description" content="${desc}" />
-    <meta property="og:image" content="${imageUrl}" />
-    <meta property="og:url" content="${url}" />
-    <meta property="og:type" content="product" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="${name}" />
-    <meta name="twitter:description" content="${desc}" />
-    <meta name="twitter:image" content="${imageUrl}" />
-            `;
-
-            // Replace existing meta tags or inject into head
-            // Simple approach: remove common meta tags and inject our own
-            html = html.replace(/<title>.*?<\/title>/, '');
-            html = html.replace(/<meta name="description" content=".*?" \/>/, '');
-            html = html.replace(/<meta property="og:.*?" content=".*?" \/>/g, '');
-            html = html.replace(/<meta name="twitter:.*?" content=".*?" \/>/g, '');
-
-            html = html.replace('<head>', `<head>${metaTags}`);
-
+          const baseHtml = fs.readFileSync(indexPath, 'utf8');
+          const html = await productSocialSeo.buildProductSocialHtml(pool, req.path, baseHtml);
+          if (html) {
             return res.send(html);
           }
         } catch (err) {
-          console.error('Error injecting dynamic meta tags:', err);
-          if (connection) connection.release();
+          console.error('Error injecting product social meta tags:', err);
         }
       }
 
