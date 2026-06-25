@@ -131,68 +131,55 @@ const toSlug = (str) => {
   }
 };
 
-// URL Redirection Middleware
-app.use(async (req, res, next) => {
-  // Only handle GET requests for potential redirects
-  if (req.method !== 'GET') return next();
 
+
+// URL Redirection Middleware
+// ==================== SSR MIDDLEWARE FOR SOCIAL SHARING ====================
+// এই middleware social crawlers detect করে share endpoint এ redirect করবে
+// URL structure অপরিবর্তিত থাকবে
+
+app.use(async (req, res, next) => {
+  // Only handle GET requests for HTML pages
+  if (req.method !== 'GET') return next();
+  
   // Skip API, static files, and sitemap XMLs
   if (req.path.startsWith('/api') ||
-    req.path.includes('.') ||
-    req.path.endsWith('sitemap.xml')) {
+      req.path.includes('.') ||
+      req.path.endsWith('sitemap.xml') ||
+      req.path.endsWith('.xsl') ||
+      req.path === '/robots.txt' ||
+      req.path === '/health' ||
+      req.path === '/version.json') {
     return next();
   }
 
-  let connection;
+  // Check if this is a product page
+  const productId = productSocialSeo.extractProductIdFromRequestPath(req.path);
+  if (!productId) return next();
+
   try {
-    connection = await pool.getConnection();
-    const [rows] = await connection.query(
-      'SELECT new_path FROM url_redirects WHERE old_path = ? LIMIT 1',
-      [req.path]
-    );
+    // For social media crawlers, redirect to share endpoint
+    const userAgent = req.headers['user-agent'] || '';
+    const isSocialCrawler = userAgent.includes('facebookexternalhit') || 
+                            userAgent.includes('Facebot') ||
+                            userAgent.includes('Twitterbot') ||
+                            userAgent.includes('LinkedInBot') ||
+                            userAgent.includes('Slackbot') ||
+                            userAgent.includes('Pinterest') ||
+                            userAgent.includes('WhatsApp') ||
+                            userAgent.includes('TelegramBot') ||
+                            userAgent.includes('Discordbot');
 
-    if (rows.length > 0) {
-      console.log(`Redirecting old path ${req.path} to ${rows[0].new_path}`);
-      return res.redirect(301, rows[0].new_path);
+    if (isSocialCrawler) {
+      // URL structure same, just internal redirect
+      return res.redirect(302, `/share${req.path}`);
     }
 
-    // Dynamic ID-to-Slug Redirects for Products (Old pattern: /products/:id)
-    const productMatch = req.path.match(/^\/products\/(\d+)$/);
-    if (productMatch) {
-      const productId = productMatch[1];
-      const [pRows] = await connection.query('SELECT slug, product_name FROM products WHERE id = ? LIMIT 1', [productId]);
-      if (pRows.length > 0) {
-        const slug = pRows[0].slug || toSlug(pRows[0].product_name);
-        const newPath = `/products/${slug}-${productId}`;
-        return res.redirect(301, newPath);
-      }
-    }
-
-    // Handle old pattern: /products/:id/:slug
-    const productMatchOld = req.path.match(/^\/products\/(\d+)\/([^\/]+)$/);
-    if (productMatchOld) {
-      const productId = productMatchOld[1];
-      const oldSlug = productMatchOld[2];
-      const newPath = `/products/${oldSlug}-${productId}`;
-      return res.redirect(301, newPath);
-    }
-
-    // Dynamic ID-to-Slug Redirects for Blogs
-    const blogMatch = req.path.match(/^\/blogs\/(\d+)$/);
-    if (blogMatch) {
-      const blogId = blogMatch[1];
-      const [bRows] = await connection.query('SELECT slug FROM blogs WHERE id = ? LIMIT 1', [blogId]);
-      if (bRows.length > 0 && bRows[0].slug) {
-        const newPath = `/blogs/${bRows[0].slug}`;
-        return res.redirect(301, newPath);
-      }
-    }
-  } catch (err) {
-    console.error('Redirect middleware error:', err.message);
-  } finally {
-    if (connection) connection.release();
+    next();
+  } catch (error) {
+    console.error('SSR middleware error:', error);
+    next();
   }
-  next();
 });
 
 const ADMIN_ID = parseInt(process.env.ADMIN_ID || '1', 10);
@@ -841,28 +828,28 @@ const productSocialSeo = (() => {
   }
 
   // ========== NEW: Social sharing optimized image URL ==========
-  function getImageUrlForSharing(imgPath, width = 1200, height = 630) {
-    if (!imgPath) return DEFAULT_OG_IMAGE;
-    const s = String(imgPath);
-    if (s.startsWith('http://') || s.startsWith('https://')) {
-      // Cloudinary optimization for social sharing
-      if (s.includes('cloudinary.com')) {
-        const parts = s.split('/upload/');
-        if (parts.length === 2) {
-          return `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
-        }
+function getImageUrlForSharing(imgPath, width = 1200, height = 630) {
+  if (!imgPath) return DEFAULT_OG_IMAGE;
+  const s = String(imgPath);
+  if (s.startsWith('http://') || s.startsWith('https://')) {
+    // Cloudinary optimization for social sharing
+    if (s.includes('cloudinary.com')) {
+      const parts = s.split('/upload/');
+      if (parts.length === 2) {
+        return `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
       }
-      return s;
     }
-    const clean = s.startsWith('/') ? s : `/${s}`;
-    return `${PUBLIC_API_BASE}${clean}`;
+    return s;
   }
+  const clean = s.startsWith('/') ? s : `/${s}`;
+  return `${PUBLIC_API_BASE}${clean}`;
+}
 
   // ========== UPDATED: absoluteImageUrl uses the new function ==========
-  function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
-    if (!imgPath) return DEFAULT_OG_IMAGE;
-    return getImageUrlForSharing(imgPath, 1200, 630);
-  }
+function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
+  if (!imgPath) return DEFAULT_OG_IMAGE;
+  return getImageUrlForSharing(imgPath, 1200, 630);
+}
 
   function parseProductPhotos(product) {
     try {
@@ -1005,7 +992,7 @@ async function buildProductSocialHtml(pool, reqPath, html) {
     extractProductIdFromRequestPath,
     getProductIdFromSitemapPath,
     absoluteImageUrl,
-    getImageUrlForSharing,  // <-- NEW: export this
+   getImageUrlForSharing,   // <-- NEW: export this
     parseProductPhotos,
     resolveProductSitemapPath,
     buildCanonicalProductPath,
@@ -8785,6 +8772,7 @@ app.get('/api/products/:id/related', async (req, res) => {
 
 // Shareable product page with server-rendered Open Graph tags
 // Shareable product page with server-rendered Open Graph tags
+// Shareable product page with server-rendered Open Graph tags
 app.get('/share/products/:id/:slug?', async (req, res) => {
   let connection;
   try {
@@ -10608,32 +10596,33 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
     });
 
     // SPA fallback with Dynamic SEO for product pages
-    app.get([
-      '/',
-      /^\/(?!api|uploads|assets|.*sitemap.*\.xml|sitemap\.xsl|robots\.txt|health|debug\/email-preview|.*\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|xsl)$).*/
-    ], async (req, res) => {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
+// SPA fallback with Dynamic SEO for product pages
+app.get([
+  '/',
+  /^\/(?!api|uploads|assets|.*sitemap.*\.xml|sitemap\.xsl|robots\.txt|health|debug\/email-preview|.*\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|xsl)$).*/
+], async (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
 
-      const indexPath = path.join(distDir, 'index.html');
+  const indexPath = path.join(distDir, 'index.html');
 
-      // Product pages: inject server-rendered Open Graph / Twitter Card meta for social crawlers
-      if (productSocialSeo.extractProductIdFromRequestPath(req.path)) {
-        try {
-          const baseHtml = fs.readFileSync(indexPath, 'utf8');
-          const html = await productSocialSeo.buildProductSocialHtml(pool, req.path, baseHtml);
-          if (html) {
-            return res.send(html);
-          }
-        } catch (err) {
-          console.error('Error injecting product social meta tags:', err);
-        }
+  // Product pages: inject server-rendered Open Graph / Twitter Card meta for social crawlers
+  if (productSocialSeo.extractProductIdFromRequestPath(req.path)) {
+    try {
+      const baseHtml = fs.readFileSync(indexPath, 'utf8');
+      const html = await productSocialSeo.buildProductSocialHtml(pool, req.path, baseHtml);
+      if (html) {
+        return res.send(html);
       }
+    } catch (err) {
+      console.error('Error injecting product social meta tags:', err);
+    }
+  }
 
-      // Default fallback
-      res.sendFile(indexPath);
-    });
+  // Default fallback
+  res.sendFile(indexPath);
+});
   }
 } catch (_) { /* ignore */ }
 
