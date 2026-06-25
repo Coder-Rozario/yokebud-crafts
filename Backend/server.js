@@ -117,6 +117,19 @@ app.use(fileUpload({
   abortOnLimit: true,
   useTempFiles: true
 }));
+const toSlug = (str) => {
+  try {
+    return String(str || '')
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .slice(0, 80);
+  } catch {
+    return '';
+  }
+};
 
 // URL Redirection Middleware
 app.use(async (req, res, next) => {
@@ -827,12 +840,28 @@ const productSocialSeo = (() => {
     }
   }
 
-  function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
+  // ========== NEW: Social sharing optimized image URL ==========
+  function getImageUrlForSharing(imgPath, width = 1200, height = 630) {
     if (!imgPath) return DEFAULT_OG_IMAGE;
     const s = String(imgPath);
-    if (s.startsWith('http://') || s.startsWith('https://')) return s;
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      // Cloudinary optimization for social sharing
+      if (s.includes('cloudinary.com')) {
+        const parts = s.split('/upload/');
+        if (parts.length === 2) {
+          return `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
+        }
+      }
+      return s;
+    }
     const clean = s.startsWith('/') ? s : `/${s}`;
-    return `${backendBase}${clean}`;
+    return `${PUBLIC_API_BASE}${clean}`;
+  }
+
+  // ========== UPDATED: absoluteImageUrl uses the new function ==========
+  function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
+    if (!imgPath) return DEFAULT_OG_IMAGE;
+    return getImageUrlForSharing(imgPath, 1200, 630);
   }
 
   function parseProductPhotos(product) {
@@ -933,37 +962,39 @@ const productSocialSeo = (() => {
     return result;
   }
 
-  async function buildProductSocialHtml(pool, reqPath, html) {
-    const productId = extractProductIdFromRequestPath(reqPath);
-    if (!productId) return null;
+// ========== UPDATED: buildProductSocialHtml with proper image ==========
+async function buildProductSocialHtml(pool, reqPath, html) {
+  const productId = extractProductIdFromRequestPath(reqPath);
+  if (!productId) return null;
 
-    let connection;
-    try {
-      connection = await pool.getConnection();
-      const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
-      if (!rows.length) {
-        connection.release();
-        return null;
-      }
-
-      const product = rows[0];
-      const sitemapPath = await resolveProductSitemapPath(connection, productId);
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
+    if (!rows.length) {
       connection.release();
-      connection = null;
-
-      const canonicalPath = buildCanonicalProductPath(product, sitemapPath, productId);
-      const canonicalUrl = `${PUBLIC_SITE_URL}${canonicalPath}`;
-      const photos = parseProductPhotos(product);
-      const imageUrl = absoluteImageUrl(photos[0]);
-      const meta = buildProductSocialMetaTags(product, { canonicalUrl, imageUrl });
-
-      return injectSocialMetaIntoHtml(html, meta);
-    } catch (err) {
-      if (connection) connection.release();
-      throw err;
+      return null;
     }
-  }
 
+    const product = rows[0];
+    const sitemapPath = await resolveProductSitemapPath(connection, productId);
+    connection.release();
+    connection = null;
+
+    const canonicalPath = buildCanonicalProductPath(product, sitemapPath, productId);
+    const canonicalUrl = `${PUBLIC_SITE_URL}${canonicalPath}`;
+    const photos = parseProductPhotos(product);
+    const imageUrl = photos[0] ? getImageUrlForSharing(photos[0], 1200, 630) : DEFAULT_OG_IMAGE;
+    const meta = buildProductSocialMetaTags(product, { canonicalUrl, imageUrl });
+
+    return injectSocialMetaIntoHtml(html, meta);
+  } catch (err) {
+    if (connection) connection.release();
+    throw err;
+  }
+}
+
+  // ========== EXPORT all functions ==========
   return {
     PUBLIC_SITE_URL,
     PUBLIC_API_BASE,
@@ -974,6 +1005,7 @@ const productSocialSeo = (() => {
     extractProductIdFromRequestPath,
     getProductIdFromSitemapPath,
     absoluteImageUrl,
+    getImageUrlForSharing,  // <-- NEW: export this
     parseProductPhotos,
     resolveProductSitemapPath,
     buildCanonicalProductPath,
@@ -8752,10 +8784,13 @@ app.get('/api/products/:id/related', async (req, res) => {
 });
 
 // Shareable product page with server-rendered Open Graph tags
+// Shareable product page with server-rendered Open Graph tags
 app.get('/share/products/:id/:slug?', async (req, res) => {
   let connection;
   try {
     const { id } = req.params;
+    const { img: imgParam } = req.query;
+    
     connection = await pool.getConnection();
     const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [id]);
     if (!rows || rows.length === 0) {
@@ -8771,17 +8806,25 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     connection = null;
 
     const photos = productSocialSeo.parseProductPhotos(p);
+    
+    // Better image selection for sharing
     let imgIdx = 0;
-    if (req.query.img) {
-      const parsed = parseInt(req.query.img, 10);
+    if (imgParam) {
+      const parsed = parseInt(imgParam, 10);
       if (!Number.isNaN(parsed) && parsed >= 0 && parsed < photos.length) {
         imgIdx = parsed;
       }
     }
-    const firstImage = productSocialSeo.absoluteImageUrl(photos[imgIdx]);
+    
+    // Use the new image function
+    const firstImage = productSocialSeo.getImageUrlForSharing(photos[imgIdx], 1200, 630);
+    
     const canonicalPath = productSocialSeo.buildCanonicalProductPath(p, sitemapPath, id);
     const canonicalUrl = `${siteBase}${canonicalPath}`;
     const meta = productSocialSeo.buildProductSocialMetaTags(p, { canonicalUrl, imageUrl: firstImage });
+
+    // All product images for gallery sharing
+    const allImages = photos.map((photo) => productSocialSeo.getImageUrlForSharing(photo, 1200, 630)).filter(Boolean);
 
     const name = p.product_name || 'Product';
     const desc = productSocialSeo.stripHtml(
@@ -8794,7 +8837,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
       name,
       description: desc,
       sku: p.sku || String(p.id || ''),
-      image: photos.map((photo) => productSocialSeo.absoluteImageUrl(photo)).slice(0, 4),
+      image: allImages.slice(0, 5),
       brand: { '@type': 'Brand', name: 'Yokebud Craft' },
       offers: {
         '@type': 'Offer',
@@ -8804,6 +8847,16 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
         url: canonicalUrl
       }
     };
+
+    // Gallery images for Open Graph (Facebook supports multiple og:image tags)
+    let galleryMetaTags = '';
+    if (allImages.length > 1) {
+      for (let i = 1; i < Math.min(allImages.length, 5); i++) {
+        galleryMetaTags += `\n    <meta property="og:image" content="${productSocialSeo.escapeAttr(allImages[i])}" />`;
+        galleryMetaTags += `\n    <meta property="og:image:width" content="1200" />`;
+        galleryMetaTags += `\n    <meta property="og:image:height" content="630" />`;
+      }
+    }
 
     const schemaScripts = `
       <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>
@@ -8822,6 +8875,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
       ${meta.tags}
+      ${galleryMetaTags}
       ${schemaScripts}
       <meta http-equiv="refresh" content="0; url=${productSocialSeo.escapeAttr(canonicalUrl)}">
     </head><body>
@@ -10494,6 +10548,7 @@ app.get(['/sitemap.xml', '/product-sitemap.xml', '/category-sitemap.xml', '/page
 // If the React production build exists, serve it with strict cache headers:
 // - HTML (index.html): no-cache, no-store, must-revalidate
 // - Hashed assets under /assets: public, max-age=31536000, immutable
+// If the React production build exists, serve it with strict cache headers
 try {
   const distDir = path.resolve(__dirname, '..', 'client', 'dist');
   if (fs.existsSync(path.join(distDir, 'index.html'))) {
@@ -10508,18 +10563,15 @@ try {
           res.setHeader('Expires', '0');
           return;
         }
-        // Long-term cache for hashed assets Vite places in /assets/
         if (filePath.includes(path.sep + 'assets' + path.sep)) {
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
           return;
         }
-        // Default: rely on ETag/Last-Modified
         res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
       }
     }));
 
-    // Explicitly serve robots.txt (sitemaps are served dynamically from DB above)
-
+    // robots.txt
     app.get('/robots.txt', (req, res) => {
       res.type('text/plain');
       const robotsTxt = `User-agent: *
