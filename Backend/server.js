@@ -135,8 +135,7 @@ const toSlug = (str) => {
 
 // URL Redirection Middleware
 // ==================== SSR MIDDLEWARE FOR SOCIAL SHARING ====================
-// এই middleware social crawlers detect করে share endpoint এ redirect করবে
-// URL structure অপরিবর্তিত থাকবে
+
 
 app.use(async (req, res, next) => {
   // Only handle GET requests for HTML pages
@@ -235,6 +234,36 @@ async function ensureProductVariantsSchema() {
 }
 
 ensureProductVariantsSchema();
+
+// ===== এই ফাংশনটি যোগ করুন =====
+async function ensureQuantityDiscountRangesSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.query(
+      `CREATE TABLE IF NOT EXISTS quantity_discount_ranges (
+        id INT NOT NULL AUTO_INCREMENT,
+        product_id INT NOT NULL,
+        min_quantity INT NOT NULL,
+        max_quantity INT NULL,
+        discount_percentage DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+        discounted_price DECIMAL(10,2) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_product_id (product_id),
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+      )`
+    );
+    console.log('✅ Quantity discount ranges table checked/created');
+  } catch (e) {
+    console.warn('Quantity discount ranges schema setup error:', e.message || e);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureQuantityDiscountRangesSchema();
 
 async function ensureCustomLaserOrdersSchema() {
   let connection;
@@ -827,29 +856,27 @@ const productSocialSeo = (() => {
     }
   }
 
-  // ========== NEW: Social sharing optimized image URL ==========
-function getImageUrlForSharing(imgPath, width = 1200, height = 630) {
-  if (!imgPath) return DEFAULT_OG_IMAGE;
-  const s = String(imgPath);
-  if (s.startsWith('http://') || s.startsWith('https://')) {
-    // Cloudinary optimization for social sharing
-    if (s.includes('cloudinary.com')) {
-      const parts = s.split('/upload/');
-      if (parts.length === 2) {
-        return `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
+  // ========== Social sharing optimized image URL ==========
+  function getImageUrlForSharing(imgPath, width = 1200, height = 630) {
+    if (!imgPath) return DEFAULT_OG_IMAGE;
+    const s = String(imgPath);
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      if (s.includes('cloudinary.com')) {
+        const parts = s.split('/upload/');
+        if (parts.length === 2) {
+          return `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
+        }
       }
+      return s;
     }
-    return s;
+    const clean = s.startsWith('/') ? s : `/${s}`;
+    return `${PUBLIC_API_BASE}${clean}`;
   }
-  const clean = s.startsWith('/') ? s : `/${s}`;
-  return `${PUBLIC_API_BASE}${clean}`;
-}
 
-  // ========== UPDATED: absoluteImageUrl uses the new function ==========
-function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
-  if (!imgPath) return DEFAULT_OG_IMAGE;
-  return getImageUrlForSharing(imgPath, 1200, 630);
-}
+  function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
+    if (!imgPath) return DEFAULT_OG_IMAGE;
+    return getImageUrlForSharing(imgPath, 1200, 630);
+  }
 
   function parseProductPhotos(product) {
     try {
@@ -949,39 +976,37 @@ function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
     return result;
   }
 
-// ========== UPDATED: buildProductSocialHtml with proper image ==========
-async function buildProductSocialHtml(pool, reqPath, html) {
-  const productId = extractProductIdFromRequestPath(reqPath);
-  if (!productId) return null;
+  async function buildProductSocialHtml(pool, reqPath, html) {
+    const productId = extractProductIdFromRequestPath(reqPath);
+    if (!productId) return null;
 
-  let connection;
-  try {
-    connection = await pool.getConnection();
-    const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
-    if (!rows.length) {
+    let connection;
+    try {
+      connection = await pool.getConnection();
+      const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
+      if (!rows.length) {
+        connection.release();
+        return null;
+      }
+
+      const product = rows[0];
+      const sitemapPath = await resolveProductSitemapPath(connection, productId);
       connection.release();
-      return null;
+      connection = null;
+
+      const canonicalPath = buildCanonicalProductPath(product, sitemapPath, productId);
+      const canonicalUrl = `${PUBLIC_SITE_URL}${canonicalPath}`;
+      const photos = parseProductPhotos(product);
+      const imageUrl = photos[0] ? getImageUrlForSharing(photos[0], 1200, 630) : DEFAULT_OG_IMAGE;
+      const meta = buildProductSocialMetaTags(product, { canonicalUrl, imageUrl });
+
+      return injectSocialMetaIntoHtml(html, meta);
+    } catch (err) {
+      if (connection) connection.release();
+      throw err;
     }
-
-    const product = rows[0];
-    const sitemapPath = await resolveProductSitemapPath(connection, productId);
-    connection.release();
-    connection = null;
-
-    const canonicalPath = buildCanonicalProductPath(product, sitemapPath, productId);
-    const canonicalUrl = `${PUBLIC_SITE_URL}${canonicalPath}`;
-    const photos = parseProductPhotos(product);
-    const imageUrl = photos[0] ? getImageUrlForSharing(photos[0], 1200, 630) : DEFAULT_OG_IMAGE;
-    const meta = buildProductSocialMetaTags(product, { canonicalUrl, imageUrl });
-
-    return injectSocialMetaIntoHtml(html, meta);
-  } catch (err) {
-    if (connection) connection.release();
-    throw err;
   }
-}
 
-  // ========== EXPORT all functions ==========
   return {
     PUBLIC_SITE_URL,
     PUBLIC_API_BASE,
@@ -992,7 +1017,7 @@ async function buildProductSocialHtml(pool, reqPath, html) {
     extractProductIdFromRequestPath,
     getProductIdFromSitemapPath,
     absoluteImageUrl,
-   getImageUrlForSharing,   // <-- NEW: export this
+    getImageUrlForSharing,
     parseProductPhotos,
     resolveProductSitemapPath,
     buildCanonicalProductPath,
@@ -8773,6 +8798,7 @@ app.get('/api/products/:id/related', async (req, res) => {
 // Shareable product page with server-rendered Open Graph tags
 // Shareable product page with server-rendered Open Graph tags
 // Shareable product page with server-rendered Open Graph tags
+// Shareable product page with server-rendered Open Graph tags
 app.get('/share/products/:id/:slug?', async (req, res) => {
   let connection;
   try {
@@ -8980,6 +9006,128 @@ app.put('/api/products/bulk', requireAdminAuth, async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to bulk update products' });
   }
 });
+
+
+// ==================== QUANTITY DISCOUNT RANGES API ====================
+
+// Get all discount ranges for a product
+app.get('/api/products/:productId/discount-ranges', async (req, res) => {
+  let connection;
+  try {
+    const { productId } = req.params;
+    connection = await pool.getConnection();
+    
+    const [rows] = await connection.query(
+      'SELECT * FROM quantity_discount_ranges WHERE product_id = ? ORDER BY min_quantity ASC',
+      [productId]
+    );
+    
+    connection.release();
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Error fetching discount ranges:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch discount ranges' });
+  }
+});
+
+// Add a new discount range
+app.post('/api/products/:productId/discount-ranges', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { productId } = req.params;
+    const { min_quantity, max_quantity, discount_percentage, discounted_price } = req.body;
+    
+    if (!min_quantity || min_quantity < 1) {
+      return res.status(400).json({ success: false, message: 'Minimum quantity is required and must be at least 1' });
+    }
+    
+    if (!discount_percentage && !discounted_price) {
+      return res.status(400).json({ success: false, message: 'Either discount percentage or discounted price is required' });
+    }
+    
+    connection = await pool.getConnection();
+    
+    // Check if product exists
+    const [product] = await connection.query('SELECT id FROM products WHERE id = ?', [productId]);
+    if (product.length === 0) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    
+    const [result] = await connection.query(
+      `INSERT INTO quantity_discount_ranges 
+       (product_id, min_quantity, max_quantity, discount_percentage, discounted_price) 
+       VALUES (?, ?, ?, ?, ?)`,
+      [productId, min_quantity, max_quantity || null, discount_percentage || 0, discounted_price || null]
+    );
+    
+    connection.release();
+    res.json({ success: true, message: 'Discount range added successfully', id: result.insertId });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Error adding discount range:', error);
+    res.status(500).json({ success: false, message: 'Failed to add discount range' });
+  }
+});
+
+// Update a discount range
+app.put('/api/products/:productId/discount-ranges/:id', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { productId, id } = req.params;
+    const { min_quantity, max_quantity, discount_percentage, discounted_price } = req.body;
+    
+    connection = await pool.getConnection();
+    
+    const [result] = await connection.query(
+      `UPDATE quantity_discount_ranges 
+       SET min_quantity = ?, max_quantity = ?, discount_percentage = ?, discounted_price = ?, updated_at = NOW()
+       WHERE id = ? AND product_id = ?`,
+      [min_quantity, max_quantity || null, discount_percentage || 0, discounted_price || null, id, productId]
+    );
+    
+    if (result.affectedRows === 0) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Discount range not found' });
+    }
+    
+    connection.release();
+    res.json({ success: true, message: 'Discount range updated successfully' });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Error updating discount range:', error);
+    res.status(500).json({ success: false, message: 'Failed to update discount range' });
+  }
+});
+
+// Delete a discount range
+app.delete('/api/products/:productId/discount-ranges/:id', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { productId, id } = req.params;
+    connection = await pool.getConnection();
+    
+    const [result] = await connection.query(
+      'DELETE FROM quantity_discount_ranges WHERE id = ? AND product_id = ?',
+      [id, productId]
+    );
+    
+    if (result.affectedRows === 0) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Discount range not found' });
+    }
+    
+    connection.release();
+    res.json({ success: true, message: 'Discount range deleted successfully' });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Error deleting discount range:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete discount range' });
+  }
+});
+
+
 
 // ==================== IMAGE UPLOAD HANDLING WITH CLOUDINARY ====================
 app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
@@ -10596,6 +10744,7 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
     });
 
     // SPA fallback with Dynamic SEO for product pages
+// SPA fallback with Dynamic SEO for product pages
 // SPA fallback with Dynamic SEO for product pages
 app.get([
   '/',
