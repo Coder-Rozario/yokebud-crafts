@@ -252,8 +252,7 @@ async function ensureQuantityDiscountRangesSchema() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
-        KEY idx_product_id (product_id),
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+        KEY idx_product_id (product_id)
       )`
     );
     console.log('✅ Quantity discount ranges table checked/created');
@@ -7667,6 +7666,7 @@ app.put('/api/orders/:orderId/tracking', async (req, res) => {
 // Create product endpoint
 app.post('/api/products', requireAdminAuth, async (req, res) => {
   try {
+    console.log('POST /api/products request body:', JSON.stringify(req.body, null, 2));
     const {
       name,
       description,
@@ -7699,7 +7699,8 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       stock_status,
       customization_type,
       customization_images,
-      customization_dimensions
+      customization_dimensions,
+      discount_ranges
     } = req.body;
 
     const validation = validateProductPayload(req.body);
@@ -7832,6 +7833,20 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         [result.insertId, v && v.color ? String(v.color) : null, v && v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
       );
     }
+    // Save discount ranges
+    const discountRanges = Array.isArray(discount_ranges) ? discount_ranges : [];
+    for (const range of discountRanges) {
+      const minQty = Number(range.min_quantity || range.min_qty || 2);
+      const maxQty = range.max_quantity !== undefined ? Number(range.max_quantity) : (range.max_qty !== undefined ? Number(range.max_qty) : null);
+      const discountPercent = Number(range.discount_percentage || range.discount_percent || 0);
+      const discPrice = range.discounted_price !== undefined ? Number(range.discounted_price) : null;
+      await connection.query(
+        `INSERT INTO quantity_discount_ranges 
+         (product_id, min_quantity, max_quantity, discount_percentage, discounted_price) 
+         VALUES (?, ?, ?, ?, ?)`,
+        [result.insertId, minQty, maxQty !== null ? maxQty : null, discountPercent, discPrice]
+      );
+    }
     connection.release();
 
     res.json({
@@ -7857,6 +7872,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
   let connection;
   try {
     const productId = req.params.id;
+    console.log('PUT /api/products/' + productId + ' request body:', JSON.stringify(req.body, null, 2));
     const {
       name,
       description,
@@ -7883,7 +7899,8 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       stock_status,
       customization_type,
       customization_images,
-      customization_dimensions
+      customization_dimensions,
+      discount_ranges
     } = req.body;
 
     const validation = validateProductPayload({
@@ -8056,6 +8073,24 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         [productId, v && v.color ? String(v.color) : null, v && v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
       );
     }
+    // Handle discount ranges
+    console.log('PUT product discount_ranges:', discount_ranges);
+    const discountRanges = Array.isArray(discount_ranges) ? discount_ranges : [];
+    await connection.query('DELETE FROM quantity_discount_ranges WHERE product_id = ?', [productId]);
+    console.log('Inserting discount ranges:', discountRanges);
+    for (const range of discountRanges) {
+      const minQty = Number(range.min_quantity || range.min_qty || 2);
+      const maxQty = range.max_quantity !== undefined ? Number(range.max_quantity) : (range.max_qty !== undefined ? Number(range.max_qty) : null);
+      const discountPercent = Number(range.discount_percentage || range.discount_percent || 0);
+      const discPrice = range.discounted_price !== undefined ? Number(range.discounted_price) : null;
+      console.log('Inserting range:', [productId, minQty, maxQty, discountPercent, discPrice]);
+      await connection.query(
+        `INSERT INTO quantity_discount_ranges 
+         (product_id, min_quantity, max_quantity, discount_percentage, discounted_price) 
+         VALUES (?, ?, ?, ?, ?)`,
+        [productId, minQty, maxQty !== null ? maxQty : null, discountPercent, discPrice]
+      );
+    }
 
     await connection.commit();
     connection.release();
@@ -8118,6 +8153,13 @@ app.get('/api/products/:id', async (req, res) => {
     // Format response with price range
     const meta = product.metadata ? JSON.parse(product.metadata) : null;
     const priceRange = meta && meta.price_range && typeof meta.price_range === 'object' ? meta.price_range : null;
+    // Fetch discount ranges
+    console.log('Fetching discount ranges for productId:', productId);
+    const [discountRanges] = await connection.query(
+      'SELECT * FROM quantity_discount_ranges WHERE product_id = ? ORDER BY min_quantity ASC',
+      [productId]
+    );
+    console.log('Discount ranges found:', discountRanges);
     const parsedProduct = {
       id: product.id,
       product_name: product.product_name,
@@ -8164,7 +8206,8 @@ app.get('/api/products/:id', async (req, res) => {
       created_at: product.created_at,
       updated_at: product.updated_at,
       rating: avgRating,
-      review_count: reviewCount
+      review_count: reviewCount,
+      discount_ranges: Array.isArray(discountRanges) ? discountRanges : []
     };
     const [variants] = await connection.query(
       'SELECT color, size, quantity FROM product_variants WHERE product_id = ? ORDER BY id ASC',
@@ -9040,13 +9083,14 @@ app.post('/api/products/:productId/discount-ranges', requireAdminAuth, async (re
   let connection;
   try {
     const { productId } = req.params;
+    console.log('POST /discount-ranges req.body:', req.body);
     const { min_quantity, max_quantity, discount_percentage, discounted_price } = req.body;
     
-    if (!min_quantity || min_quantity < 1) {
+    if (min_quantity === undefined || min_quantity === null || min_quantity < 1) {
       return res.status(400).json({ success: false, message: 'Minimum quantity is required and must be at least 1' });
     }
     
-    if (!discount_percentage && !discounted_price) {
+    if ((discount_percentage === undefined || discount_percentage === null) && (discounted_price === undefined || discounted_price === null)) {
       return res.status(400).json({ success: false, message: 'Either discount percentage or discounted price is required' });
     }
     
