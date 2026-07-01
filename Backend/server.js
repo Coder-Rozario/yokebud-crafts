@@ -135,7 +135,7 @@ const toSlug = (str) => {
 
 // URL Redirection Middleware
 // ==================== SSR MIDDLEWARE FOR SOCIAL SHARING ====================
-// এই middleware social crawlers detect করে share endpoint এ redirect করবে
+// এই middleware social crawlers detect করে সোশ্যাল মেটা ট্যাগ সহ HTML সরবরাহ করবে
 // URL structure অপরিবর্তিত থাকবে
 
 app.use(async (req, res, next) => {
@@ -144,6 +144,7 @@ app.use(async (req, res, next) => {
   
   // Skip API, static files, and sitemap XMLs
   if (req.path.startsWith('/api') ||
+      req.path.startsWith('/share') ||
       req.path.includes('.') ||
       req.path.endsWith('sitemap.xml') ||
       req.path.endsWith('.xsl') ||
@@ -158,7 +159,7 @@ app.use(async (req, res, next) => {
   if (!productId) return next();
 
   try {
-    // For social media crawlers, redirect to share endpoint
+    // For social media crawlers, serve the social HTML directly without redirecting
     const userAgent = req.headers['user-agent'] || '';
     const isSocialCrawler = userAgent.includes('facebookexternalhit') || 
                             userAgent.includes('Facebot') ||
@@ -171,8 +172,20 @@ app.use(async (req, res, next) => {
                             userAgent.includes('Discordbot');
 
     if (isSocialCrawler) {
-      // URL structure same, just internal redirect
-      return res.redirect(302, `/share${req.path}`);
+      const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
+      const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
+      
+      let html;
+      if (fs.existsSync(indexPath)) {
+        html = fs.readFileSync(indexPath, 'utf8');
+      } else {
+        html = fs.readFileSync(path.join(__dirname, '../client/index.html'), 'utf8');
+      }
+      
+      const socialHtml = await productSocialSeo.buildProductSocialHtml(pool, req.path, html);
+      if (socialHtml) {
+        return res.send(socialHtml);
+      }
     }
 
     next();
@@ -12245,11 +12258,53 @@ app.post('/api/custom-laser-orders/:id/ensure-inquiry', async (req, res) => {
 
 // ==================== END CUSTOM LASER ORDERS SYSTEM ====================
 
-app.use('*', (req, res) => {
-  res.status(404).json({
-    success: false,
-    message: 'Endpoint not found'
-  });
+// Serve static files from client's build folder
+const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
+app.use(express.static(CLIENT_BUILD_PATH));
+
+// Share endpoint for social crawlers
+app.get('/share*', async (req, res) => {
+  try {
+    const originalPath = req.path.replace(/^\/share/, '') || '/';
+    const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
+    
+    // Check if index.html exists
+    if (!fs.existsSync(indexPath)) {
+      console.warn('Client index.html not found, falling back to default');
+      return res.sendFile(path.join(__dirname, '../client/index.html'));
+    }
+    
+    // Read index.html
+    let html = fs.readFileSync(indexPath, 'utf8');
+    
+    // Try to build social HTML
+    const socialHtml = await productSocialSeo.buildProductSocialHtml(pool, originalPath, html);
+    if (socialHtml) {
+      return res.send(socialHtml);
+    }
+    
+    // Fallback to original index.html
+    res.sendFile(indexPath);
+  } catch (err) {
+    console.error('Share endpoint error:', err);
+    const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      res.sendFile(path.join(__dirname, '../client/index.html'));
+    }
+  }
+});
+
+// Fallback to client-side routing for all other routes
+app.get('*', (req, res) => {
+  const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    // Fallback to source index.html if build doesn't exist
+    res.sendFile(path.join(__dirname, '../client/index.html'));
+  }
 });
 
 // ==================== SERVER STARTUP ====================
