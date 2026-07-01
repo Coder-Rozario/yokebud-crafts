@@ -161,15 +161,44 @@ app.use(async (req, res, next) => {
   try {
     // For social media crawlers, serve the social HTML directly without redirecting
     const userAgent = req.headers['user-agent'] || '';
-    const isSocialCrawler = userAgent.includes('facebookexternalhit') || 
-                            userAgent.includes('Facebot') ||
-                            userAgent.includes('Twitterbot') ||
-                            userAgent.includes('LinkedInBot') ||
-                            userAgent.includes('Slackbot') ||
-                            userAgent.includes('Pinterest') ||
-                            userAgent.includes('WhatsApp') ||
-                            userAgent.includes('TelegramBot') ||
-                            userAgent.includes('Discordbot');
+    const isSocialCrawler = 
+      // Facebook
+      userAgent.includes('facebookexternalhit') || 
+      userAgent.includes('Facebot') ||
+      userAgent.includes('FacebookBot') ||
+      // Twitter/X
+      userAgent.includes('Twitterbot') ||
+      userAgent.includes('TweetmemeBot') ||
+      userAgent.includes('Twurly') ||
+      // LinkedIn
+      userAgent.includes('LinkedInBot') ||
+      userAgent.includes('LinkedIn') ||
+      // Slack
+      userAgent.includes('Slackbot') ||
+      userAgent.includes('Slack') ||
+      // Pinterest
+      userAgent.includes('Pinterest') ||
+      userAgent.includes('Pinterestbot') ||
+      // WhatsApp
+      userAgent.includes('WhatsApp') ||
+      userAgent.includes('WhatsAppBot') ||
+      userAgent.includes('WhatsApp/2.') ||
+      // Telegram
+      userAgent.includes('TelegramBot') ||
+      userAgent.includes('Telegram') ||
+      // Discord
+      userAgent.includes('Discordbot') ||
+      userAgent.includes('Discord') ||
+      // Reddit
+      userAgent.includes('redditbot') ||
+      userAgent.includes('Reddit') ||
+      // Apple Messages
+      userAgent.includes('Applebot') ||
+      // Other crawlers
+      userAgent.includes('Googlebot') ||
+      userAgent.includes('bingbot') ||
+      userAgent.includes('Yahoo') ||
+      userAgent.includes('Baiduspider');
 
     if (isSocialCrawler) {
       const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
