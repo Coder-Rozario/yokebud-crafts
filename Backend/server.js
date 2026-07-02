@@ -156,49 +156,58 @@ app.use(async (req, res, next) => {
 
   // Check if this is a product page
   const productId = productSocialSeo.extractProductIdFromRequestPath(req.path);
+  
+  // Debug log
+  console.log(`[SSR Middleware] Path: ${req.path}, Extracted Product ID: ${productId}`);
+  console.log(`[SSR Middleware] User-Agent: ${req.headers['user-agent']}`);
+  
   if (!productId) return next();
 
   try {
     // For social media crawlers, serve the social HTML directly without redirecting
-    const userAgent = req.headers['user-agent'] || '';
+    const userAgent = (req.headers['user-agent'] || '').toLowerCase();
     const isSocialCrawler = 
       // Facebook
       userAgent.includes('facebookexternalhit') || 
-      userAgent.includes('Facebot') ||
-      userAgent.includes('FacebookBot') ||
+      userAgent.includes('facebot') ||
+      userAgent.includes('facebookbot') ||
       // Twitter/X
-      userAgent.includes('Twitterbot') ||
-      userAgent.includes('TweetmemeBot') ||
-      userAgent.includes('Twurly') ||
+      userAgent.includes('twitterbot') ||
+      userAgent.includes('tweetmemebot') ||
+      userAgent.includes('twurly') ||
       // LinkedIn
-      userAgent.includes('LinkedInBot') ||
-      userAgent.includes('LinkedIn') ||
+      userAgent.includes('linkedinbot') ||
+      userAgent.includes('linkedin') ||
       // Slack
-      userAgent.includes('Slackbot') ||
-      userAgent.includes('Slack') ||
+      userAgent.includes('slackbot') ||
+      userAgent.includes('slack') ||
       // Pinterest
-      userAgent.includes('Pinterest') ||
-      userAgent.includes('Pinterestbot') ||
+      userAgent.includes('pinterest') ||
+      userAgent.includes('pinterestbot') ||
       // WhatsApp
-      userAgent.includes('WhatsApp') ||
-      userAgent.includes('WhatsAppBot') ||
-      userAgent.includes('WhatsApp/2.') ||
+      userAgent.includes('whatsapp') ||
       // Telegram
-      userAgent.includes('TelegramBot') ||
-      userAgent.includes('Telegram') ||
+      userAgent.includes('telegrambot') ||
+      userAgent.includes('telegram') ||
       // Discord
-      userAgent.includes('Discordbot') ||
-      userAgent.includes('Discord') ||
+      userAgent.includes('discordbot') ||
+      userAgent.includes('discord') ||
       // Reddit
       userAgent.includes('redditbot') ||
-      userAgent.includes('Reddit') ||
+      userAgent.includes('reddit') ||
       // Apple Messages
-      userAgent.includes('Applebot') ||
+      userAgent.includes('applebot') ||
       // Other crawlers
-      userAgent.includes('Googlebot') ||
+      userAgent.includes('googlebot') ||
       userAgent.includes('bingbot') ||
-      userAgent.includes('Yahoo') ||
-      userAgent.includes('Baiduspider');
+      userAgent.includes('yahoo') ||
+      userAgent.includes('baiduspider') ||
+      // Generic crawlers
+      userAgent.includes('bot') ||
+      userAgent.includes('crawler') ||
+      userAgent.includes('spider');
+
+    console.log(`[SSR Middleware] Is social crawler? ${isSocialCrawler}`);
 
     if (isSocialCrawler) {
       const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
@@ -206,15 +215,19 @@ app.use(async (req, res, next) => {
       
       let html;
       if (fs.existsSync(indexPath)) {
+        console.log(`[SSR Middleware] Using dist index.html at ${indexPath}`);
         html = fs.readFileSync(indexPath, 'utf8');
       } else {
+        console.log(`[SSR Middleware] Using source index.html`);
         html = fs.readFileSync(path.join(__dirname, '../client/index.html'), 'utf8');
       }
       
       const socialHtml = await productSocialSeo.buildProductSocialHtml(pool, req.path, html);
       if (socialHtml) {
+        console.log(`[SSR Middleware] Sending social HTML for product ${productId}`);
         return res.send(socialHtml);
       }
+      console.log(`[SSR Middleware] No social HTML generated, falling through`);
     }
 
     next();
@@ -829,7 +842,7 @@ const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
 const PUBLIC_API_BASE = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
 
 const productSocialSeo = (() => {
-  const DEFAULT_OG_IMAGE = `${PUBLIC_API_BASE}/logo.jpg`;
+  const DEFAULT_OG_IMAGE = `${PUBLIC_SITE_URL}/LOGO.png`;
 
   function escapeAttr(s) {
     return String(s || '')
@@ -900,20 +913,30 @@ const productSocialSeo = (() => {
 
   // ========== NEW: Social sharing optimized image URL ==========
 function getImageUrlForSharing(imgPath, width = 1200, height = 630) {
-  if (!imgPath) return DEFAULT_OG_IMAGE;
+  console.log(`[getImageUrlForSharing] imgPath: ${imgPath}`);
+  if (!imgPath) {
+    console.log(`[getImageUrlForSharing] No image path, returning default: ${DEFAULT_OG_IMAGE}`);
+    return DEFAULT_OG_IMAGE;
+  }
   const s = String(imgPath);
+  console.log(`[getImageUrlForSharing] s: ${s}`);
   if (s.startsWith('http://') || s.startsWith('https://')) {
     // Cloudinary optimization for social sharing
     if (s.includes('cloudinary.com')) {
       const parts = s.split('/upload/');
       if (parts.length === 2) {
-        return `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
+        const optimizedUrl = `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
+        console.log(`[getImageUrlForSharing] Optimized Cloudinary URL: ${optimizedUrl}`);
+        return optimizedUrl;
       }
     }
+    console.log(`[getImageUrlForSharing] Returning as-is: ${s}`);
     return s;
   }
   const clean = s.startsWith('/') ? s : `/${s}`;
-  return `${PUBLIC_API_BASE}${clean}`;
+  const result = `${PUBLIC_API_BASE}${clean}`;
+  console.log(`[getImageUrlForSharing] Returning local image: ${result}`);
+  return result;
 }
 
   // ========== UPDATED: absoluteImageUrl uses the new function ==========
@@ -924,10 +947,16 @@ function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
 
   function parseProductPhotos(product) {
     try {
+      console.log(`[parseProductPhotos] product.images: ${product.images}`);
+      console.log(`[parseProductPhotos] product.product_photos: ${product.product_photos}`);
       const raw = product.images || product.product_photos || '[]';
+      console.log(`[parseProductPhotos] raw: ${raw}`);
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
-    } catch {
+      const result = Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+      console.log(`[parseProductPhotos] result: ${JSON.stringify(result)}`);
+      return result;
+    } catch (err) {
+      console.error(`[parseProductPhotos] Error: ${err}`);
       return [];
     }
   }
@@ -950,17 +979,20 @@ function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
     return `/products/${slug}-${productId}`;
   }
 
-  function buildProductSocialMetaTags(product, { canonicalUrl, imageUrl, siteName = 'Yokebud Craft' } = {}) {
+  function buildProductSocialMetaTags(product, { canonicalUrl, imageUrl, siteName = 'Yokebud Crafts' } = {}) {
+    console.log(`[buildProductSocialMetaTags] product.product_name: ${product.product_name}`);
     const name = product.product_name || 'Product';
     const desc = stripHtml(
       product.seo_description || product.product_details || product.product_description || ''
     ).slice(0, 200);
+    console.log(`[buildProductSocialMetaTags] desc: ${desc}`);
     const title = escapeAttr(`${name} | ${siteName}`);
     const safeName = escapeAttr(name);
     const safeDesc = escapeAttr(desc);
     const safeUrl = escapeAttr(canonicalUrl);
     const safeImage = escapeAttr(imageUrl);
     const imageAlt = escapeAttr(name);
+    console.log(`[buildProductSocialMetaTags] imageUrl: ${imageUrl}`);
 
     const tags = `
     <!-- Dynamic product social meta -->
@@ -994,15 +1026,17 @@ function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
         <h1 style="font-size:1.5rem;margin:0 0 12px;">${safeName}</h1>
         <p style="line-height:1.5;margin:0 0 16px;">${safeDesc}</p>
         <img src="${safeImage}" alt="${imageAlt}" style="max-width:100%;height:auto;border-radius:8px;" />
-        <p style="margin-top:16px;"><a href="${safeUrl}">View product on Yokebud Craft</a></p>
+        <p style="margin-top:16px;"><a href="${safeUrl}">View product on Yokebud Crafts</a></p>
       </article>
     </noscript>
   `;
 
+    console.log(`[buildProductSocialMetaTags] Generated tags`);
     return { tags, noscriptBody };
   }
 
   function injectSocialMetaIntoHtml(html, { tags, noscriptBody }) {
+    console.log(`[injectSocialMetaIntoHtml] Starting injection`);
     let result = String(html || '');
     result = result.replace(/<title>[\s\S]*?<\/title>/i, '');
     result = result.replace(/<meta\s+name="description"[^>]*\/?>/gi, '');
@@ -1011,24 +1045,29 @@ function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
     result = result.replace(/<meta\s+property="og:[^"]*"[^>]*\/?>/gi, '');
     result = result.replace(/<meta\s+name="twitter:[^"]*"[^>]*\/?>/gi, '');
 
+    console.log(`[injectSocialMetaIntoHtml] Replacing <head> tag`);
     result = result.replace(/<head>/i, `<head>${tags}`);
 
     if (noscriptBody && !result.includes('id="product-seo-fallback"')) {
+      console.log(`[injectSocialMetaIntoHtml] Adding noscript body`);
       result = result.replace(/<body([^>]*)>/i, `<body$1>${noscriptBody}`);
     }
 
+    console.log(`[injectSocialMetaIntoHtml] Done!`);
     return result;
   }
 
 // ========== UPDATED: buildProductSocialHtml with proper image ==========
 async function buildProductSocialHtml(pool, reqPath, html) {
   const productId = extractProductIdFromRequestPath(reqPath);
+  console.log(`[buildProductSocialHtml] Product ID: ${productId}`);
   if (!productId) return null;
 
   let connection;
   try {
     connection = await pool.getConnection();
     const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
+    console.log(`[buildProductSocialHtml] Product rows found: ${rows.length}`);
     if (!rows.length) {
       connection.release();
       return null;
@@ -1043,11 +1082,15 @@ async function buildProductSocialHtml(pool, reqPath, html) {
     const canonicalUrl = `${PUBLIC_SITE_URL}${canonicalPath}`;
     const photos = parseProductPhotos(product);
     const imageUrl = photos[0] ? getImageUrlForSharing(photos[0], 1200, 630) : DEFAULT_OG_IMAGE;
+    console.log(`[buildProductSocialHtml] Image URL: ${imageUrl}`);
     const meta = buildProductSocialMetaTags(product, { canonicalUrl, imageUrl });
 
-    return injectSocialMetaIntoHtml(html, meta);
+    const result = injectSocialMetaIntoHtml(html, meta);
+    console.log(`[buildProductSocialHtml] Generated social HTML successfully`);
+    return result;
   } catch (err) {
     if (connection) connection.release();
+    console.error(`[buildProductSocialHtml] Error: ${err}`);
     throw err;
   }
 }
