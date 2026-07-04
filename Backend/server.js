@@ -9121,7 +9121,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
       description: desc,
       sku: p.sku || String(p.id || ''),
       image: allImages.slice(0, 5),
-      brand: { '@type': 'Brand', name: 'Yokebud Craft' },
+      brand: { '@type': 'Brand', name: 'Yokebud Crafts' },
       offers: {
         '@type': 'Offer',
         priceCurrency: 'EUR',
