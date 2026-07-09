@@ -2469,8 +2469,8 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
       </div>
       
       <p class="content-text">
-        Hello! Here are the latest handpicked products and exclusive discounts from Yokebud Crafts. 
-        Whether you're looking for custom laser engraved gifts or premium handmade art, we've got something special for you this week.
+        Hello! Here are the latest curated products and exclusive discounts from Yokebud Crafts. 
+        Whether you're looking for custom laser engraved gifts or premium crafted art, we've got something special for you this week.
       </p>
       
       ${newArrivalsHtml}
