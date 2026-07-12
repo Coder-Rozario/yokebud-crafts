@@ -433,7 +433,7 @@ async function ensureCategoriesExtendedSchema() {
     const categoryColNames = new Set((categoryCols || []).map(c => c.COLUMN_NAME));
 
     if (!categoryColNames.has('type')) {
-      await connection.query('ALTER TABLE categories ADD COLUMN type VARCHAR(50) DEFAULT "crafts"');
+      await connection.query('ALTER TABLE categories ADD COLUMN type VARCHAR(50) DEFAULT "craft"');
     }
     if (!categoryColNames.has('image_url')) {
       await connection.query('ALTER TABLE categories ADD COLUMN image_url TEXT NULL');
@@ -514,15 +514,15 @@ async function ensureSeoSchema() {
     if (homeSeo.length === 0) {
       const defaultHomeTitle = 'Laser Engraving, Custom Apparel & Resin Art | Personalized Gifts Finland';
       const defaultHomeContent = `
-        <p>Welcome to <strong>Yokebud Crafts</strong>, your premier destination for high-quality <strong>laser engraving Finland</strong>, <strong>custom apparel</strong>, and <strong>resin art</strong>. We specialize in precision <strong>laser cutting services</strong>, professional engraving, and unique handcrafted creations that transform everyday objects into meaningful treasures.</p>
+        <p>Welcome to <strong>Yokebud craft</strong>, your premier destination for high-quality <strong>laser engraving Finland</strong>, <strong>custom apparel</strong>, and <strong>resin art</strong>. We specialize in precision <strong>laser cutting services</strong>, professional engraving, and unique handcrafted creations that transform everyday objects into meaningful treasures.</p>
         
         <h3>Expert Laser Engraving & Custom Apparel in Finland</h3>
         <p>Our state-of-the-art technology allows us to provide the finest <strong>laser engraving Helsinki</strong> has to offer, alongside premium <strong>customized hoodies</strong> and <strong>t-shirts</strong>. Whether you're looking for corporate branding, personalized wedding gifts, or custom streetwear, our team ensures every detail is captured with perfection.</p>
         
         <h3>Resin Art & Handcrafted Jewelry</h3>
-        <p>Explore our stunning collection of <strong>resin art</strong> and <strong>handcrafted jewelry</strong>. Each piece is uniquely designed and made with care in our Finnish studio, combining traditional craftsmanship with modern artistic techniques. From <strong>engraved wood gifts</strong> to <strong>personalized leather accessories</strong>, we have something for everyone.</p>
+        <p>Explore our stunning collection of <strong>resin art</strong> and <strong>handcrafted jewelry</strong>. Each piece is uniquely designed and made with care in our Finnish studio, combining traditional craftmanship with modern artistic techniques. From <strong>engraved wood gifts</strong> to <strong>personalized leather accessories</strong>, we have something for everyone.</p>
         
-        <h3>Why Choose Yokebud Crafts?</h3>
+        <h3>Why Choose Yokebud craft?</h3>
         <ul>
           <li><strong>Precision and Quality:</strong> Advanced laser systems and high-quality apparel materials.</li>
           <li><strong>Local Expertise:</strong> Proudly based in Helsinki, serving all of Finland.</li>
@@ -541,10 +541,10 @@ async function ensureSeoSchema() {
     if (laserSeo.length === 0) {
       const laserTitle = 'Premium Laser Engraving Services in Finland';
       const laserContent = `
-        <p>Yokebud Crafts is the leading provider of <strong>laser engraving Finland</strong>, offering unparalleled precision and artistic flair for all your customization needs. Our <strong>laser cutting products</strong> and engraving services are designed to meet the highest standards of quality, whether you're looking for a single personalized gift or large-scale corporate branding solutions.</p>
+        <p>Yokebud craft is the leading provider of <strong>laser engraving Finland</strong>, offering unparalleled precision and artistic flair for all your customization needs. Our <strong>laser cutting products</strong> and engraving services are designed to meet the highest standards of quality, whether you're looking for a single personalized gift or large-scale corporate branding solutions.</p>
         
         <h3>Why Laser Engraving?</h3>
-        <p>Laser engraving is a permanent, high-precision method of marking materials. Unlike traditional printing, <strong>engraved gifts</strong> do not fade or wear off over time. At Yokebud Crafts, we use state-of-the-art CO2 and Fiber lasers to work with wood, leather, acrylic, metal, and more. Our <strong>laser cutting services</strong> allow us to create intricate shapes and designs that were once thought impossible.</p>
+        <p>Laser engraving is a permanent, high-precision method of marking materials. Unlike traditional printing, <strong>engraved gifts</strong> do not fade or wear off over time. At Yokebud craft, we use state-of-the-art CO2 and Fiber lasers to work with wood, leather, acrylic, metal, and more. Our <strong>laser cutting services</strong> allow us to create intricate shapes and designs that were once thought impossible.</p>
         
         <h3>Our Laser Engraving Capabilities in Helsinki</h3>
         <p>Based in the heart of <strong>Helsinki</strong>, we serve clients across Finland with fast turnaround times and exceptional attention to detail. Our services include:</p>
@@ -769,7 +769,7 @@ async function ensureSeoContentSchema() {
     const [rows] = await connection.query('SELECT * FROM seo_content WHERE page_name = "home"');
     if (rows.length === 0) {
       await connection.query(
-        'INSERT INTO seo_content (page_name, title, content) VALUES ("home", "Welcome to Yokebud Crafts", "<p>Your SEO content here...</p>")'
+        'INSERT INTO seo_content (page_name, title, content) VALUES ("home", "Welcome to Yokebud craft", "<p>Your SEO content here...</p>")'
       );
     }
   } catch (e) {
@@ -1008,7 +1008,7 @@ function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
     return `/products/${slug}-${productId}`;
   }
 
-  function buildProductSocialMetaTags(product, { canonicalUrl, imageUrl, siteName = 'Yokebud Crafts' } = {}) {
+  function buildProductSocialMetaTags(product, { canonicalUrl, imageUrl, siteName = 'Yokebud craft' } = {}) {
     console.log(`[buildProductSocialMetaTags] product.product_name: ${product.product_name}`);
     const name = product.product_name || 'Product';
     const desc = stripHtml(
@@ -1055,7 +1055,7 @@ function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
         <h1 style="font-size:1.5rem;margin:0 0 12px;">${safeName}</h1>
         <p style="line-height:1.5;margin:0 0 16px;">${safeDesc}</p>
         <img src="${safeImage}" alt="${imageAlt}" style="max-width:100%;height:auto;border-radius:8px;" />
-        <p style="margin-top:16px;"><a href="${safeUrl}">View product on Yokebud Crafts</a></p>
+        <p style="margin-top:16px;"><a href="${safeUrl}">View product on Yokebud craft</a></p>
       </article>
     </noscript>
   `;
@@ -1573,7 +1573,7 @@ const renderThemedEmail = ({
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <meta name="color-scheme" content="light">
       <meta name="supported-color-schemes" content="light">
-      <title>${title || 'Yokebud Crafts'}</title>
+      <title>${title || 'Yokebud craft'}</title>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
       <style>
         /* Reset and Base Styles */
@@ -1864,8 +1864,8 @@ const renderThemedEmail = ({
         <!-- Header -->
         <div class="email-header">
           <div class="header-content">
-            <div class="brand-logo">YOKEBUD CRAFTS</div>
-            <h1 class="email-title">${title || 'Yokebud Crafts'}</h1>
+            <div class="brand-logo">YOKEBUD craft</div>
+            <h1 class="email-title">${title || 'Yokebud craft'}</h1>
             ${subtitle ? `<p class="email-subtitle">${subtitle}</p>` : ''}
           </div>
         </div>
@@ -1936,13 +1936,13 @@ const renderThemedEmail = ({
             ` : ''}
             
             <div class="contact-info">
-              <p>Yokebud Crafts</p>
+              <p>Yokebud craft</p>
               <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
               <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
             </div>
             
             <div class="copyright">
-              &copy; ${new Date().getFullYear()} Yokebud Crafts. All rights reserved.
+              &copy; ${new Date().getFullYear()} Yokebud craft. All rights reserved.
             </div>
           </div>
         </div>
@@ -1971,7 +1971,7 @@ const renderAdminOtpEmail = (otp) => {
       
       <div class="email-card" style="text-align: center; padding: 40px 20px;">
         <p class="content-text" style="margin-bottom: 20px;">
-          Use this OTP to login to your Yokebud Crafts account.
+          Use this OTP to login to your Yokebud craft account.
         </p>
 
         <div style="background: #1A202C; border-radius: 12px; padding: 20px; display: inline-block; margin: 0 auto 20px auto; min-width: 200px;">
@@ -1992,7 +1992,7 @@ const renderAdminOtpEmail = (otp) => {
   `;
 
   return renderThemedEmail({
-    title: 'Yokebud Crafts Admin',
+    title: 'Yokebud craft Admin',
     subtitle: 'Admin Access Verification',
     contentHtml,
     footerNote: 'This code was generated for Admin access.'
@@ -2035,7 +2035,7 @@ const renderWelcomeEmail = (email, token) => {
 
   const contentHtml = `
     <div class="content-section">
-      <h2 class="content-title">Welcome to Yokebud Crafts! </h2>
+      <h2 class="content-title">Welcome to Yokebud craft! </h2>
       <p class="content-text">
         Thank you for joining our exclusive community of fashion enthusiasts and wholesale buyers. 
         We're thrilled to have you on board!
@@ -2060,7 +2060,7 @@ const renderWelcomeEmail = (email, token) => {
   `;
 
   return renderThemedEmail({
-    title: 'Welcome to Yokebud Crafts',
+    title: 'Welcome to Yokebud craft',
     subtitle: 'Your journey to premium wholesale fashion begins here',
     contentHtml,
     primaryCtaText: 'Explore Our Collection',
@@ -2079,7 +2079,7 @@ const renderAccountWelcomeEmail = (name) => {
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">Welcome${name ? `, ${name}` : ''}! 🎉</h2>
-        <p class="content-text">Your Yokebud Crafts account has been created successfully.</p>
+        <p class="content-text">Your Yokebud craft account has been created successfully.</p>
       </div>
 
       <div class="email-card">
@@ -2095,7 +2095,7 @@ const renderAccountWelcomeEmail = (name) => {
   `;
 
   return renderThemedEmail({
-    title: 'Welcome to Yokebud Crafts',
+    title: 'Welcome to Yokebud craft',
     subtitle: 'We are excited to have you here',
     contentHtml,
     primaryCtaText: 'Go to Your Profile',
@@ -2185,7 +2185,7 @@ const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
       
       <p class="content-text">
         We've received your order and are preparing it for shipment. You'll receive another email 
-        with tracking information once your order ships. Thank you for choosing Yokebud Crafts!
+        with tracking information once your order ships. Thank you for choosing Yokebud craft!
       </p>
     </div>
   `;
@@ -2317,7 +2317,7 @@ const renderManualNotificationEmail = (orderId, customerInfo) => {
     contentHtml,
     primaryCtaText: 'View Order',
     primaryCtaUrl: `${process.env.PUBLIC_SITE_URL || 'http://localhost:5173'}/UserProfile`,
-    footerNote: 'Thank you for choosing Yokebud Crafts!'
+    footerNote: 'Thank you for choosing Yokebud craft!'
   });
 };
 
@@ -2372,11 +2372,11 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
 
   return renderThemedEmail({
     title: 'New Subscriber Alert',
-    subtitle: 'Yokebud Crafts Newsletter System',
+    subtitle: 'Yokebud craft Newsletter System',
     contentHtml,
     primaryCtaText: 'View Subscriber Dashboard',
     primaryCtaUrl: `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}`,
-    footerNote: 'This is an automated notification from Yokebud Crafts Newsletter System'
+    footerNote: 'This is an automated notification from Yokebud craft Newsletter System'
   });
 };
 
@@ -2469,7 +2469,7 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
       </div>
       
       <p class="content-text">
-        Hello! Here are the latest curated products and exclusive discounts from Yokebud Crafts. 
+        Hello! Here are the latest curated products and exclusive discounts from Yokebud craft. 
         Whether you're looking for custom laser engraved gifts or premium crafted art, we've got something special for you this week.
       </p>
       
@@ -2486,7 +2486,7 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
   `;
 
   return renderThemedEmail({
-    title: 'Weekly Crafts Update',
+    title: 'Weekly craft Update',
     subtitle: 'Fresh arrivals & exclusive deals',
     contentHtml,
     primaryCtaText: 'Shop All Products',
@@ -2511,7 +2511,7 @@ const renderUnsubscribeConfirmationEmail = (email) => {
       <div class="email-card">
         <p class="content-text" style="text-align: center; margin: 0;">
           You will no longer receive weekly product updates, exclusive offers, 
-          or fashion insights from Yokebud Crafts.
+          or fashion insights from Yokebud craft.
         </p>
       </div>
       
@@ -2536,8 +2536,8 @@ const renderUnsubscribeConfirmationEmail = (email) => {
 const renderOTPEmail = (email, otp, type = 'registration') => {
   const subjectText = type === 'registration' ? 'Verify Your Email Address' : 'Login Verification';
   const descriptionText = type === 'registration'
-    ? 'Thank you for signing up with Yokebud Crafts!'
-    : 'Use this OTP to login to your Yokebud Crafts account.';
+    ? 'Thank you for signing up with Yokebud craft!'
+    : 'Use this OTP to login to your Yokebud craft account.';
 
   // Standalone HTML without external fonts or images
   return `
@@ -2546,7 +2546,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${subjectText} - Yokebud Crafts</title>
+      <title>${subjectText} - Yokebud craft</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -2673,7 +2673,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
     <body>
       <div class="email-container">
         <div class="email-header">
-          <div class="brand-logo">YOKEBUD CRAFTS</div>
+          <div class="brand-logo">YOKEBUD craft</div>
           <h1 class="email-title">${subjectText}</h1>
           <p class="email-subtitle">Secure Verification Required</p>
         </div>
@@ -2723,12 +2723,12 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
             </a>
           </div>
           <div class="contact-info">
-            <p><strong>Yokebud Crafts</strong></p>
+            <p><strong>Yokebud craft</strong></p>
             <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
             <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
           </div>
           <div class="copyright">
-            &copy; ${new Date().getFullYear()} Yokebud Crafts. All rights reserved.
+            &copy; ${new Date().getFullYear()} Yokebud craft. All rights reserved.
           </div>
         </div>
       </div>
@@ -2968,7 +2968,7 @@ const renderContactFormNotificationEmail = (name, email, whatsapp, message) => {
     contentHtml,
     primaryCtaText: 'Open Admin Inbox',
     primaryCtaUrl: adminUrl,
-    footerNote: 'This is an automated notification from Yokebud Crafts website.'
+    footerNote: 'This is an automated notification from Yokebud craft website.'
   });
 };
 
@@ -2979,7 +2979,7 @@ const renderContactFormConfirmationEmail = (name, email, message) => {
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">Message Received! ✨</h2>
         <p class="content-text">
-          Thank you for contacting Yokebud Crafts
+          Thank you for contacting Yokebud craft
         </p>
       </div>
       
@@ -3032,7 +3032,7 @@ const renderInquiryNotificationEmail = (recipientName, senderName, inquiryNumber
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">${title}</h2>
         <p class="content-text">
-          ${isToAdmin ? `Customer <strong>${senderName}</strong> has sent a new message.` : `You have received a new message from Yokebud Crafts support.`}
+          ${isToAdmin ? `Customer <strong>${senderName}</strong> has sent a new message.` : `You have received a new message from Yokebud craft support.`}
         </p>
       </div>
       
@@ -3122,9 +3122,9 @@ const renderPasswordResetEmail = (email, resetToken) => {
 const sendWelcomeEmail = async (email, token) => {
   const html = renderWelcomeEmail(email, token);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: email,
-    subject: '✅ Subscription Confirmed — Yokebud Crafts Newsletter',
+    subject: '✅ Subscription Confirmed — Yokebud craft Newsletter',
     html,
     priority: 'high'
   };
@@ -3143,9 +3143,9 @@ const sendWelcomeEmail = async (email, token) => {
 const sendAccountWelcomeEmail = async (email, name) => {
   const html = renderAccountWelcomeEmail(name);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <welcome@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <welcome@yokebud.com>',
     to: email,
-    subject: '🎉 Welcome to Yokebud Crafts',
+    subject: '🎉 Welcome to Yokebud craft',
     html,
     priority: 'normal'
   };
@@ -3163,9 +3163,9 @@ const sendAccountWelcomeEmail = async (email, name) => {
 const sendOrderConfirmationEmail = async (orderId, customerInfo, items, totals) => {
   const html = renderOrderConfirmationEmail(orderId, customerInfo, items, totals);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: customerInfo.email,
-    subject: `✅ Order Confirmed #${orderId} - Yokebud Crafts`,
+    subject: `✅ Order Confirmed #${orderId} - Yokebud craft`,
     html,
     priority: 'high'
   };
@@ -3184,7 +3184,7 @@ const sendOrderConfirmationEmail = async (orderId, customerInfo, items, totals) 
 const sendNewSubscriberNotification = async (subscriberEmail) => {
   const html = renderNewSubscriberNotificationEmail(subscriberEmail);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts System <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft System <yokebud@gmail.com>',
     to: 'yokebud@gmail.com',
     subject: `🎯 New Newsletter Subscriber: ${subscriberEmail}`,
     html,
@@ -3205,9 +3205,9 @@ const sendNewSubscriberNotification = async (subscriberEmail) => {
 const sendWeeklyNewsletter = async (subscriber, products) => {
   const html = renderWeeklyNewsletterEmail(subscriber, products, subscriber.subscription_token);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: subscriber.email,
-    subject: `🚀 Yokebud Crafts Weekly Update - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+    subject: `🚀 Yokebud craft Weekly Update - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
     html,
     priority: 'normal'
   };
@@ -3226,9 +3226,9 @@ const sendWeeklyNewsletter = async (subscriber, products) => {
 const sendUnsubscribeConfirmation = async (email) => {
   const html = renderUnsubscribeConfirmationEmail(email);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <newsletter@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <newsletter@yokebud.com>',
     to: email,
-    subject: '👋 You have been unsubscribed from Yokebud Crafts Newsletter',
+    subject: '👋 You have been unsubscribed from Yokebud craft Newsletter',
     html,
     priority: 'normal'
   };
@@ -3247,13 +3247,13 @@ const sendUnsubscribeConfirmation = async (email) => {
 const sendOTPEmail = async (email, otp, type = 'registration', customFrom = null, retries = 3) => {
   const html = renderOTPEmail(email, otp, type);
   const subject = type === 'registration'
-    ? 'Verify Your Email - Yokebud Crafts'
+    ? 'Verify Your Email - Yokebud craft'
     : type === 'admin_login'
-      ? '🔐 Admin Login OTP - Yokebud Crafts'
-      : 'Login OTP - Yokebud Crafts';
+      ? '🔐 Admin Login OTP - Yokebud craft'
+      : 'Login OTP - Yokebud craft';
 
   const mailOptions = {
-    from: customFrom || process.env.EMAIL_FROM || `Yokebud Crafts Security <${process.env.EMAIL_USER}>`,
+    from: customFrom || process.env.EMAIL_FROM || `Yokebud craft Security <${process.env.EMAIL_USER}>`,
     to: email,
     subject,
     html, // Add HTML content
@@ -3306,7 +3306,7 @@ const sendOTPEmail = async (email, otp, type = 'registration', customFrom = null
 const sendOrderStatusUpdateEmail = async (orderId, status, customerInfo, trackingNumber = null, estimatedDeliveryDate = null) => {
   const html = renderOrderStatusUpdateEmail(orderId, status, customerInfo, trackingNumber, estimatedDeliveryDate);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || `Yokebud Crafts <${process.env.EMAIL_USER}>`,
+    from: process.env.EMAIL_FROM || `Yokebud craft <${process.env.EMAIL_USER}>`,
     to: customerInfo.email,
     subject: `📦 Order Status Update #${orderId} - ${status.charAt(0).toUpperCase() + status.slice(1)}`,
     html,
@@ -3327,7 +3327,7 @@ const sendOrderStatusUpdateEmail = async (orderId, status, customerInfo, trackin
 const sendEstimatedDeliveryUpdateEmail = async (orderId, customerInfo, estimatedDeliveryDate) => {
   const html = renderEstimatedDeliveryUpdateEmail(orderId, customerInfo, estimatedDeliveryDate);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || `Yokebud Crafts <${process.env.EMAIL_USER}>`,
+    from: process.env.EMAIL_FROM || `Yokebud craft <${process.env.EMAIL_USER}>`,
     to: customerInfo.email,
     subject: `📅 Estimated Delivery Update for Order #${orderId}`,
     html,
@@ -3348,7 +3348,7 @@ const sendEstimatedDeliveryUpdateEmail = async (orderId, customerInfo, estimated
 const sendAdminNewOrderEmail = async (orderId, customerInfo, items, totals) => {
   const html = renderAdminNewOrderEmail(orderId, customerInfo, items, totals);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts System <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft System <yokebud@gmail.com>',
     to: 'yokebud@gmail.com',
     subject: `🚀 New Order Received: #${orderId}`,
     html,
@@ -3369,9 +3369,9 @@ const sendAdminNewOrderEmail = async (orderId, customerInfo, items, totals) => {
 const sendManualNotificationEmail = async (orderId, customerInfo) => {
   const html = renderManualNotificationEmail(orderId, customerInfo);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: customerInfo.email,
-    subject: `✨ Update regarding Order #${orderId} - Yokebud Crafts`,
+    subject: `✨ Update regarding Order #${orderId} - Yokebud craft`,
     html,
     priority: 'normal'
   };
@@ -3390,10 +3390,10 @@ const sendManualNotificationEmail = async (orderId, customerInfo) => {
 const sendContactFormNotification = async (name, email, whatsapp, message) => {
   const html = renderContactFormNotificationEmail(name, email, whatsapp, message);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || `Yokebud Crafts <${process.env.EMAIL_USER}>`,
+    from: process.env.EMAIL_FROM || `Yokebud craft <${process.env.EMAIL_USER}>`,
     replyTo: email,
     to: 'yokebud@gmail.com',
-    subject: `📩 New Contact Message from ${name} - Yokebud Crafts`,
+    subject: `📩 New Contact Message from ${name} - Yokebud craft`,
     html,
     priority: 'high'
   };
@@ -3412,9 +3412,9 @@ const sendContactFormNotification = async (name, email, whatsapp, message) => {
 const sendContactFormConfirmation = async (name, email, message) => {
   const html = renderContactFormConfirmationEmail(name, email, message);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: email,
-    subject: '✨ Thank you for contacting Yokebud Crafts',
+    subject: '✨ Thank you for contacting Yokebud craft',
     html,
     priority: 'normal'
   };
@@ -3434,7 +3434,7 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
   const isToAdmin = senderType === 'user';
   const recipientEmail = isToAdmin ? 'yokebud@gmail.com' : inquiry.customer_email;
   const recipientName = isToAdmin ? 'Admin' : inquiry.customer_name;
-  const senderName = isToAdmin ? inquiry.customer_name : 'Yokebud Crafts Support';
+  const senderName = isToAdmin ? inquiry.customer_name : 'Yokebud craft Support';
 
   // Parse product name safely
   let productName = 'Product Inquiry';
@@ -3449,10 +3449,10 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
 
   const subject = isToAdmin
     ? `📩 New Message: Inquiry #${inquiry.inquiry_number} - ${productName}`
-    : `💬 New Message regarding Inquiry #${inquiry.inquiry_number} - Yokebud Crafts`;
+    : `💬 New Message regarding Inquiry #${inquiry.inquiry_number} - Yokebud craft`;
 
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: recipientEmail,
     subject: subject,
     html,
@@ -3473,9 +3473,9 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
 const sendPasswordResetEmail = async (email, resetToken) => {
   const html = renderPasswordResetEmail(email, resetToken);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts Security <security@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft Security <security@yokebud.com>',
     to: email,
-    subject: '🔐 Password Reset Request - Yokebud Crafts',
+    subject: '🔐 Password Reset Request - Yokebud craft',
     html,
     priority: 'high'
   };
@@ -3504,7 +3504,7 @@ const generateProductSEO = (name, description, price, imageUrls) => {
 
   // Create a description focusing on laser engraving
   const baseDescription = description || '';
-  const seo_description = `Discover this exquisite ${name}, a premium handmade custom gift from Finland. Our professional laser engraving service ensures each piece is a unique masterpiece of personalization. Perfect for those seeking high-quality engraved treasures in Finland. This handcrafted item showcases the precision of modern laser engraving technology while maintaining the charm of a traditional handmade gift. Experience the best of Finnish craftsmanship with our custom engraving options, tailored specifically for your special occasions. Each ${name} is carefully processed to meet our high standards of excellence. ${baseDescription.slice(0, 300)}...`;
+  const seo_description = `Discover this exquisite ${name}, a premium handmade custom gift from Finland. Our professional laser engraving service ensures each piece is a unique masterpiece of personalization. Perfect for those seeking high-quality engraved treasures in Finland. This handcrafted item showcases the precision of modern laser engraving technology while maintaining the charm of a traditional handmade gift. Experience the best of Finnish craftmanship with our custom engraving options, tailored specifically for your special occasions. Each ${name} is carefully processed to meet our high standards of excellence. ${baseDescription.slice(0, 300)}...`;
 
   const seo_keywords = `laser engraving Finland, engraved ${name}, custom engraving, personalized gift Finland, handmade ${name}, laser cutting services, custom personalized gifts`;
 
@@ -3516,7 +3516,7 @@ const generateProductSEO = (name, description, price, imageUrls) => {
     "image": imageUrls || [],
     "brand": {
       "@type": "Brand",
-      "name": "Yokebud Crafts"
+      "name": "Yokebud craft"
     },
     "offers": {
       "@type": "Offer",
@@ -4030,10 +4030,10 @@ const checkUnreadMessageReminders = async () => {
         const content = `<p style="margin:0 0 12px 0;color:${EMAIL_THEME.textLight};">A new message has remained unviewed for over 1 hour in your conversation about <span style="color:${EMAIL_THEME.text};font-weight:700;">${product.product_name || 'your product'}</span>.</p><div style="background:#0D0D0D;border:1px solid #1a1a1a;border-radius:12px;padding:16px;margin-top:8px;"><div style="color:${EMAIL_THEME.textLight};font-size:12px;margin-bottom:6px;">Message preview</div><div style="color:${EMAIL_THEME.text};line-height:1.6;">${preview || 'No text'}</div></div>`;
         const clientUrl = `${process.env.CLIENT_URL || 'https://www.yokebud.fi'}/messages`;
         const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin/inquiries'}`;
-        const userHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
-        const adminHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
-        const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
-        const mailAdmin = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: 'yokebud@gmail.com', subject: `${subject} - ${inquiry.customer_name || ''}`, html: adminHtml };
+        const userHtml = renderThemedEmail({ title: 'Yokebud craft', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
+        const adminHtml = renderThemedEmail({ title: 'Yokebud craft', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
+        const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
+        const mailAdmin = { from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>', to: 'yokebud@gmail.com', subject: `${subject} - ${inquiry.customer_name || ''}`, html: adminHtml };
         try { await sendMail(mailUser); } catch { }
         try { await sendMail(mailAdmin); } catch { }
         messages[i] = { ...msg, reminder_sent: true };
@@ -5743,7 +5743,7 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
     }
 
     const toSlug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    let inquiryFolder = `yokebud crafts/inquiries/${inquiryId}`;
+    let inquiryFolder = `yokebud craft/inquiries/${inquiryId}`;
     try {
       const uid = inquiries[0] && inquiries[0].user_id;
       if (uid) {
@@ -5756,7 +5756,7 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
           name = full || name;
         }
         const userSlug = toSlug(name);
-        inquiryFolder = `yokebud crafts/users/${userSlug}/inquiries/${inquiryId}`;
+        inquiryFolder = `yokebud craft/users/${userSlug}/inquiries/${inquiryId}`;
       }
     } catch (_) { }
 
@@ -5861,7 +5861,7 @@ app.get('/debug/email-preview', (req, res) => {
     <p style="margin:0;color:${EMAIL_THEME.textLight};line-height:1.7;">This is a sample preview for the current email template without logo.</p>
   </div>`;
   const html = renderThemedEmail({
-    title: 'Yokebud Crafts',
+    title: 'Yokebud craft',
     subtitle: 'Template Preview',
     contentHtml: sampleContent,
     primaryCtaText: 'Visit Website',
@@ -7396,7 +7396,7 @@ app.post('/api/checkout/upload-design', async (req, res) => {
       try {
         const result = await new Promise((resolve, reject) => {
           const uploadOptions = {
-            folder: 'yokebud-crafts/checkout/designs',
+            folder: 'yokebud-craft/checkout/designs',
             public_id: `design_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             resource_type: 'auto'
           };
@@ -8517,7 +8517,7 @@ app.post('/api/products/:id/reviews', async (req, res) => {
     let mediaUrls = [];
     const uploadBuffer = (buf) => new Promise((resolve, reject) => {
       try {
-        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud crafts/reviews', resource_type: 'auto' }, (err, result) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud craft/reviews', resource_type: 'auto' }, (err, result) => {
           if (err) return reject(err);
           resolve(result);
         });
@@ -8531,7 +8531,7 @@ app.post('/api/products/:id/reviews', async (req, res) => {
       for (const f of arr) {
         if (f.tempFilePath) {
           try {
-            const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud crafts/reviews', resource_type: 'auto' });
+            const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud craft/reviews', resource_type: 'auto' });
             results.push(r);
           } catch { }
         } else if (f.data) {
@@ -8600,7 +8600,7 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
     let mediaUrls = [];
     const uploadBuffer = (buf) => new Promise((resolve, reject) => {
       try {
-        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud crafts/reviews', resource_type: 'auto' }, (err, result) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud craft/reviews', resource_type: 'auto' }, (err, result) => {
           if (err) return reject(err);
           resolve(result);
         });
@@ -8613,7 +8613,7 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
       const results = [];
       for (const f of arr) {
         if (f.tempFilePath) {
-          try { const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud crafts/reviews', resource_type: 'auto' }); results.push(r); } catch { }
+          try { const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud craft/reviews', resource_type: 'auto' }); results.push(r); } catch { }
         } else if (f.data) {
           try { const r = await uploadBuffer(f.data); results.push(r); } catch { }
         }
@@ -8699,6 +8699,7 @@ app.get('/api/categories', async (req, res) => {
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         parent_id INT DEFAULT NULL,
+        collection_section VARCHAR(255) DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -8712,7 +8713,16 @@ app.get('/api/categories', async (req, res) => {
       }
     }
 
-    const [rows] = await connection.query('SELECT id, name, type, image_url, created_at, updated_at, parent_id, slug, seo_title, seo_description, seo_keywords, seo_content FROM categories ORDER BY id ASC');
+    // Ensure collection_section column exists (migration for existing tables)
+    try {
+      await connection.query("SELECT collection_section FROM categories LIMIT 1");
+    } catch (err) {
+      if (err.code === 'ER_BAD_FIELD_ERROR') {
+        await connection.query("ALTER TABLE categories ADD COLUMN collection_section VARCHAR(255) DEFAULT NULL");
+      }
+    }
+
+    const [rows] = await connection.query('SELECT id, name, type, image_url, created_at, updated_at, parent_id, collection_section, slug, seo_title, seo_description, seo_keywords, seo_content FROM categories ORDER BY id ASC');
     connection.release();
     res.json({ success: true, categories: rows });
   } catch (error) {
@@ -8725,19 +8735,19 @@ app.get('/api/categories', async (req, res) => {
 app.post('/api/categories', requireAdminAuth, async (req, res) => {
   let connection;
   try {
-    const { name, parent_id, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content } = req.body;
+    const { name, parent_id, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content, collection_section } = req.body;
     if (!name) return res.status(400).json({ success: false, message: 'Name is required' });
 
     const finalSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
     connection = await pool.getConnection();
     const [result] = await connection.query(
-      'INSERT INTO categories (name, parent_id, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [name, parent_id || null, type || 'crafts', image_url || null, finalSlug, seo_title || null, seo_description || null, seo_keywords || null, seo_content || null]
+      'INSERT INTO categories (name, parent_id, collection_section, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, parent_id || null, collection_section || null, type || 'craft', image_url || null, finalSlug, seo_title || null, seo_description || null, seo_keywords || null, seo_content || null]
     );
 
     connection.release();
-    res.json({ success: true, message: 'Category created', category: { id: result.insertId, name, parent_id, type, image_url, slug: finalSlug } });
+    res.json({ success: true, message: 'Category created', category: { id: result.insertId, name, parent_id, collection_section: collection_section || null, type, image_url, slug: finalSlug } });
   } catch (error) {
     if (connection) connection.release();
     console.error('Create category error:', error);
@@ -9013,7 +9023,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
       description: desc,
       sku: p.sku || String(p.id || ''),
       image: allImages.slice(0, 5),
-      brand: { '@type': 'Brand', name: 'Yokebud Crafts' },
+      brand: { '@type': 'Brand', name: 'Yokebud craft' },
       offers: {
         '@type': 'Offer',
         priceCurrency: 'EUR',
@@ -9318,7 +9328,7 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
     const productSlugHint = req.body && (req.body.productSlug || req.body.slug);
     const productNameHint = req.body && (req.body.productName || req.body.name);
     const toSlug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    let targetFolder = 'yokebud crafts/products';
+    let targetFolder = 'yokebud craft/products';
     if (productId) {
       try {
         const conn = await pool.getConnection();
@@ -9357,7 +9367,7 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
           // Generate SEO-friendly public_id for images
           let publicId;
           if (!isVideo) {
-            const cleanHint = (productNameHint || 'yokebud-crafts')
+            const cleanHint = (productNameHint || 'yokebud-craft')
               .toLowerCase()
               .replace(/[^a-z0-9]/g, '-')
               .replace(/-+/g, '-')
@@ -10335,7 +10345,7 @@ async function ensureBlogsSchema() {
         {
           title: 'Best Laser Engraving Gift Ideas in Finland',
           excerpt: 'Discover the most unique and thoughtful personalized gift ideas using professional laser engraving technology in Finland.',
-          content: '<p>Looking for the perfect gift? <strong>Laser engraving Finland</strong> offers a unique way to personalize gifts for your loved ones. From <strong>custom engraved wood</strong> frames to <strong>personalized leather wallets</strong>, the possibilities are endless. At Yokebud Crafts, we specialize in creating one-of-a-kind treasures that are both beautiful and durable. Learn more about our <a href="/?category=laser-engraving">laser engraving services</a> today.</p>',
+          content: '<p>Looking for the perfect gift? <strong>Laser engraving Finland</strong> offers a unique way to personalize gifts for your loved ones. From <strong>custom engraved wood</strong> frames to <strong>personalized leather wallets</strong>, the possibilities are endless. At Yokebud craft, we specialize in creating one-of-a-kind treasures that are both beautiful and durable. Learn more about our <a href="/?category=laser-engraving">laser engraving services</a> today.</p>',
           category: 'Gift Ideas',
           slug: 'best-laser-engraving-gift-ideas-finland'
         },
@@ -10349,14 +10359,14 @@ async function ensureBlogsSchema() {
         {
           title: 'Laser Cutting vs Traditional Crafting',
           excerpt: 'Comparing modern laser cutting technology with traditional handcrafted methods for creating custom wood and leather products.',
-          content: '<p>While traditional crafting methods have their charm, <strong>laser cutting Helsinki</strong> brings a level of precision and consistency that is hard to match. By combining <strong>handmade in Finland</strong> quality with modern laser technology, Yokebud Crafts delivers the best of both worlds. Our <strong>laser-cut wooden crafts</strong> showcase intricate designs that are durable and perfectly finished. Check out our <a href="/?category=laser-cutting-products">laser cutting products</a>.</p>',
-          category: 'Craftsmanship',
+          content: '<p>While traditional crafting methods have their charm, <strong>laser cutting Helsinki</strong> brings a level of precision and consistency that is hard to match. By combining <strong>handmade in Finland</strong> quality with modern laser technology, Yokebud craft delivers the best of both worlds. Our <strong>laser-cut wooden craft</strong> showcase intricate designs that are durable and perfectly finished. Check out our <a href="/?category=laser-cutting-products">laser cutting products</a>.</p>',
+          category: 'craftmanship',
           slug: 'laser-cutting-vs-traditional-crafting'
         },
         {
           title: 'Personalized Engraved Gift Trends Finland',
           excerpt: 'Stay up to date with the latest trends in personalized and engraved gifts in the Finnish market for 2026.',
-          content: '<p>Personalization is more popular than ever in Finland. The latest trends show a high demand for <strong>custom engraved gifts</strong> that focus on sustainability and local craftsmanship. From <strong>engraved stone decor</strong> to <strong>personalized apparel</strong>, Finnish consumers value quality and uniqueness. Stay ahead of the curve with Yokebud Crafts, your hub for <strong>laser engraving Finland</strong>. Discover our <a href="/?category=laser-engraving">latest arrivals</a>.</p>',
+          content: '<p>Personalization is more popular than ever in Finland. The latest trends show a high demand for <strong>custom engraved gifts</strong> that focus on sustainability and local craftmanship. From <strong>engraved stone decor</strong> to <strong>personalized apparel</strong>, Finnish consumers value quality and uniqueness. Stay ahead of the curve with Yokebud craft, your hub for <strong>laser engraving Finland</strong>. Discover our <a href="/?category=laser-engraving">latest arrivals</a>.</p>',
           category: 'Trends',
           slug: 'personalized-engraved-gift-trends-finland'
         }
@@ -12038,7 +12048,7 @@ async function uploadToCloudinaryIfBase64(imageUrlOrBase64) {
   if (imageUrlOrBase64.startsWith('data:')) {
     try {
       const res = await cloudinary.uploader.upload(imageUrlOrBase64, {
-        folder: 'yokebud crafts/custom_orders',
+        folder: 'yokebud craft/custom_orders',
         resource_type: 'auto'
       });
       return res.secure_url;
