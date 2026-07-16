@@ -8038,9 +8038,10 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     const finalSchemaJson = req.body.schema_json ? JSON.stringify(req.body.schema_json) : JSON.stringify(seo.schema_json);
 
     // Insert product into database
+    const productFreeShipping = Boolean(req.body.free_shipping || (req.body.metadata && req.body.metadata.free_shipping));
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageArray);
-    const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount });
+    const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount, free_shipping: productFreeShipping });
 
     // Debug: log customization_mode for incoming create
     console.log('CREATE product - customization_mode:', req.body.customization_mode);
@@ -8270,9 +8271,10 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     // Update product in database
     const baseSlug = slugify(name);
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
+    const productFreeShipping = Boolean(req.body.free_shipping || (req.body.metadata && req.body.metadata.free_shipping));
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageUrls);
-    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, bulk_discount });
+    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, bulk_discount, free_shipping: productFreeShipping });
 
     // Auto-generate SEO fields if not provided
     const seo = generateProductSEO(name, description, finalPrice, imageUrls);
@@ -8957,6 +8959,131 @@ app.delete('/api/categories/:id', requireAdminAuth, async (req, res) => {
     if (connection) connection.release();
     console.error('Delete category error:', error);
     res.status(500).json({ success: false, message: 'Failed to delete category' });
+  }
+});
+
+// ===== CATEGORY SECTIONS API =====
+
+// Get all category sections
+app.get('/api/category-sections', async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    
+    // Ensure table exists
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS category_sections (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(255) NOT NULL UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+
+    const [sections] = await connection.query('SELECT id, name, created_at FROM category_sections ORDER BY id ASC');
+    connection.release();
+    res.json({ success: true, sections });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Fetch category sections error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch category sections' });
+  }
+});
+
+// Add new category section
+app.post('/api/category-sections', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'Section name is required' });
+    }
+
+    connection = await pool.getConnection();
+    
+    // Check if section already exists
+    const [existing] = await connection.query('SELECT id FROM category_sections WHERE LOWER(name) = LOWER(?)', [name.trim()]);
+    if (existing.length > 0) {
+      connection.release();
+      return res.status(400).json({ success: false, message: 'Section already exists' });
+    }
+
+    const [result] = await connection.query(
+      'INSERT INTO category_sections (name) VALUES (?)',
+      [name.trim()]
+    );
+
+    connection.release();
+    res.json({ success: true, message: 'Section created', section: { id: result.insertId, name: name.trim() } });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Create category section error:', error);
+    res.status(500).json({ success: false, message: 'Failed to create category section' });
+  }
+});
+
+// Update category section
+app.put('/api/category-sections/:id', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'Section name is required' });
+    }
+
+    connection = await pool.getConnection();
+    
+    // Check if section exists
+    const [existing] = await connection.query('SELECT id FROM category_sections WHERE id = ?', [id]);
+    if (existing.length === 0) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Section not found' });
+    }
+
+    // Check if new name already exists (excluding current section)
+    const [duplicate] = await connection.query('SELECT id FROM category_sections WHERE LOWER(name) = LOWER(?) AND id != ?', [name.trim(), id]);
+    if (duplicate.length > 0) {
+      connection.release();
+      return res.status(400).json({ success: false, message: 'Section name already exists' });
+    }
+
+    await connection.query(
+      'UPDATE category_sections SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [name.trim(), id]
+    );
+
+    connection.release();
+    res.json({ success: true, message: 'Section updated', section: { id: parseInt(id), name: name.trim() } });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Update category section error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update category section' });
+  }
+});
+
+// Delete category section
+app.delete('/api/category-sections/:id', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { id } = req.params;
+    connection = await pool.getConnection();
+
+    // Check if section exists
+    const [rows] = await connection.query('SELECT * FROM category_sections WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Section not found' });
+    }
+
+    await connection.query('DELETE FROM category_sections WHERE id = ?', [id]);
+    connection.release();
+    res.json({ success: true, message: 'Section deleted' });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Delete category section error:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete category section' });
   }
 });
 
