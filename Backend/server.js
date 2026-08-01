@@ -131,6 +131,107 @@ const toSlug = (str) => {
   }
 };
 
+function parseMetadataObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function isFreeShippingEnabled(value) {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function parseFreeShippingMinAmount(value) {
+  if (value === null || typeof value === 'undefined' || value === '') return null;
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue < 0) return null;
+  return Math.round(numericValue * 100) / 100;
+}
+
+function getNormalizedFreeShippingConfig(source = {}) {
+  const productMeta = parseMetadataObject(source.product?.metadata) || {};
+  const itemMeta = parseMetadataObject(source.metadata) || {};
+
+  const enabledValue =
+    source.free_shipping ??
+    source.product?.free_shipping ??
+    productMeta.free_shipping ??
+    productMeta.freeShipping ??
+    itemMeta.free_shipping ??
+    itemMeta.freeShipping;
+
+  const minimumAmountValue =
+    source.free_shipping_min_amount ??
+    source.product?.free_shipping_min_amount ??
+    productMeta.free_shipping_min_amount ??
+    productMeta.freeShippingMinAmount ??
+    itemMeta.free_shipping_min_amount ??
+    itemMeta.freeShippingMinAmount;
+
+  return {
+    enabled: isFreeShippingEnabled(enabledValue),
+    minimumAmount: parseFreeShippingMinAmount(minimumAmountValue)
+  };
+}
+
+function calculateItemsMerchandiseTotal(items = []) {
+  const subtotal = (Array.isArray(items) ? items : []).reduce((sum, item) => {
+    const unitPrice = Number(item?.discounted_price ?? item?.price ?? 0) || 0;
+    const quantity = Number(item?.quantity ?? 1) || 1;
+    return sum + (unitPrice * quantity);
+  }, 0);
+
+  return Math.round(subtotal * 100) / 100;
+}
+
+function getFreeShippingStatus(items = [], merchandiseTotal = null) {
+  const orderItems = Array.isArray(items) ? items : [];
+  const normalizedTotal = Number.isFinite(Number(merchandiseTotal))
+    ? Number(merchandiseTotal)
+    : calculateItemsMerchandiseTotal(orderItems);
+
+  let hasOffer = false;
+  let minimumThreshold = null;
+
+  for (const item of orderItems) {
+    const config = getNormalizedFreeShippingConfig(item);
+    if (!config.enabled) continue;
+
+    hasOffer = true;
+
+    if (config.minimumAmount === null) {
+      return {
+        hasOffer: true,
+        qualifies: true,
+        threshold: null
+      };
+    }
+
+    minimumThreshold = minimumThreshold === null
+      ? config.minimumAmount
+      : Math.min(minimumThreshold, config.minimumAmount);
+  }
+
+  if (!hasOffer) {
+    return {
+      hasOffer: false,
+      qualifies: false,
+      threshold: null
+    };
+  }
+
+  return {
+    hasOffer: true,
+    qualifies: minimumThreshold !== null && normalizedTotal >= minimumThreshold,
+    threshold: minimumThreshold
+  };
+}
+
 
 
 // URL Redirection Middleware
@@ -487,6 +588,27 @@ async function ensureSeoSchema() {
     if (!productColNames.has('schema_json')) {
       await connection.query('ALTER TABLE products ADD COLUMN schema_json JSON NULL');
     }
+    if (!productColNames.has('image_alt_text')) {
+      await connection.query('ALTER TABLE products ADD COLUMN image_alt_text VARCHAR(255) NULL');
+    }
+    if (!productColNames.has('og_image')) {
+      await connection.query('ALTER TABLE products ADD COLUMN og_image TEXT NULL');
+    }
+    if (!productColNames.has('twitter_image')) {
+      await connection.query('ALTER TABLE products ADD COLUMN twitter_image TEXT NULL');
+    }
+    if (!productColNames.has('canonical_url')) {
+      await connection.query('ALTER TABLE products ADD COLUMN canonical_url TEXT NULL');
+    }
+    if (!productColNames.has('hreflang_fi')) {
+      await connection.query('ALTER TABLE products ADD COLUMN hreflang_fi TEXT NULL');
+    }
+    if (!productColNames.has('hreflang_de')) {
+      await connection.query('ALTER TABLE products ADD COLUMN hreflang_de TEXT NULL');
+    }
+    if (!productColNames.has('gtin')) {
+      await connection.query('ALTER TABLE products ADD COLUMN gtin VARCHAR(50) NULL');
+    }
 
     // Check and add SEO columns to categories table
     const [categoryCols] = await connection.query(
@@ -507,6 +629,27 @@ async function ensureSeoSchema() {
     }
     if (!categoryColNames.has('seo_content')) {
       await connection.query('ALTER TABLE categories ADD COLUMN seo_content TEXT NULL');
+    }
+    if (!categoryColNames.has('image_alt')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN image_alt VARCHAR(255) NULL');
+    }
+    if (!categoryColNames.has('og_image')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN og_image TEXT NULL');
+    }
+    if (!categoryColNames.has('canonical_url')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN canonical_url TEXT NULL');
+    }
+    if (!categoryColNames.has('hreflang_tags')) {
+      try { await connection.query('ALTER TABLE categories ADD COLUMN hreflang_tags JSON NULL'); } catch {}
+    }
+    if (!categoryColNames.has('parent_category_id')) {
+      try { await connection.query('ALTER TABLE categories ADD COLUMN parent_category_id INT NULL DEFAULT NULL'); } catch {}
+    }
+    if (!categoryColNames.has('slug')) {
+      try { await connection.query('ALTER TABLE categories ADD COLUMN slug VARCHAR(255) NULL'); } catch {}
+    }
+    if (!categoryColNames.has('description')) {
+      try { await connection.query('ALTER TABLE categories ADD COLUMN description TEXT NULL'); } catch {}
     }
 
     // Add default home page SEO content if it doesn't exist
@@ -1215,7 +1358,56 @@ async function regenerateSitemap() {
       }
     }
 
-    // Refetch entries after sync
+    // =============================================================
+    // CLEANUP: De-duplicate product URLs (same productId → keep 1 best)
+    // =============================================================
+    try {
+      const [productEntries] = await connection.query(
+        `SELECT id, path, priority, is_active, updated_at
+         FROM sitemap_entries
+         WHERE (type = 'product' OR path LIKE '/products/%')
+         ORDER BY
+           CASE WHEN path REGEXP '/products/[a-z0-9-]+-[0-9]+/?$' THEN 0 ELSE 1 END,
+           CAST(priority AS DECIMAL(3,2)) DESC,
+           updated_at DESC,
+           id DESC`
+      );
+
+      const seenProductIds = new Set();
+      const idsToKeep = new Set();
+      const idsToDeactivate = [];
+
+      for (const e of productEntries) {
+        const pid = getProductIdFromPath(e.path);
+        if (!pid) {
+          // path looks like product but no id detectable → only keep if path is exactly canonical
+          const looksCanonical = /^\/products\/[a-z0-9-]+-[0-9]+\/?$/.test(String(e.path || '').toLowerCase());
+          if (!looksCanonical) {
+            idsToDeactivate.push(e.id);
+          }
+          continue;
+        }
+        if (seenProductIds.has(pid)) {
+          idsToDeactivate.push(e.id);
+        } else {
+          seenProductIds.add(pid);
+          idsToKeep.add(e.id);
+        }
+      }
+
+      if (idsToDeactivate.length > 0) {
+        const placeholders = idsToDeactivate.map(() => '?').join(',');
+        await connection.query(
+          `UPDATE sitemap_entries SET is_active = FALSE, updated_at = NOW() WHERE id IN (${placeholders})`,
+          idsToDeactivate
+        );
+        console.log(`🧹 Deactivated ${idsToDeactivate.length} duplicate/non-canonical product sitemap entries.`);
+      }
+    } catch (dedupErr) {
+      console.warn('Duplicate product URL cleanup skipped:', dedupErr.message);
+    }
+
+    // Refetch entries after sync + dedup
     [entries] = await connection.query(
       'SELECT id, path, priority, changefreq, type, is_active, created_at, updated_at FROM sitemap_entries WHERE 1'
     );
@@ -1291,7 +1483,7 @@ async function regenerateSitemap() {
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    const header = `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
+    const header = `<?xml version="1.0" encoding="UTF-8"?>\n` +
       `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" ` +
       `xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`;
 
@@ -1387,30 +1579,62 @@ async function regenerateSitemap() {
     sortUrls(pageUrls);
     sortUrls(blogUrls);
 
-    // Write main sitemap
-    const mainXml = buildXml(allUrls);
-    const outPath = path.join(__dirname, '..', 'client', 'public', 'sitemap.xml');
-    fs.writeFileSync(outPath, mainXml, 'utf8');
+    const mainXml = buildSitemapIndexXml([
+      { loc: `${PUBLIC_SITE_URL}/product-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/category-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/blog-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/page-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/component-sitemap.xml` }
+    ]);
+    const publicDir = path.join(__dirname, '..', 'client', 'public');
+    const outPath = path.join(publicDir, 'sitemap.xml');
+    const productPath = path.join(publicDir, 'product-sitemap.xml');
+    const categoryPath = path.join(publicDir, 'category-sitemap.xml');
+    const pagePath = path.join(publicDir, 'page-sitemap.xml');
+    const blogPath = path.join(publicDir, 'blog-sitemap.xml');
+    const componentPath = path.join(publicDir, 'component-sitemap.xml');
+    const componentXml = await generateComponentSitemapXml();
 
-    // Write product-only sitemap
+    try {
+      const legacyFiles = fs.readdirSync(publicDir).filter((fileName) =>
+        fileName === 'product-sitemap.xml' ||
+        fileName === 'category-sitemap.xml' ||
+        fileName === 'page-sitemap.xml' ||
+        fileName === 'blog-sitemap.xml' ||
+        fileName === 'component-sitemap.xml' ||
+        /^category-sitemap-[a-z0-9-]+\.xml$/i.test(fileName)
+      );
+      for (const legacyFile of legacyFiles) {
+        try {
+          fs.unlinkSync(path.join(publicDir, legacyFile));
+        } catch (cleanupErr) {
+          console.warn(`Could not remove legacy sitemap file ${legacyFile}:`, cleanupErr.message);
+        }
+      }
+    } catch (cleanupErr) {
+      console.warn('Legacy sitemap cleanup skipped:', cleanupErr.message);
+    }
+
     const productXml = buildXml(productUrls);
-    const productPath = path.join(__dirname, '..', 'client', 'public', 'product-sitemap.xml');
-    fs.writeFileSync(productPath, productXml, 'utf8');
-
-    // Write category-only sitemap
     const categoryXml = buildXml(categoryUrls);
-    const categoryPath = path.join(__dirname, '..', 'client', 'public', 'category-sitemap.xml');
-    fs.writeFileSync(categoryPath, categoryXml, 'utf8');
-
-    // Write page-only sitemap (static pages)
     const pageXml = buildXml(pageUrls);
-    const pagePath = path.join(__dirname, '..', 'client', 'public', 'page-sitemap.xml');
-    fs.writeFileSync(pagePath, pageXml, 'utf8');
-
-    // Write blog-only sitemap
     const blogXml = buildXml(blogUrls);
-    const blogPath = path.join(__dirname, '..', 'client', 'public', 'blog-sitemap.xml');
+    fs.writeFileSync(outPath, mainXml, 'utf8');
+    fs.writeFileSync(productPath, productXml, 'utf8');
+    fs.writeFileSync(categoryPath, categoryXml, 'utf8');
+    fs.writeFileSync(pagePath, pageXml, 'utf8');
     fs.writeFileSync(blogPath, blogXml, 'utf8');
+    fs.writeFileSync(componentPath, componentXml, 'utf8');
+
+    // Notify Google & Bing about the updated sitemap
+    try {
+      // Fire-and-forget (non-blocking) so regeneration latency stays low
+      setImmediate(() => {
+        pingSitemapToSearchEngines(`${PUBLIC_SITE_URL}/sitemap.xml`).catch(() => {});
+      });
+    } catch (_pingErr) {
+      // ignore ping errors; regeneration itself succeeded
+    }
 
     console.log(
       `✅ Sitemap regenerated: all=${allUrls.length}, products=${productUrls.length}, categories=${categoryUrls.length}, pages=${pageUrls.length}, blogs=${blogUrls.length}`
@@ -1426,7 +1650,8 @@ async function regenerateSitemap() {
       pageCount: pageUrls.length,
       pagePath,
       blogCount: blogUrls.length,
-      blogPath
+      blogPath,
+      componentPath
     };
   } catch (error) {
     console.error(`❌ Sitemap regeneration error: ${error.message}`);
@@ -2380,120 +2605,244 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
   });
 };
 
+const escapeEmailHtml = (value) => {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+};
+
+const formatNewsletterPrice = (value) => {
+  const amount = Number(value || 0);
+  return `€${amount.toFixed(2)}`;
+};
+
+const getNewsletterProductLink = (product) => {
+  const slug = String(product.product_name || 'product')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `${PUBLIC_SITE_URL}/products/${slug}-${product.id}`;
+};
+
+const getNewsletterImageUrl = (product) => {
+  const raw = product.firstImage || '';
+  if (!raw) return `${PUBLIC_SITE_URL}/LOGO.png`;
+  const source = String(raw);
+  if (source.startsWith('http://') || source.startsWith('https://')) return source;
+  const clean = source.startsWith('/') ? source : `/${source}`;
+  return `${PUBLIC_API_BASE}${clean}`;
+};
+
+const getNewsletterDiscountMeta = (product) => {
+  const price = Number(product.price || 0);
+  const discountedPrice = Number(product.discounted_price || 0);
+  const hasDiscount = discountedPrice > 0 && discountedPrice < price;
+  if (!hasDiscount) {
+    return { hasDiscount: false, amountSaved: 0, percentSaved: 0 };
+  }
+
+  const amountSaved = price - discountedPrice;
+  const percentSaved = price > 0 ? Math.round((amountSaved / price) * 100) : 0;
+  return { hasDiscount, amountSaved, percentSaved };
+};
+
+const renderNewsletterProductGrid = (products, { accentColor, badgeBg, badgeText, ctaText }) => {
+  const safeProducts = Array.isArray(products) ? products : [];
+  if (safeProducts.length === 0) return '';
+
+  const rows = [];
+  for (let index = 0; index < safeProducts.length; index += 2) {
+    rows.push(safeProducts.slice(index, index + 2));
+  }
+
+  return rows.map(row => {
+    const cells = row.map(product => {
+      const productName = escapeEmailHtml(product.product_name || 'Product');
+      const productLink = getNewsletterProductLink(product);
+      const imageUrl = getNewsletterImageUrl(product);
+      const { hasDiscount, amountSaved, percentSaved } = getNewsletterDiscountMeta(product);
+      const priceHtml = hasDiscount
+        ? `
+            <div style="font-size: 13px; color: #8A94A6; text-decoration: line-through; margin-bottom: 4px;">
+              ${formatNewsletterPrice(product.price)}
+            </div>
+            <div style="font-size: 22px; line-height: 28px; font-weight: 800; color: ${EMAIL_THEME.danger};">
+              ${formatNewsletterPrice(product.discounted_price)}
+            </div>
+            <div style="font-size: 12px; line-height: 18px; color: ${EMAIL_THEME.accent}; font-weight: 700; margin-top: 4px;">
+              Save ${formatNewsletterPrice(amountSaved)}${percentSaved > 0 ? ` (${percentSaved}% off)` : ''}
+            </div>
+          `
+        : `
+            <div style="font-size: 22px; line-height: 28px; font-weight: 800; color: ${EMAIL_THEME.dark};">
+              ${formatNewsletterPrice(product.price)}
+            </div>
+          `;
+
+      return `
+        <td width="50%" valign="top" style="padding: 0 8px 16px 8px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border: 1px solid ${EMAIL_THEME.border}; border-radius: 14px; overflow: hidden; background: #ffffff;">
+            <tr>
+              <td style="padding: 0;">
+                <a href="${productLink}" style="text-decoration: none; display: block;">
+                  <img src="${imageUrl}" alt="${productName}" width="100%" style="display: block; width: 100%; height: 220px; object-fit: cover; background: #f7fafc;" />
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 18px 18px 16px 18px;">
+                <div style="margin-bottom: 12px;">
+                  <span style="display: inline-block; background: ${badgeBg}; color: ${badgeText}; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; padding: 5px 9px; border-radius: 999px;">
+                    ${hasDiscount ? 'Special Offer' : 'Latest Upload'}
+                  </span>
+                </div>
+                <div style="font-size: 18px; line-height: 25px; color: ${EMAIL_THEME.dark}; font-weight: 700; min-height: 50px; margin-bottom: 10px;">
+                  ${productName}
+                </div>
+                <div style="margin-bottom: 16px;">
+                  ${priceHtml}
+                </div>
+                <a href="${productLink}" style="display: inline-block; background: ${accentColor}; color: #ffffff; text-decoration: none; padding: 11px 18px; border-radius: 8px; font-size: 13px; line-height: 18px; font-weight: 700;">
+                  ${ctaText}
+                </a>
+              </td>
+            </tr>
+          </table>
+        </td>
+      `;
+    }).join('');
+
+    const spacer = row.length === 1
+      ? '<td width="50%" valign="top" style="padding: 0 8px 16px 8px;"></td>'
+      : '';
+
+    return `<tr>${cells}${spacer}</tr>`;
+  }).join('');
+};
+
+const renderNewsletterSection = ({
+  title,
+  intro,
+  products,
+  accentColor,
+  badgeBg,
+  badgeText,
+  ctaText
+}) => {
+  if (!Array.isArray(products) || products.length === 0) return '';
+
+  return `
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top: 28px;">
+      <tr>
+        <td style="padding: 0 0 14px 0;">
+          <div style="font-size: 24px; line-height: 30px; color: ${EMAIL_THEME.dark}; font-weight: 800; margin-bottom: 8px;">
+            ${title}
+          </div>
+          <div style="font-size: 15px; line-height: 24px; color: ${EMAIL_THEME.textLight};">
+            ${intro}
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 0;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            ${renderNewsletterProductGrid(products, { accentColor, badgeBg, badgeText, ctaText })}
+          </table>
+        </td>
+      </tr>
+    </table>
+  `;
+};
+
 // 4. WEEKLY NEWSLETTER EMAIL
 const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
   const unsubscribeLink = `${PUBLIC_SITE_URL}/UnsubscribePage?token=${token}`;
-  const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
+  const newArrivals = Array.isArray(collections?.newArrivals) ? collections.newArrivals : [];
+  const discountedProducts = Array.isArray(collections?.discounted) ? collections.discounted : [];
+  const totalHighlights = newArrivals.length + discountedProducts.length;
 
-  const renderProductCards = (products) => {
-    return products.map(product => {
-      const slug = String(product.product_name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-      const productLink = `${PUBLIC_SITE_URL}/products/${slug}-${product.id}`;
-      const imageUrl = (() => {
-        const raw = product.firstImage || '';
-        if (!raw) return '';
-        const s = String(raw);
-        if (s.startsWith('http')) return s;
-        const clean = s.startsWith('/') ? s : `/${s}`;
-        return `${backendBase}${clean}`;
-      })();
+  const highlightsSummary = [
+    newArrivals.length > 0 ? `${newArrivals.length} latest upload${newArrivals.length > 1 ? 's' : ''}` : null,
+    discountedProducts.length > 0 ? `${discountedProducts.length} special deal${discountedProducts.length > 1 ? 's' : ''}` : null
+  ].filter(Boolean).join(' and ');
 
-      const hasDiscount = product.discounted_price && product.discounted_price < product.price;
-      const displayPrice = hasDiscount
-        ? `<span style="text-decoration: line-through; color: #999; font-size: 14px;">€${product.price}</span> <span style="color: ${EMAIL_THEME.primary};">€${product.discounted_price}</span>`
-        : `<span>€${product.price}</span>`;
+  const newArrivalsHtml = renderNewsletterSection({
+    title: 'Latest Uploads',
+    intro: 'Freshly uploaded products from the workshop, selected from the newest active items on the site.',
+    products: newArrivals,
+    accentColor: '#111111',
+    badgeBg: '#FFF4D8',
+    badgeText: '#8A5A00',
+    ctaText: 'View Product'
+  });
 
-      return `
-        <div style="border: 1px solid ${EMAIL_THEME.border}; border-radius: 12px; overflow: hidden; margin-bottom: 20px; background: white; width: 100%;">
-          <div style="position: relative; width: 100%; height: 200px; overflow: hidden; background-color: #f8f8f8;">
-            <a href="${productLink}" style="display:block; width:100%; height:100%; text-decoration:none;">
-              <img src="${imageUrl}" 
-                   alt="${product.product_name}" 
-                   style="width: 100%; height: 100%; object-fit: cover;"
-                   onerror="this.style.display='none'">
-            </a>
-            ${hasDiscount ? `
-              <div style="position: absolute; top: 10px; right: 10px; background: ${EMAIL_THEME.danger}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold;">
-                OFFER
-              </div>
-            ` : ''}
-          </div>
-          <div style="padding: 15px;">
-            <a href="${productLink}" style="text-decoration:none; color: inherit;">
-              <h3 style="margin: 0 0 8px 0; font-size: 15px; color: ${EMAIL_THEME.dark}; font-weight: 600; line-height: 1.3; height: 38px; overflow: hidden;">
-                ${product.product_name}
-              </h3>
-            </a>
-            <p style="margin: 0 0 12px 0; font-size: 16px; font-weight: 700;">
-              ${displayPrice}
-            </p>
-            <a href="${productLink}" 
-               style="display: block; text-align: center; background: #000000; color: #ffffff; padding: 10px; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 600;">
-              View Details
-            </a>
-          </div>
-        </div>
-      `;
-    }).join('');
-  };
-
-  const newArrivalsHtml = collections.newArrivals && collections.newArrivals.length > 0 ? `
-    <div style="margin-top: 30px;">
-      <h2 style="font-size: 20px; color: ${EMAIL_THEME.dark}; border-bottom: 2px solid ${EMAIL_THEME.primary}; padding-bottom: 8px; margin-bottom: 20px;">
-        ✨ New Arrivals
-      </h2>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-        ${renderProductCards(collections.newArrivals)}
-      </div>
-    </div>
-  ` : '';
-
-  const discountedHtml = collections.discounted && collections.discounted.length > 0 ? `
-    <div style="margin-top: 40px;">
-      <h2 style="font-size: 20px; color: ${EMAIL_THEME.dark}; border-bottom: 2px solid ${EMAIL_THEME.danger}; padding-bottom: 8px; margin-bottom: 20px;">
-        🔥 Exclusive Deals
-      </h2>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-        ${renderProductCards(collections.discounted)}
-      </div>
-    </div>
-  ` : '';
+  const discountedHtml = renderNewsletterSection({
+    title: 'Special Discounts',
+    intro: 'Current discounted products featured separately, so subscribers can spot active offers right away.',
+    products: discountedProducts,
+    accentColor: EMAIL_THEME.danger,
+    badgeBg: '#FDECEC',
+    badgeText: '#B42318',
+    ctaText: 'Claim Offer'
+  });
 
   const contentHtml = `
     <div class="content-section">
-      <div style="text-align: center; margin-bottom: 30px;">
-        <h2 class="content-title">Your Weekly Yokebud Update</h2>
-        <p class="content-text" style="text-align: center;">
+      <div style="text-align: center; margin-bottom: 28px;">
+        <div style="display: inline-block; padding: 7px 14px; border-radius: 999px; background: #FFF4D8; color: #8A5A00; font-size: 12px; line-height: 18px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: 16px;">
+          Weekly Product Newsletter
+        </div>
+        <h2 class="content-title" style="margin-bottom: 10px;">This Week at Yokebud craft</h2>
+        <p class="content-text" style="text-align: center; margin-bottom: 10px;">
           ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
         </p>
-      </div>
-      
-      <p class="content-text">
-        Hello! Here are the latest curated products and exclusive discounts from Yokebud craft. 
-        Whether you're looking for custom laser engraved gifts or premium crafted art, we've got something special for you this week.
-      </p>
-      
-      ${newArrivalsHtml}
-      ${discountedHtml}
-      
-      <div style="margin-top: 30px; padding: 20px; background: #fff8eb; border-radius: 12px; border: 1px dashed ${EMAIL_THEME.primary};">
-        <p style="margin: 0; font-size: 14px; color: ${EMAIL_THEME.dark}; text-align: center;">
-          <strong>Pro Tip:</strong> Most of our products can be personalized! 
-          Contact us for custom laser engraving requests.
+        <p class="content-text" style="text-align: center; max-width: 520px; margin: 0 auto;">
+          ${totalHighlights > 0
+            ? `We prepared ${escapeEmailHtml(highlightsSummary)} for this week's edition, with newly uploaded products and clearly separated offer items for faster browsing.`
+            : 'We prepared a curated weekly look at what is new on Yokebud craft.'}
         </p>
       </div>
+
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border: 1px solid ${EMAIL_THEME.border}; border-radius: 14px; background: #F9FBFC;">
+        <tr>
+          <td style="padding: 18px 20px;">
+            <div style="font-size: 14px; line-height: 23px; color: ${EMAIL_THEME.text};">
+              You are receiving the latest uploads directly from our store. Whenever a product has a live discount, it appears in its own dedicated section below instead of being mixed into the general product feed.
+            </div>
+          </td>
+        </tr>
+      </table>
+
+      ${newArrivalsHtml}
+      ${discountedHtml}
+
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top: 28px; border: 1px dashed ${EMAIL_THEME.primary}; border-radius: 14px; background: #FFF9ED;">
+        <tr>
+          <td style="padding: 20px;">
+            <div style="font-size: 16px; line-height: 24px; color: ${EMAIL_THEME.dark}; font-weight: 700; margin-bottom: 6px; text-align: center;">
+              Custom engraving available
+            </div>
+            <div style="font-size: 14px; line-height: 22px; color: ${EMAIL_THEME.textLight}; text-align: center;">
+              Many of our products can be personalized for gifts, events, and branded orders. Contact us for custom requests and bulk pricing.
+            </div>
+          </td>
+        </tr>
+      </table>
     </div>
   `;
 
   return renderThemedEmail({
-    title: 'Weekly craft Update',
-    subtitle: 'Fresh arrivals & exclusive deals',
+    title: 'Weekly Product Highlights',
+    subtitle: 'Latest uploads and separate discount picks',
     contentHtml,
-    primaryCtaText: 'Shop All Products',
+    primaryCtaText: 'Browse All Products',
     primaryCtaUrl: `${PUBLIC_SITE_URL}/shop`,
     secondaryCtaText: 'Unsubscribe',
     secondaryCtaUrl: unsubscribeLink,
-    footerNote: `Prefer reading first? Visit our blog: <a href="${PUBLIC_SITE_URL}/blog" style="color:${EMAIL_THEME.primary}; text-decoration:none;">${PUBLIC_SITE_URL}/blog</a>`
+    footerNote: `Need inspiration first? Explore the latest stories on our blog: <a href="${PUBLIC_SITE_URL}/blog" style="color:${EMAIL_THEME.primary}; text-decoration:none;">${PUBLIC_SITE_URL}/blog</a>`
   });
 };
 
@@ -3575,6 +3924,43 @@ async function generateSitemapXmlFromDb({ type = 'all' } = {}) {
   try {
     connection = await pool.getConnection();
 
+    const escapeXml = (unsafe) => {
+      return String(unsafe || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    };
+    const absImg = (raw) => {
+      if (!raw) return null;
+      const s = String(raw);
+      if (s.startsWith('http')) return s;
+      const clean = s.startsWith('/') ? s : `/${s}`;
+      if (clean.startsWith('//')) return null;
+      return `${PUBLIC_API_BASE}${clean}`;
+    };
+    const parseImgs = (p) => {
+      try {
+        const raw = p?.images || p?.product_photos || p?.photos || '[]';
+        const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!Array.isArray(list)) return [];
+        return list.map(x => absImg(x)).filter(Boolean).slice(0, 4);
+      } catch { return []; }
+    };
+    const extractProductIdFromPath = (pathVal) => {
+      try {
+        const v = String(pathVal || '');
+        const m1 = v.match(/^\/products\/(\d+)\//);
+        if (m1) return m1[1];
+        const m2 = v.match(/\/products\/[^/]*-(\d+)\/?$/);
+        if (m2) return m2[1];
+        const m3 = v.match(/^\/products\/(\d+)\/?$/);
+        if (m3) return m3[1];
+        return null;
+      } catch { return null; }
+    };
+
     let where = 'WHERE is_active = TRUE AND type != "product_exclude"';
     const params = [];
     if (type && type !== 'all') {
@@ -3590,35 +3976,256 @@ async function generateSitemapXmlFromDb({ type = 'all' } = {}) {
       params
     );
 
-    const header = `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
+    let productImages = new Map();
+    if (type === 'all' || type === 'product') {
+      try {
+        const [pRows] = await connection.query(
+          'SELECT id, product_name, images, product_photos, thumbnail FROM products'
+        );
+        for (const p of pRows) {
+          const imgList = parseImgs(p);
+          if (imgList.length) productImages.set(String(p.id), { imgs: imgList, name: p.product_name || '' });
+          if (p.thumbnail) {
+            const t = absImg(p.thumbnail);
+            if (t && !imgList.length) productImages.set(String(p.id), { imgs: [t], name: p.product_name || '' });
+          }
+        }
+      } catch (imgErr) {
+        console.warn('Product images lookup failed', imgErr.message);
+      }
+    }
+
+    let categoryImages = new Map();
+    if (type === 'all' || type === 'category') {
+      try {
+        const [cRows] = await connection.query(
+          'SELECT id, name, slug, image, image_alt FROM categories WHERE 1'
+        );
+        const toSlugLocal = (str) => {
+          try {
+            return String(str || '').toLowerCase().trim()
+              .replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
+          } catch { return ''; }
+        };
+        for (const c of cRows || []) {
+          const entry = {
+            name: c.name || '',
+            imageUrl: absImg(c.image),
+            imageAlt: c.image_alt || `${c.name || 'Category'} Collection | Yokebud craft Finland`
+          };
+          if (c.slug) categoryImages.set(String(c.slug).toLowerCase().trim(), entry);
+          if (c.name) categoryImages.set(toSlugLocal(c.name), entry);
+        }
+      } catch (catErr) {
+        console.warn('Category images lookup failed', catErr.message);
+      }
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const header = `<?xml version="1.0" encoding="UTF-8"?>\n` +
       `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" ` +
       `xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`;
 
     const nodes = rows.map(r => {
       const loc = `${PUBLIC_SITE_URL}${r.path}`;
-      const lastmod = (r.updated_at ? new Date(r.updated_at) : new Date()).toISOString().slice(0, 10);
+      const updatedMs = r.updated_at ? new Date(r.updated_at).getTime() : 0;
+      const lastmod = (updatedMs && updatedMs > 0) ? new Date(updatedMs).toISOString().slice(0, 10) : today;
       const changefreq = r.changefreq || 'weekly';
-      const priority = r.priority || (r.type === 'product' ? '0.8' : '0.6');
-      const category =
-        r.type === 'static'
-          ? 'Pages'
-          : r.type === 'category'
-            ? 'Categories'
-            : r.type === 'product'
-              ? 'Products'
-              : 'Other';
+      const priority = r.priority || (r.type === 'product' ? '0.8' : (r.type === 'category' ? '0.8' : '0.6'));
 
-      return (
-        `  <url>\n` +
-        `    <loc>${loc}</loc>\n` +
-        `    <lastmod>${lastmod}</lastmod>\n` +
-        `    <changefreq>${changefreq}</changefreq>\n` +
-        `    <priority>${priority}</priority>\n` +
-        `  </url>`
-      );
+      const parts = [];
+      parts.push('  <url>');
+      parts.push(`    <loc>${escapeXml(loc)}</loc>`);
+      parts.push(`    <lastmod>${escapeXml(lastmod)}</lastmod>`);
+      parts.push(`    <changefreq>${escapeXml(changefreq)}</changefreq>`);
+      parts.push(`    <priority>${escapeXml(priority)}</priority>`);
+
+      if (r.type === 'product') {
+        const pid = extractProductIdFromPath(r.path);
+        if (pid && productImages.has(pid)) {
+          const info = productImages.get(pid);
+          for (const img of info.imgs) {
+            parts.push('    <image:image>');
+            parts.push(`      <image:loc>${escapeXml(img)}</image:loc>`);
+            if (info?.name) {
+              parts.push(`      <image:title>${escapeXml(info.name)} | Yokebud craft</image:title>`);
+              parts.push(`      <image:caption>${escapeXml(`${info.name} - Handcrafted personalized gift by Yokebud craft Finland Europe`)}</image:caption>`);
+            }
+            parts.push('    </image:image>');
+          }
+        }
+      } else if (r.type === 'category') {
+        try {
+          const slugMatch = String(r.path || '').match(/^\/shop\/(.+)$/);
+          if (slugMatch && slugMatch[1]) {
+            const slug = slugMatch[1].toLowerCase().trim();
+            const catInfo = categoryImages.get(slug);
+            const nameCapitalized = (catInfo?.name || slug.replace(/-/g, ' ')).replace(/\b\w/g, c => c.toUpperCase());
+            const catImg = catInfo?.imageUrl || absImg(catInfo?.imageUrl) || `${PUBLIC_SITE_URL}/LOGO.png`;
+            const captionBase = (catInfo?.imageAlt && String(catInfo.imageAlt).length > 3)
+              ? catInfo.imageAlt
+              : `Shop ${slug.replace(/-/g, ' ')} products - custom ${slug.replace(/-/g, ' ')}, premium ${slug.replace(/-/g, ' ')} collection, laser engraving, personalized gifts Finland, shipping Europe. Unique ${slug.replace(/-/g, ' ')} gift ideas by Yokebud craft Helsinki.`;
+
+            parts.push('    <image:image>');
+            parts.push(`      <image:loc>${escapeXml(catImg)}</image:loc>`);
+            parts.push(`      <image:title>${escapeXml(`${nameCapitalized} Collection | Yokebud craft Finland Europe`)}</image:title>`);
+            parts.push(`      <image:caption>${escapeXml(captionBase)}</image:caption>`);
+            parts.push('      <image:geo_location>Helsinki, Finland</image:geo_location>');
+            parts.push('    </image:image>');
+          }
+        } catch {}
+      }
+      parts.push('  </url>');
+      return parts.join('\n');
     }).join('\n');
 
     return `${header}\n${nodes}\n</urlset>\n`;
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+function buildSitemapIndexXml(items = []) {
+  const today = new Date().toISOString().slice(0, 10);
+  const nodes = items
+    .filter((item) => item && item.loc)
+    .map((item) =>
+      `  <sitemap>\n` +
+      `    <loc>${String(item.loc)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;')}</loc>\n` +
+      `    <lastmod>${String(item.lastmod || today)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;')}</lastmod>\n` +
+      `  </sitemap>`
+    )
+    .join('\n');
+
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    `${nodes}\n` +
+    `</sitemapindex>\n`
+  );
+}
+
+function buildSimpleUrlsetXml(items = []) {
+  const escapeXml = (unsafe) => {
+    return String(unsafe || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  };
+
+  const nodes = items
+    .filter((item) => item && item.loc)
+    .map((item) => {
+      const parts = [];
+      parts.push('  <url>');
+      parts.push(`    <loc>${escapeXml(item.loc)}</loc>`);
+      parts.push(`    <lastmod>${escapeXml(item.lastmod || new Date().toISOString().slice(0, 10))}</lastmod>`);
+      parts.push(`    <changefreq>${escapeXml(item.changefreq || 'monthly')}</changefreq>`);
+      parts.push(`    <priority>${escapeXml(item.priority || '0.4')}</priority>`);
+      parts.push('  </url>');
+      return parts.join('\n');
+    })
+    .join('\n');
+
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    `${nodes}\n` +
+    `</urlset>\n`
+  );
+}
+
+async function generateComponentSitemapXml() {
+  let connection;
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const componentItems = [];
+    const seen = new Set();
+    const publicRoots = [
+      path.join(__dirname, '..', 'client', 'public'),
+      path.join(__dirname, 'public')
+    ];
+    const allowedExtensions = new Set([
+      '.png', '.jpg', '.jpeg', '.svg', '.webp', '.gif', '.ico', '.avif',
+      '.glb', '.gltf', '.json', '.webmanifest', '.txt', '.pdf', '.js', '.css'
+    ]);
+    const excludedNames = new Set([
+      'robots.txt',
+      'sitemap.xml',
+      'product-sitemap.xml',
+      'category-sitemap.xml',
+      'page-sitemap.xml',
+      'blog-sitemap.xml',
+      'component-sitemap.xml'
+    ]);
+
+    const addItem = (loc, lastmod = today, changefreq = 'monthly', priority = '0.3') => {
+      const normalized = String(loc || '').trim();
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      componentItems.push({ loc: normalized, lastmod, changefreq, priority });
+    };
+
+    const walk = (rootPath, dirPath) => {
+      for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+        const fullPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+          walk(rootPath, fullPath);
+          continue;
+        }
+
+        const ext = path.extname(entry.name).toLowerCase();
+        if (!allowedExtensions.has(ext)) continue;
+        if (excludedNames.has(entry.name.toLowerCase())) continue;
+
+        const relativePath = path.relative(rootPath, fullPath).replace(/\\/g, '/');
+        const stats = fs.statSync(fullPath);
+        addItem(
+          `${PUBLIC_SITE_URL}/${relativePath}`,
+          new Date(stats.mtimeMs || Date.now()).toISOString().slice(0, 10),
+          ext === '.json' || ext === '.txt' ? 'weekly' : 'monthly',
+          ['.png', '.jpg', '.jpeg', '.svg', '.webp'].includes(ext) ? '0.5' : '0.3'
+        );
+      }
+    };
+
+    for (const rootPath of publicRoots) {
+      if (!fs.existsSync(rootPath)) continue;
+      walk(rootPath, rootPath);
+    }
+
+    connection = await pool.getConnection();
+    const [rows] = await connection.query(
+      `SELECT path, priority, changefreq, updated_at, type, is_active
+       FROM sitemap_entries
+       WHERE is_active = TRUE
+         AND type NOT IN ('static', 'product', 'category', 'blog', 'product_exclude')`
+    );
+
+    for (const row of rows || []) {
+      addItem(
+        `${PUBLIC_SITE_URL}${row.path}`,
+        row.updated_at ? new Date(row.updated_at).toISOString().slice(0, 10) : today,
+        row.changefreq || 'monthly',
+        row.priority || '0.4'
+      );
+    }
+
+    componentItems.sort((a, b) => a.loc.localeCompare(b.loc));
+    return buildSimpleUrlsetXml(componentItems);
   } finally {
     if (connection) connection.release();
   }
@@ -3633,48 +4240,15 @@ function sendXml(res, xml) {
   res.send(xml);
 }
 
-// Serve XSL from same origin (api.yokebud.fi) so browser can apply it to sitemap XML (no cross-origin block)
-app.get('/sitemap.xsl', (req, res) => {
-  try {
-    const xslPath = path.join(__dirname, '..', 'client', 'public', 'sitemap.xsl');
-    if (!fs.existsSync(xslPath)) {
-      return res.status(404).send('sitemap.xsl not found');
-    }
-    const xsl = fs.readFileSync(xslPath, 'utf8');
-    res.setHeader('Cache-Control', 'no-store, max-age=0');
-    res.setHeader('Content-Type', 'application/xml');
-    res.send(xsl);
-  } catch (err) {
-    console.error('sitemap.xsl serve error:', err);
-    res.status(500).send('Error loading stylesheet');
-  }
-});
-
 app.get('/sitemap.xml', async (req, res) => {
   try {
-    // Sitemap index: only points to other sitemaps (no URL list here)
-    const today = new Date().toISOString().slice(0, 10);
-    const xml =
-      `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
-      `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
-      `  <sitemap>\n` +
-      `    <loc>${PUBLIC_SITE_URL}/page-sitemap.xml</loc>\n` +
-      `    <lastmod>${today}</lastmod>\n` +
-      `  </sitemap>\n` +
-      `  <sitemap>\n` +
-      `    <loc>${PUBLIC_SITE_URL}/category-sitemap.xml</loc>\n` +
-      `    <lastmod>${today}</lastmod>\n` +
-      `  </sitemap>\n` +
-      `  <sitemap>\n` +
-      `    <loc>${PUBLIC_SITE_URL}/product-sitemap.xml</loc>\n` +
-      `    <lastmod>${today}</lastmod>\n` +
-      `  </sitemap>\n` +
-      `  <sitemap>\n` +
-      `    <loc>${PUBLIC_SITE_URL}/blog-sitemap.xml</loc>\n` +
-      `    <lastmod>${today}</lastmod>\n` +
-      `  </sitemap>\n` +
-      `</sitemapindex>\n`;
-
+    const xml = buildSitemapIndexXml([
+      { loc: `${PUBLIC_SITE_URL}/product-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/category-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/blog-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/page-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/component-sitemap.xml` }
+    ]);
     return sendXml(res, xml);
   } catch (error) {
     console.error('Sitemap index generation error:', error);
@@ -3683,67 +4257,17 @@ app.get('/sitemap.xml', async (req, res) => {
 });
 
 app.get('/product-sitemap.xml', async (req, res) => {
-  let connection;
   try {
-    connection = await pool.getConnection();
-
-    // Fetch only PRODUCT-type entries from the sitemap_entries table
-    const [entries] = await connection.query(
-      'SELECT path, priority, changefreq, is_active, created_at, updated_at FROM sitemap_entries WHERE type = "product"'
-    );
-
-    const today = new Date().toISOString().slice(0, 10);
-    const header =
-      `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
-      `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" ` +
-      `xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`;
-
-    const nodes = (entries || [])
-      .filter((e) => {
-        // Treat anything that looks like 0 / '0' / false as inactive
-        const active =
-          e.is_active === undefined || e.is_active === null
-            ? true
-            : !(e.is_active === 0 || e.is_active === '0' || e.is_active === false);
-        return active && e.path;
-      })
-      .map((e) => {
-        const lastmodSource = e.updated_at || e.created_at;
-        const lastmod =
-          lastmodSource instanceof Date
-            ? lastmodSource.toISOString().slice(0, 10)
-            : lastmodSource
-              ? new Date(lastmodSource).toISOString().slice(0, 10)
-              : today;
-
-        const loc = `${PUBLIC_SITE_URL}${e.path}`;
-        const priority = e.priority || '0.8';
-        const changefreq = e.changefreq || 'weekly';
-
-        return [
-          '  <url>',
-          `    <loc>${loc}</loc>`,
-          `    <lastmod>${lastmod}</lastmod>`,
-          `    <changefreq>${changefreq}</changefreq>`,
-          `    <priority>${priority}</priority>`,
-          '  </url>'
-        ].join('\n');
-      })
-      .join('\n');
-
-    const xml = `${header}\n${nodes}\n</urlset>\n`;
+    const xml = await generateSitemapXmlFromDb({ type: 'product' });
     return sendXml(res, xml);
   } catch (error) {
     console.error('Product sitemap generation error:', error);
     res.status(500).send('Sitemap unavailable');
-  } finally {
-    if (connection) connection.release();
   }
 });
 
 app.get('/category-sitemap.xml', async (req, res) => {
   try {
-    // Real-time from sitemap_entries (AdminSitemap edits reflected immediately)
     const xml = await generateSitemapXmlFromDb({ type: 'category' });
     return sendXml(res, xml);
   } catch (error) {
@@ -3752,89 +4276,12 @@ app.get('/category-sitemap.xml', async (req, res) => {
   }
 });
 
-// Per-category product sitemap XML
-// Example: /category-sitemap-jewelry.xml
-app.get('/category-sitemap-:slug.xml', async (req, res) => {
+app.get('/blog-sitemap.xml', async (req, res) => {
   try {
-    const { slug } = req.params;
-    if (!slug) return res.status(400).send('Bad request');
-
-    const toSlug = (str) => {
-      try {
-        return String(str || '')
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9\s-]/g, '')
-          .replace(/\s+/g, '-')
-          .replace(/-+/g, '-')
-          .slice(0, 80);
-      } catch {
-        return '';
-      }
-    };
-
-    let connection;
-    try {
-      connection = await pool.getConnection();
-      const [cats] = await connection.query('SELECT name FROM categories');
-      const categoryName =
-        (cats || []).map((c) => c.name).find((name) => toSlug(name) === String(slug).toLowerCase()) || null;
-
-      if (!categoryName) {
-        const empty =
-          `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
-          `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>\n`;
-        return sendXml(res, empty);
-      }
-
-      // Fetch products that match this category
-      // products.category can be JSON array or string; handle both.
-      const [rows] = await connection.query(
-        `SELECT id, product_name, sitemap_path, updated_at, category
-         FROM products
-         WHERE (
-           category = ?
-           OR JSON_CONTAINS(category, JSON_QUOTE(?))
-         )`,
-        [categoryName, categoryName]
-      );
-
-      const today = new Date().toISOString().slice(0, 10);
-      const header = `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
-        `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`;
-
-      const safeSlug = (name) =>
-        String(name || 'product')
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9\s-]/g, '')
-          .replace(/\s+/g, '-')
-          .replace(/-+/g, '-')
-          .slice(0, 80);
-
-      const nodes = (rows || [])
-        .map((p) => {
-          const path = p.sitemap_path || `/products/${p.id}/${safeSlug(p.product_name)}`;
-          const loc = `${PUBLIC_SITE_URL}${path}`;
-          const lastmod = (p.updated_at ? new Date(p.updated_at) : new Date(today)).toISOString().slice(0, 10);
-          return (
-            `  <url>\n` +
-            `    <loc>${loc}</loc>\n` +
-            `    <lastmod>${lastmod}</lastmod>\n` +
-            `    <changefreq>weekly</changefreq>\n` +
-            `    <priority>0.8</priority>\n` +
-            `  </url>`
-          );
-        })
-        .join('\n');
-
-      const xml = `${header}\n${nodes}\n</urlset>\n`;
-      return sendXml(res, xml);
-    } finally {
-      if (connection) connection.release();
-    }
+    const xml = await generateSitemapXmlFromDb({ type: 'blog' });
+    return sendXml(res, xml);
   } catch (error) {
-    console.error('Per-category sitemap generation error:', error);
+    console.error('Blog sitemap generation error:', error);
     res.status(500).send('Sitemap unavailable');
   }
 });
@@ -3849,122 +4296,88 @@ app.get('/page-sitemap.xml', async (req, res) => {
   }
 });
 
-// Blog sitemap: list of /blog and individual blog posts
-// Uses blog table for URLs and optionally overrides priority/changefreq/activation
-// based on matching entries in sitemap_entries (editable from AdminSitemap).
-app.get('/blog-sitemap.xml', async (req, res) => {
-  let connection;
+app.get('/component-sitemap.xml', async (req, res) => {
   try {
-    connection = await pool.getConnection();
-    // Do not depend on slug column existing; we generate slugs from title/excerpt.
-    // Use all blogs to keep behavior consistent with sitemap.
-    const [blogs] = await connection.query(
-      'SELECT title, excerpt, updated_at, created_at, is_published FROM blogs ORDER BY created_at DESC'
-    );
-
-    // Optional overrides coming from sitemap_entries so admin can tune blog URLs.
-    const [sitemapEntries] = await connection.query(
-      "SELECT path, priority, changefreq, is_active, type FROM sitemap_entries WHERE path = '/blog' OR path LIKE '/blogs/%' OR type = 'blog'"
-    );
-
-    const today = new Date().toISOString().slice(0, 10);
-
-    const createSlug = (title, excerpt) => {
-      try {
-        if (!title) return '';
-        const base = String(title)
-          .toLowerCase()
-          .replace(/[^\w\s-]/g, '')
-          .replace(/[\s_]+/g, '-')
-          .replace(/^-+|-+$/g, '');
-
-        if (!excerpt) return base;
-        const kw = String(excerpt)
-          .toLowerCase()
-          .replace(/[^\w\s-]/g, '')
-          .replace(/[\s_]+/g, '-')
-          .replace(/^-+|-+$/g, '');
-
-        return kw ? `${base}-${kw}` : base;
-      } catch {
-        return '';
-      }
-    };
-
-    const isEntryActive = (entry) => {
-      if (!entry) return true;
-      const v = entry.is_active;
-      if (v === undefined || v === null) return true;
-      return !(v === 0 || v === '0' || v === false);
-    };
-
-    const findConfigForPath = (path) =>
-      (sitemapEntries || []).find((e) => e.path === path);
-
-    const header =
-      `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
-      `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`;
-
-    const nodes = [];
-
-    // Main blog listing page
-    const mainPath = '/blog';
-    const mainCfg = findConfigForPath(mainPath);
-    if (isEntryActive(mainCfg)) {
-      const mainPriority = (mainCfg && mainCfg.priority) || '0.6';
-      const mainFreq = (mainCfg && mainCfg.changefreq) || 'weekly';
-      nodes.push(
-        `  <url>\n` +
-        `    <loc>${PUBLIC_SITE_URL}${mainPath}</loc>\n` +
-        `    <lastmod>${today}</lastmod>\n` +
-        `    <changefreq>${mainFreq}</changefreq>\n` +
-        `    <priority>${mainPriority}</priority>\n` +
-        `  </url>`
-      );
-    }
-
-    // Individual blog posts
-    for (const b of blogs || []) {
-      const slugFromTitle = createSlug(b.title, b.excerpt);
-      const path = slugFromTitle ? `/blogs/${slugFromTitle}` : `/blogs/${b.slug || ''}`;
-      const cfg = findConfigForPath(path);
-      if (!isEntryActive(cfg)) continue; // allow admin to deactivate a single blog URL
-
-      const loc = `${PUBLIC_SITE_URL}${path}`;
-      const lastmod =
-        (b.updated_at || b.created_at || new Date()).toISOString().slice(0, 10);
-      const priority = (cfg && cfg.priority) || '0.5';
-      const freq = (cfg && cfg.changefreq) || 'weekly';
-
-      nodes.push(
-        `  <url>\n` +
-        `    <loc>${loc}</loc>\n` +
-        `    <lastmod>${lastmod}</lastmod>\n` +
-        `    <changefreq>${freq}</changefreq>\n` +
-        `    <priority>${priority}</priority>\n` +
-        `  </url>`
-      );
-    }
-
-    const xml = `${header}\n${nodes.join('\n')}\n</urlset>\n`;
+    const xml = await generateComponentSitemapXml();
     return sendXml(res, xml);
   } catch (error) {
-    console.error('Blog sitemap generation error:', error);
+    console.error('Component sitemap generation error:', error);
     res.status(500).send('Sitemap unavailable');
-  } finally {
-    if (connection) connection.release();
   }
 });
+
+app.get('/category-sitemap-:slug.xml', (req, res) => {
+  res.redirect(301, '/category-sitemap.xml');
+});
+
+// Helper: Notify Google & Bing when sitemap is regenerated
+async function pingSitemapToSearchEngines(sitemapUrl) {
+  const target = sitemapUrl || `${PUBLIC_SITE_URL}/sitemap.xml`;
+  const encoded = encodeURIComponent(target);
+  const endpoints = [
+    `https://www.google.com/ping?sitemap=${encoded}`,
+    `https://www.bing.com/ping?sitemap=${encoded}`
+  ];
+  const results = [];
+  for (const ep of endpoints) {
+    try {
+      // Use node:https/http directly so no new dependency needed
+      const isHttps = ep.startsWith('https:');
+      const lib = require(isHttps ? 'https' : 'http');
+      const p = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => { reject(new Error('timeout')); }, 4000);
+        const req = lib.get(ep, (res) => {
+          clearTimeout(timeout);
+          resolve({ ok: res.statusCode >= 200 && res.statusCode < 400, status: res.statusCode });
+          res.resume();
+        }).on('error', (e) => { clearTimeout(timeout); reject(e); });
+        req.setTimeout(4000, () => { req.destroy(); reject(new Error('timeout')); });
+      });
+      const r = await p;
+      results.push({ endpoint: ep, ...r });
+    } catch (err) {
+      results.push({ endpoint: ep, ok: false, error: err.message });
+    }
+  }
+  console.log('📡 Search engine ping results:', JSON.stringify(results));
+  return results;
+}
 
 // robots.txt
 app.get('/robots.txt', (req, res) => {
   const lines = [
     'User-agent: *',
-    'Disallow: /admin',
     'Allow: /',
+    '',
+    '# Allow images & static assets to be indexed for Image Search',
+    'Allow: /uploads/',
+    'Allow: /upload/',
+    'Allow: /images/',
+    'Allow: /img/',
+    'Allow: /static/',
+    'Allow: /LOGO.png',
+    '',
+    '# Protect admin & internal paths',
+    'Disallow: /admin',
+    'Disallow: /admin/',
+    'Disallow: /admin/*',
+    'Disallow: /admin/login',
+    'Disallow: /api/admin/',
+    'Disallow: /cart',
+    'Disallow: /checkout',
+    'Disallow: /account',
+    'Disallow: /inquiry',
+    '',
+    '# Finland / Europe / Global friendly crawl delay',
+    'Crawl-delay: 1',
+    '',
+    `Host: ${PUBLIC_SITE_URL.replace(/^https?:\/\//, '')}`,
+    '',
+    '# Canonical sitemap',
     `Sitemap: ${PUBLIC_SITE_URL}/sitemap.xml`
   ];
   res.header('Content-Type', 'text/plain');
+  res.header('Cache-Control', 'public, max-age=3600');
   res.send(lines.join('\n'));
 });
 
@@ -4091,20 +4504,22 @@ app.post('/api/create-checkout-session', async (req, res) => {
       items = [],
       currency = 'eur',
       customer = {},
+      totals = null,
+      shippingMethod = 'automatic',
       successUrl,
       cancelUrl,
       shipping = 0
     } = req.body || {};
 
-    // Normalize items and compute server-side shipping (exclude free-shipping items)
+    // Normalize items and compute server-side shipping from server-trusted rules
     const normalizedItems = (Array.isArray(items) ? items : []).map(it => ({
       ...it,
-      free_shipping: Boolean((it.free_shipping) || (it.product && it.product.metadata && it.product.metadata.free_shipping))
+      free_shipping: getNormalizedFreeShippingConfig(it).enabled,
+      free_shipping_min_amount: getNormalizedFreeShippingConfig(it).minimumAmount
     }));
 
     const computeServerShippingSimple = (itemsArr, country, city) => {
-      const chargeable = (itemsArr || []).filter(i => !Boolean(i.free_shipping));
-      if (!chargeable || chargeable.length === 0) return 0;
+      if (!itemsArr || itemsArr.length === 0) return 0;
       const countryRates = {
         "Finland": { base: 3.0, zones: { "Helsinki": 2.5, "Espoo": 2.5, "Tampere": 2.8, "Vantaa": 2.5, "Oulu": 3.2, "Turku": 2.8 }},
         "Sweden": { base: 8.0 },
@@ -4124,7 +4539,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
         { max: 0.5, rate: 0 }, { max: 1, rate: 0 }, { max: 2, rate: 3 }, { max: 5, rate: 8 }, { max: 10, rate: 15 }, { max: 20, rate: 25 }, { max: Infinity, rate: 40 }
       ];
       const defaultCountryConfig = { base: 15.0 };
-      const totalActualWeight = chargeable.reduce((sum, item) => {
+      const totalActualWeight = itemsArr.reduce((sum, item) => {
         let itemWeight = 0.2;
         const category = (item.category || (item.product && item.product.category) || '').toString().toLowerCase();
         if (item.shipping) itemWeight = Number(item.shipping) || itemWeight;
@@ -4139,7 +4554,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
         }
         return sum + (itemWeight * (Number(item.quantity) || 1));
       }, 0);
-      const totalVolumetricWeight = chargeable.reduce((sum, item) => {
+      const totalVolumetricWeight = itemsArr.reduce((sum, item) => {
         let dimensions = null;
         if (item.customization_dimensions || (item.product && item.product.customization_dimensions)) {
           dimensions = item.customization_dimensions || (item.product && item.product.customization_dimensions);
@@ -4165,8 +4580,23 @@ app.post('/api/create-checkout-session', async (req, res) => {
       return Math.round(totalShipping * 100) / 100;
     };
 
-    const serverShippingForSession = computeServerShippingSimple(normalizedItems, (customer && customer.country) || '', (customer && customer.city) || '');
-    const shippingToUse = Number(serverShippingForSession || shipping || 0);
+    const promoDiscount = Number(totals?.promoDiscount || totals?.promo || 0) || 0;
+    const subtotal = Number(totals?.subtotal);
+    const merchandiseTotal = Math.max(
+      (Number.isFinite(subtotal) ? subtotal : calculateItemsMerchandiseTotal(normalizedItems)) - promoDiscount,
+      0
+    );
+    const freeShippingStatus = getFreeShippingStatus(normalizedItems, merchandiseTotal);
+    const requestedShippingMethod = String(totals?.shippingMethod || shippingMethod || 'automatic');
+    const effectiveShippingMethod = requestedShippingMethod === 'pickup'
+      ? 'pickup'
+      : (freeShippingStatus.qualifies ? 'free' : 'automatic');
+    const serverShippingForSession = effectiveShippingMethod === 'automatic'
+      ? computeServerShippingSimple(normalizedItems, (customer && customer.country) || '', (customer && customer.city) || '')
+      : 0;
+    const shippingToUse = effectiveShippingMethod === 'automatic'
+      ? Number(serverShippingForSession ?? shipping ?? 0)
+      : 0;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: 'No items provided' });
@@ -7321,11 +7751,14 @@ app.post('/api/checkout', async (req, res) => {
 
     try {
       const arrItems = Array.isArray(items) ? items : [];
-      // Normalize items: ensure free_shipping flag is present (from item or product.metadata)
-      const processedItems = arrItems.map(it => ({
-        ...it,
-        free_shipping: Boolean((it.free_shipping) || (it.product && it.product.metadata && it.product.metadata.free_shipping))
-      }));
+      const processedItems = arrItems.map(it => {
+        const freeShippingConfig = getNormalizedFreeShippingConfig(it);
+        return {
+          ...it,
+          free_shipping: freeShippingConfig.enabled,
+          free_shipping_min_amount: freeShippingConfig.minimumAmount
+        };
+      });
 
       for (const it of processedItems) {
         const pid = it && it.id != null ? Number(it.id) : null;
@@ -7374,9 +7807,7 @@ app.post('/api/checkout', async (req, res) => {
       }
       // After updating stock and variants, recompute shipping server-side to avoid client tampering
       const computeServerShipping = (itemsArr, country, city) => {
-        // Exclude free-shipping items
-        const chargeable = (itemsArr || []).filter(i => !Boolean(i.free_shipping));
-        if (!chargeable || chargeable.length === 0) return 0;
+        if (!itemsArr || itemsArr.length === 0) return 0;
 
         const countryRates = {
           "Finland": { base: 3.0, zones: { "Helsinki": 2.5, "Espoo": 2.5, "Tampere": 2.8, "Vantaa": 2.5, "Oulu": 3.2, "Turku": 2.8 }},
@@ -7406,7 +7837,7 @@ app.post('/api/checkout', async (req, res) => {
 
         const defaultCountryConfig = { base: 15.0 };
 
-        const totalActualWeight = chargeable.reduce((sum, item) => {
+        const totalActualWeight = itemsArr.reduce((sum, item) => {
           let itemWeight = 0.2;
           const category = (item.category || (item.product && item.product.category) || '').toString().toLowerCase();
           if (item.shipping) {
@@ -7426,7 +7857,7 @@ app.post('/api/checkout', async (req, res) => {
           return sum + (itemWeight * (Number(item.quantity) || 1));
         }, 0);
 
-        const totalVolumetricWeight = chargeable.reduce((sum, item) => {
+        const totalVolumetricWeight = itemsArr.reduce((sum, item) => {
           let dimensions = null;
           if (item.customization_dimensions || (item.product && item.product.customization_dimensions)) {
             dimensions = item.customization_dimensions || (item.product && item.product.customization_dimensions);
@@ -7460,14 +7891,27 @@ app.post('/api/checkout', async (req, res) => {
 
       // Compute server-side shipping and override client-sent shipping to prevent tampering
       try {
-        const serverShipping = computeServerShipping(processedItems, customerInfo.country, customerInfo.city);
+        const promo = Number(req.body?.totals?.promoDiscount || req.body?.totals?.promo || 0) || 0;
+        const subtotal = Number(req.body?.totals?.subtotal);
+        const merchandiseTotal = Math.max(
+          (Number.isFinite(subtotal) ? subtotal : calculateItemsMerchandiseTotal(processedItems)) - promo,
+          0
+        );
+        const freeShippingStatus = getFreeShippingStatus(processedItems, merchandiseTotal);
+        const requestedShippingMethod = String(req.body?.totals?.shippingMethod || 'automatic');
+        const effectiveShippingMethod = requestedShippingMethod === 'pickup'
+          ? 'pickup'
+          : (freeShippingStatus.qualifies ? 'free' : 'automatic');
+        const serverShipping = effectiveShippingMethod === 'automatic'
+          ? computeServerShipping(processedItems, customerInfo.country, customerInfo.city)
+          : 0;
         if (!totals || typeof totals !== 'object') {
           req.body.totals = {};
         }
         req.body.totals.shipping = serverShipping;
+        req.body.totals.shippingMethod = effectiveShippingMethod;
         // Recalculate grand total if subtotal present
         if (req.body.totals && typeof req.body.totals.subtotal === 'number') {
-          const promo = Number(req.body.totals.promoDiscount || req.body.totals.promo || 0) || 0;
           req.body.totals.total = Math.round(((req.body.totals.subtotal - promo) + serverShipping) * 100) / 100;
         }
         // Replace items with processedItems for saving
@@ -8037,10 +8481,30 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     const finalSeoKeywords = req.body.seo_keywords || seo.seo_keywords;
     const finalSchemaJson = req.body.schema_json ? JSON.stringify(req.body.schema_json) : JSON.stringify(seo.schema_json);
 
+    const metadataPayload = metadata && typeof metadata === 'object' ? metadata : {};
+    const freeShipping = isFreeShippingEnabled(metadataPayload.free_shipping ?? req.body.free_shipping);
+    const freeShippingMinAmount = freeShipping
+      ? parseFreeShippingMinAmount(metadataPayload.free_shipping_min_amount ?? req.body.free_shipping_min_amount)
+      : null;
+
+    if (freeShipping && freeShippingMinAmount === null) {
+      connection.release();
+      return res.status(400).json({ success: false, message: 'Please provide a valid free shipping minimum amount.' });
+    }
+
     // Insert product into database
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageArray);
-    const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount });
+    const metadataJson = JSON.stringify({
+      tags: Array.isArray(tags) ? tags : (Array.isArray(metadataPayload.tags) ? metadataPayload.tags : []),
+      features: Array.isArray(features) ? features : (Array.isArray(metadataPayload.features) ? metadataPayload.features : []),
+      moq: moq ?? metadataPayload.moq ?? 1,
+      shipping: shipping ?? metadataPayload.shipping ?? '',
+      warranty: warranty ?? metadataPayload.warranty ?? '',
+      bulk_discount: bulk_discount ?? metadataPayload.bulk_discount ?? '',
+      free_shipping: freeShipping,
+      free_shipping_min_amount: freeShippingMinAmount
+    });
 
     // Debug: log customization_mode for incoming create
     console.log('CREATE product - customization_mode:', req.body.customization_mode);
@@ -8052,6 +8516,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         discounted_price,
         category,
         stock,
+        moq,
         material,
         care_instructions,
         sku,
@@ -8081,7 +8546,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_mode,
         customization_images,
         customization_dimensions
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
@@ -8089,6 +8554,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
+        parseInt(moq) || 1,
         material,
         care,
         sku,
@@ -8198,6 +8664,19 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       discount_ranges
     } = req.body;
 
+    const metadataPayload = req.body.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
+    const freeShipping = isFreeShippingEnabled(metadataPayload.free_shipping ?? req.body.free_shipping);
+    const freeShippingMinAmount = freeShipping
+      ? parseFreeShippingMinAmount(metadataPayload.free_shipping_min_amount ?? req.body.free_shipping_min_amount)
+      : null;
+
+    if (freeShipping && freeShippingMinAmount === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid free shipping minimum amount.'
+      });
+    }
+
     const validation = validateProductPayload({
       name,
       description,
@@ -8272,7 +8751,16 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageUrls);
-    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, bulk_discount });
+    const metadataJson = JSON.stringify({
+      tags,
+      features,
+      moq: moq ?? metadataPayload.moq ?? 1,
+      shipping,
+      warranty,
+      bulk_discount,
+      free_shipping: freeShipping,
+      free_shipping_min_amount: freeShippingMinAmount
+    });
 
     // Auto-generate SEO fields if not provided
     const seo = generateProductSEO(name, description, finalPrice, imageUrls);
@@ -8289,6 +8777,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         discounted_price = ?,
         category = ?,
         stock = ?,
+        moq = ?,
         material = ?,
         care_instructions = ?,
         sku = ?,
@@ -8327,6 +8816,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
+        parseInt(moq) || 1,
         material,
         care,
         sku,
@@ -8447,6 +8937,7 @@ app.get('/api/products/:id', async (req, res) => {
 
     // Format response with price range
     const meta = product.metadata ? JSON.parse(product.metadata) : null;
+    const freeShippingMinAmount = parseFreeShippingMinAmount(meta?.free_shipping_min_amount);
     const priceRange = meta && meta.price_range && typeof meta.price_range === 'object' ? meta.price_range : null;
     // Fetch discount ranges
     console.log('Fetching discount ranges for productId:', productId);
@@ -8467,11 +8958,13 @@ app.get('/api/products/:id', async (req, res) => {
       categories: categories,
       category: categories[0],
       stock: product.stock,
-      moq: product.moq,
+      moq: product.moq ?? (meta && meta.moq) ?? 1,
       material: product.material,
       care_instructions: product.care_instructions,
       sku: product.sku,
       shipping_info: product.shipping_info,
+      free_shipping: isFreeShippingEnabled(meta?.free_shipping),
+      free_shipping_min_amount: freeShippingMinAmount,
       warranty: product.warranty,
       bulk_discount: product.bulk_discount,
       sizes: JSON.parse(product.sizes || '[]'),
@@ -8561,6 +9054,7 @@ app.get('/api/products', async (req, res) => {
       }
 
       const meta = product.metadata ? JSON.parse(product.metadata) : null;
+      const freeShippingMinAmount = parseFreeShippingMinAmount(meta?.free_shipping_min_amount);
       const priceRange = meta && meta.price_range && typeof meta.price_range === 'object' ? meta.price_range : null;
 
       const sum = summaryMap.get(Number(product.id)) || { rating: null, review_count: 0 };
@@ -8577,6 +9071,7 @@ app.get('/api/products', async (req, res) => {
         colors: JSON.parse(product.colors || '[]'),
         sizes: JSON.parse(product.sizes || '[]'),
         product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]'),
+        metadata: meta,
         tags: JSON.parse(product.tags || '[]'),
         features: JSON.parse(product.features || '[]'),
         min_price: priceRange && priceRange.min != null ? Number(priceRange.min) : (product.discounted_price || product.price),
@@ -8594,7 +9089,10 @@ app.get('/api/products', async (req, res) => {
         schema_json: product.schema_json ? (typeof product.schema_json === 'string' ? JSON.parse(product.schema_json) : product.schema_json) : null,
         thumbnail: product.thumbnail,
         stock: product.stock,
+        moq: product.moq ?? (meta && meta.moq) ?? 1,
         sku: product.sku,
+        free_shipping: isFreeShippingEnabled(meta?.free_shipping),
+        free_shipping_min_amount: freeShippingMinAmount,
         customization_mode: product.customization_mode || null,
         created_at: product.created_at,
         updated_at: product.updated_at,
@@ -9276,6 +9774,8 @@ app.get('/api/products/slug/:slug', async (req, res) => {
     } catch (e) {
       categories = [product.category];
     }
+    const meta = product.metadata ? JSON.parse(product.metadata) : null;
+    const freeShippingMinAmount = parseFreeShippingMinAmount(meta?.free_shipping_min_amount);
     res.json({
       id: product.id,
       product_name: product.product_name,
@@ -9288,11 +9788,13 @@ app.get('/api/products/slug/:slug', async (req, res) => {
       categories,
       category: categories[0],
       stock: product.stock,
-      moq: product.moq,
+      moq: product.moq ?? (meta && meta.moq) ?? 1,
       material: product.material,
       care_instructions: product.care_instructions,
       sku: product.sku,
       shipping_info: product.shipping_info,
+      free_shipping: isFreeShippingEnabled(meta?.free_shipping),
+      free_shipping_min_amount: freeShippingMinAmount,
       warranty: product.warranty,
       bulk_discount: product.bulk_discount,
       sizes: JSON.parse(product.sizes || '[]'),
@@ -9321,18 +9823,24 @@ app.get('/api/products/featured', async (req, res) => {
     const connection = await pool.getConnection();
     const [rows] = await connection.query('SELECT * FROM products WHERE status = ? AND featured = 1 ORDER BY updated_at DESC LIMIT ?', ['active', limit]);
     connection.release();
-    const products = rows.map(product => ({
-      id: product.id,
-      product_name: product.product_name,
-      product_description: product.product_details || product.product_description,
-      price: product.price,
-      discounted_price: product.discounted_price,
-      min_price: product.discounted_price || product.price,
-      max_price: product.price,
-      slug: product.slug,
-      thumbnail: product.thumbnail,
-      product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]')
-    }));
+    const products = rows.map(product => {
+      const meta = product.metadata ? JSON.parse(product.metadata) : null;
+      return {
+        id: product.id,
+        product_name: product.product_name,
+        product_description: product.product_details || product.product_description,
+        price: product.price,
+        discounted_price: product.discounted_price,
+        min_price: product.discounted_price || product.price,
+        max_price: product.price,
+        slug: product.slug,
+        thumbnail: product.thumbnail,
+        product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]'),
+        metadata: meta,
+        free_shipping: isFreeShippingEnabled(meta?.free_shipping),
+        free_shipping_min_amount: parseFreeShippingMinAmount(meta?.free_shipping_min_amount)
+      };
+    });
     res.json(products);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch featured products' });
@@ -9982,6 +10490,29 @@ app.get('/api/admin/users/summary', requireAdminAuth, async (req, res) => {
     });
   } catch (error) {
     console.error('Users summary error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: user profiles list for dashboard
+app.get('/api/admin/user-profiles', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [rows] = await connection.query(`
+      SELECT id, user_id, first_name, last_name, phone, address, house_number,
+             apartment, landmark, city, state, zip_code, country,
+             profile_picture, date_of_birth, created_at, updated_at
+      FROM user_profiles
+      WHERE 1
+      ORDER BY created_at DESC
+    `);
+
+    connection.release();
+    res.json({ success: true, users: rows });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Admin user profiles error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -10800,39 +11331,52 @@ const normalizeNewsletterProducts = (productList) => {
 };
 
 const getWeeklyNewsletterCollections = async (connection) => {
-  let [newArrivals] = await connection.query(`
-      SELECT p.*, 
+  const [discountedProducts] = await connection.query(`
+      SELECT p.*,
              JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
-      FROM products p 
-      WHERE p.stock > 0 AND p.status = 'active'
-      AND p.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
-      ORDER BY p.created_at DESC 
+      FROM products p
+      WHERE p.stock > 0
+        AND p.status = 'active'
+        AND p.discounted_price IS NOT NULL
+        AND p.discounted_price < p.price
+      ORDER BY p.updated_at DESC, p.created_at DESC
       LIMIT 4
     `);
 
-  if (!newArrivals || newArrivals.length === 0) {
-    [newArrivals] = await connection.query(`
-      SELECT p.*, 
-             JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
-      FROM products p 
-      WHERE p.stock > 0 AND p.status = 'active'
-      ORDER BY p.created_at DESC 
-      LIMIT 4
-    `);
+  const discountedIds = discountedProducts.map(product => Number(product.id)).filter(Boolean);
+  let latestProducts = [];
+
+  if (discountedIds.length > 0) {
+    const placeholders = discountedIds.map(() => '?').join(', ');
+    const [latestWithoutDiscounts] = await connection.query(
+      `
+        SELECT p.*,
+               JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
+        FROM products p
+        WHERE p.stock > 0
+          AND p.status = 'active'
+          AND p.id NOT IN (${placeholders})
+        ORDER BY p.created_at DESC
+        LIMIT 4
+      `,
+      discountedIds
+    );
+    latestProducts = latestWithoutDiscounts;
+  } else {
+    const [latestOnly] = await connection.query(`
+        SELECT p.*,
+               JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
+        FROM products p
+        WHERE p.stock > 0
+          AND p.status = 'active'
+        ORDER BY p.created_at DESC
+        LIMIT 4
+      `);
+    latestProducts = latestOnly;
   }
 
-  const [discountedProducts] = await connection.query(`
-      SELECT p.*, 
-             JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
-      FROM products p 
-      WHERE p.stock > 0 AND p.status = 'active'
-      AND p.discounted_price IS NOT NULL AND p.discounted_price < p.price
-      ORDER BY (p.price - p.discounted_price) DESC 
-      LIMIT 4
-    `);
-
   return {
-    newArrivals: normalizeNewsletterProducts(newArrivals),
+    newArrivals: normalizeNewsletterProducts(latestProducts),
     discounted: normalizeNewsletterProducts(discountedProducts)
   };
 };
@@ -11010,22 +11554,12 @@ app.get('/api/geo', async (req, res) => {
 });
 
 // ==================== FRONTEND STATIC (PRODUCTION) ====================
-// Public dynamic sitemap endpoints so Hostinger frontend can delegate XML to this API.
-// These always regenerate from DB and then stream fresh XML, so sitemap URLs
-// stay in sync with AdminSitemap changes without redeploying the dist.
-app.get(['/sitemap.xml', '/product-sitemap.xml', '/category-sitemap.xml', '/page-sitemap.xml', '/blog-sitemap.xml'], async (req, res) => {
+// Public dynamic sitemap endpoint so Hostinger frontend can delegate XML to this API.
+// This always regenerates from DB and streams the canonical sitemap.xml.
+app.get('/sitemap.xml', async (req, res) => {
   try {
     const result = await regenerateSitemap();
-
-    const mapPath = (() => {
-      if (req.path === '/product-sitemap.xml') return result.productPath;
-      if (req.path === '/category-sitemap.xml') return result.categoryPath;
-      if (req.path === '/page-sitemap.xml') return result.pagePath;
-      if (req.path === '/blog-sitemap.xml') return result.blogPath;
-      return result.path;
-    })();
-
-    const xml = fs.readFileSync(mapPath, 'utf8');
+    const xml = fs.readFileSync(result.path, 'utf8');
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.status(200).send(xml);
   } catch (error) {
@@ -11086,12 +11620,8 @@ Disallow: /forgot-password
 Disallow: /signup
 Disallow: /*?*
 
-# Sitemaps
+# Sitemap
 Sitemap: https://www.yokebud.fi/sitemap.xml
-Sitemap: https://www.yokebud.fi/product-sitemap.xml
-Sitemap: https://www.yokebud.fi/category-sitemap.xml
-Sitemap: https://www.yokebud.fi/blog-sitemap.xml
-Sitemap: https://www.yokebud.fi/page-sitemap.xml
 `;
       res.send(robotsTxt);
     });
