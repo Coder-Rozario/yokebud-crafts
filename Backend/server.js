@@ -242,34 +242,34 @@ function getFreeShippingStatus(items = [], merchandiseTotal = null) {
 app.use(async (req, res, next) => {
   // Only handle GET requests for HTML pages
   if (req.method !== 'GET') return next();
-  
+
   // Skip API, static files, and sitemap XMLs
   if (req.path.startsWith('/api') ||
-      req.path.startsWith('/share') ||
-      req.path.includes('.') ||
-      req.path.endsWith('sitemap.xml') ||
-      req.path.endsWith('.xsl') ||
-      req.path === '/robots.txt' ||
-      req.path === '/health' ||
-      req.path === '/version.json') {
+    req.path.startsWith('/share') ||
+    req.path.includes('.') ||
+    req.path.endsWith('sitemap.xml') ||
+    req.path.endsWith('.xsl') ||
+    req.path === '/robots.txt' ||
+    req.path === '/health' ||
+    req.path === '/version.json') {
     return next();
   }
 
   // Check if this is a product page
   const productId = productSocialSeo.extractProductIdFromRequestPath(req.path);
-  
+
   // Debug log
   console.log(`[SSR Middleware] Path: ${req.path}, Extracted Product ID: ${productId}`);
   console.log(`[SSR Middleware] User-Agent: ${req.headers['user-agent']}`);
-  
+
   if (!productId) return next();
 
   try {
     // For social media crawlers, serve the social HTML directly without redirecting
     const userAgent = (req.headers['user-agent'] || '').toLowerCase();
-    const isSocialCrawler = 
+    const isSocialCrawler =
       // Facebook
-      userAgent.includes('facebookexternalhit') || 
+      userAgent.includes('facebookexternalhit') ||
       userAgent.includes('facebot') ||
       userAgent.includes('facebookbot') ||
       // Twitter/X
@@ -313,7 +313,7 @@ app.use(async (req, res, next) => {
     if (isSocialCrawler) {
       const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
       const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
-      
+
       let html;
       if (fs.existsSync(indexPath)) {
         console.log(`[SSR Middleware] Using dist index.html at ${indexPath}`);
@@ -322,7 +322,7 @@ app.use(async (req, res, next) => {
         console.log(`[SSR Middleware] Using source index.html`);
         html = fs.readFileSync(path.join(__dirname, '../client/index.html'), 'utf8');
       }
-      
+
       const socialHtml = await productSocialSeo.buildProductSocialHtml(pool, req.path, html);
       if (socialHtml) {
         console.log(`[SSR Middleware] Sending social HTML for product ${productId}`);
@@ -640,16 +640,16 @@ async function ensureSeoSchema() {
       await connection.query('ALTER TABLE categories ADD COLUMN canonical_url TEXT NULL');
     }
     if (!categoryColNames.has('hreflang_tags')) {
-      try { await connection.query('ALTER TABLE categories ADD COLUMN hreflang_tags JSON NULL'); } catch {}
+      try { await connection.query('ALTER TABLE categories ADD COLUMN hreflang_tags JSON NULL'); } catch { }
     }
     if (!categoryColNames.has('parent_category_id')) {
-      try { await connection.query('ALTER TABLE categories ADD COLUMN parent_category_id INT NULL DEFAULT NULL'); } catch {}
+      try { await connection.query('ALTER TABLE categories ADD COLUMN parent_category_id INT NULL DEFAULT NULL'); } catch { }
     }
     if (!categoryColNames.has('slug')) {
-      try { await connection.query('ALTER TABLE categories ADD COLUMN slug VARCHAR(255) NULL'); } catch {}
+      try { await connection.query('ALTER TABLE categories ADD COLUMN slug VARCHAR(255) NULL'); } catch { }
     }
     if (!categoryColNames.has('description')) {
-      try { await connection.query('ALTER TABLE categories ADD COLUMN description TEXT NULL'); } catch {}
+      try { await connection.query('ALTER TABLE categories ADD COLUMN description TEXT NULL'); } catch { }
     }
 
     // Add default home page SEO content if it doesn't exist
@@ -1011,7 +1011,7 @@ const { exec } = require('child_process');
 
 // Public site URL for SEO
 const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
-const PUBLIC_API_BASE = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
+const PUBLIC_API_BASE = process.env.PUBLIC_API_BASE || 'http://localhost:5000';
 
 const productSocialSeo = (() => {
   const DEFAULT_OG_IMAGE = `${PUBLIC_SITE_URL}/LOGO.png`;
@@ -1084,38 +1084,38 @@ const productSocialSeo = (() => {
   }
 
   // ========== NEW: Social sharing optimized image URL ==========
-function getImageUrlForSharing(imgPath, width = 1200, height = 630) {
-  console.log(`[getImageUrlForSharing] imgPath: ${imgPath}`);
-  if (!imgPath) {
-    console.log(`[getImageUrlForSharing] No image path, returning default: ${DEFAULT_OG_IMAGE}`);
-    return DEFAULT_OG_IMAGE;
-  }
-  const s = String(imgPath);
-  console.log(`[getImageUrlForSharing] s: ${s}`);
-  if (s.startsWith('http://') || s.startsWith('https://')) {
-    // Cloudinary optimization for social sharing
-    if (s.includes('cloudinary.com')) {
-      const parts = s.split('/upload/');
-      if (parts.length === 2) {
-        const optimizedUrl = `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
-        console.log(`[getImageUrlForSharing] Optimized Cloudinary URL: ${optimizedUrl}`);
-        return optimizedUrl;
-      }
+  function getImageUrlForSharing(imgPath, width = 1200, height = 630) {
+    console.log(`[getImageUrlForSharing] imgPath: ${imgPath}`);
+    if (!imgPath) {
+      console.log(`[getImageUrlForSharing] No image path, returning default: ${DEFAULT_OG_IMAGE}`);
+      return DEFAULT_OG_IMAGE;
     }
-    console.log(`[getImageUrlForSharing] Returning as-is: ${s}`);
-    return s;
+    const s = String(imgPath);
+    console.log(`[getImageUrlForSharing] s: ${s}`);
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      // Cloudinary optimization for social sharing
+      if (s.includes('cloudinary.com')) {
+        const parts = s.split('/upload/');
+        if (parts.length === 2) {
+          const optimizedUrl = `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
+          console.log(`[getImageUrlForSharing] Optimized Cloudinary URL: ${optimizedUrl}`);
+          return optimizedUrl;
+        }
+      }
+      console.log(`[getImageUrlForSharing] Returning as-is: ${s}`);
+      return s;
+    }
+    const clean = s.startsWith('/') ? s : `/${s}`;
+    const result = `${PUBLIC_API_BASE}${clean}`;
+    console.log(`[getImageUrlForSharing] Returning local image: ${result}`);
+    return result;
   }
-  const clean = s.startsWith('/') ? s : `/${s}`;
-  const result = `${PUBLIC_API_BASE}${clean}`;
-  console.log(`[getImageUrlForSharing] Returning local image: ${result}`);
-  return result;
-}
 
   // ========== UPDATED: absoluteImageUrl uses the new function ==========
-function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
-  if (!imgPath) return DEFAULT_OG_IMAGE;
-  return getImageUrlForSharing(imgPath, 1200, 630);
-}
+  function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
+    if (!imgPath) return DEFAULT_OG_IMAGE;
+    return getImageUrlForSharing(imgPath, 1200, 630);
+  }
 
   function parseProductPhotos(product) {
     try {
@@ -1229,43 +1229,43 @@ function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
     return result;
   }
 
-// ========== UPDATED: buildProductSocialHtml with proper image ==========
-async function buildProductSocialHtml(pool, reqPath, html) {
-  const productId = extractProductIdFromRequestPath(reqPath);
-  console.log(`[buildProductSocialHtml] Product ID: ${productId}`);
-  if (!productId) return null;
+  // ========== UPDATED: buildProductSocialHtml with proper image ==========
+  async function buildProductSocialHtml(pool, reqPath, html) {
+    const productId = extractProductIdFromRequestPath(reqPath);
+    console.log(`[buildProductSocialHtml] Product ID: ${productId}`);
+    if (!productId) return null;
 
-  let connection;
-  try {
-    connection = await pool.getConnection();
-    const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
-    console.log(`[buildProductSocialHtml] Product rows found: ${rows.length}`);
-    if (!rows.length) {
+    let connection;
+    try {
+      connection = await pool.getConnection();
+      const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
+      console.log(`[buildProductSocialHtml] Product rows found: ${rows.length}`);
+      if (!rows.length) {
+        connection.release();
+        return null;
+      }
+
+      const product = rows[0];
+      const sitemapPath = await resolveProductSitemapPath(connection, productId);
       connection.release();
-      return null;
+      connection = null;
+
+      const canonicalPath = buildCanonicalProductPath(product, sitemapPath, productId);
+      const canonicalUrl = `${PUBLIC_SITE_URL}${canonicalPath}`;
+      const photos = parseProductPhotos(product);
+      const imageUrl = photos[0] ? getImageUrlForSharing(photos[0], 1200, 630) : DEFAULT_OG_IMAGE;
+      console.log(`[buildProductSocialHtml] Image URL: ${imageUrl}`);
+      const meta = buildProductSocialMetaTags(product, { canonicalUrl, imageUrl });
+
+      const result = injectSocialMetaIntoHtml(html, meta);
+      console.log(`[buildProductSocialHtml] Generated social HTML successfully`);
+      return result;
+    } catch (err) {
+      if (connection) connection.release();
+      console.error(`[buildProductSocialHtml] Error: ${err}`);
+      throw err;
     }
-
-    const product = rows[0];
-    const sitemapPath = await resolveProductSitemapPath(connection, productId);
-    connection.release();
-    connection = null;
-
-    const canonicalPath = buildCanonicalProductPath(product, sitemapPath, productId);
-    const canonicalUrl = `${PUBLIC_SITE_URL}${canonicalPath}`;
-    const photos = parseProductPhotos(product);
-    const imageUrl = photos[0] ? getImageUrlForSharing(photos[0], 1200, 630) : DEFAULT_OG_IMAGE;
-    console.log(`[buildProductSocialHtml] Image URL: ${imageUrl}`);
-    const meta = buildProductSocialMetaTags(product, { canonicalUrl, imageUrl });
-
-    const result = injectSocialMetaIntoHtml(html, meta);
-    console.log(`[buildProductSocialHtml] Generated social HTML successfully`);
-    return result;
-  } catch (err) {
-    if (connection) connection.release();
-    console.error(`[buildProductSocialHtml] Error: ${err}`);
-    throw err;
   }
-}
 
   // ========== EXPORT all functions ==========
   return {
@@ -1278,7 +1278,7 @@ async function buildProductSocialHtml(pool, reqPath, html) {
     extractProductIdFromRequestPath,
     getProductIdFromSitemapPath,
     absoluteImageUrl,
-   getImageUrlForSharing,   // <-- NEW: export this
+    getImageUrlForSharing,   // <-- NEW: export this
     parseProductPhotos,
     resolveProductSitemapPath,
     buildCanonicalProductPath,
@@ -1630,7 +1630,7 @@ async function regenerateSitemap() {
     try {
       // Fire-and-forget (non-blocking) so regeneration latency stays low
       setImmediate(() => {
-        pingSitemapToSearchEngines(`${PUBLIC_SITE_URL}/sitemap.xml`).catch(() => {});
+        pingSitemapToSearchEngines(`${PUBLIC_SITE_URL}/sitemap.xml`).catch(() => { });
       });
     } catch (_pingErr) {
       // ignore ping errors; regeneration itself succeeded
@@ -2801,8 +2801,8 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
         </p>
         <p class="content-text" style="text-align: center; max-width: 520px; margin: 0 auto;">
           ${totalHighlights > 0
-            ? `We prepared ${escapeEmailHtml(highlightsSummary)} for this week's edition, with newly uploaded products and clearly separated offer items for faster browsing.`
-            : 'We prepared a curated weekly look at what is new on Yokebud craft.'}
+      ? `We prepared ${escapeEmailHtml(highlightsSummary)} for this week's edition, with newly uploaded products and clearly separated offer items for faster browsing.`
+      : 'We prepared a curated weekly look at what is new on Yokebud craft.'}
         </p>
       </div>
 
@@ -4074,7 +4074,7 @@ async function generateSitemapXmlFromDb({ type = 'all' } = {}) {
             parts.push('      <image:geo_location>Helsinki, Finland</image:geo_location>');
             parts.push('    </image:image>');
           }
-        } catch {}
+        } catch { }
       }
       parts.push('  </url>');
       return parts.join('\n');
@@ -4521,14 +4521,14 @@ app.post('/api/create-checkout-session', async (req, res) => {
     const computeServerShippingSimple = (itemsArr, country, city) => {
       if (!itemsArr || itemsArr.length === 0) return 0;
       const countryRates = {
-        "Finland": { base: 3.0, zones: { "Helsinki": 2.5, "Espoo": 2.5, "Tampere": 2.8, "Vantaa": 2.5, "Oulu": 3.2, "Turku": 2.8 }},
+        "Finland": { base: 3.0, zones: { "Helsinki": 2.5, "Espoo": 2.5, "Tampere": 2.8, "Vantaa": 2.5, "Oulu": 3.2, "Turku": 2.8 } },
         "Sweden": { base: 8.0 },
         "Norway": { base: 10.0 },
         "Denmark": { base: 8.0 },
         "Germany": { base: 12.0 },
         "France": { base: 12.0 },
         "United Kingdom": { base: 15.0 },
-        "United States": { base: 30.0, zones: { "New York": 28, "California": 32, "Texas": 31, "Florida": 30 }},
+        "United States": { base: 30.0, zones: { "New York": 28, "California": 32, "Texas": 31, "Florida": 30 } },
         "Canada": { base: 35.0 },
         "Australia": { base: 40.0 },
         "Japan": { base: 35.0 },
@@ -7491,7 +7491,7 @@ app.get('/api/user/wishlist', async (req, res) => {
         }
       } catch { }
       const image = firstImage
-        ? (String(firstImage).startsWith('http') ? firstImage : `https://api.yokebud.fi${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
+        ? (String(firstImage).startsWith('http') ? firstImage : `http://localhost:5000${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
         : null;
       return { _id: r._id, product_name: r.product_name, price: r.price, image };
     });
@@ -7810,14 +7810,14 @@ app.post('/api/checkout', async (req, res) => {
         if (!itemsArr || itemsArr.length === 0) return 0;
 
         const countryRates = {
-          "Finland": { base: 3.0, zones: { "Helsinki": 2.5, "Espoo": 2.5, "Tampere": 2.8, "Vantaa": 2.5, "Oulu": 3.2, "Turku": 2.8 }},
+          "Finland": { base: 3.0, zones: { "Helsinki": 2.5, "Espoo": 2.5, "Tampere": 2.8, "Vantaa": 2.5, "Oulu": 3.2, "Turku": 2.8 } },
           "Sweden": { base: 8.0 },
           "Norway": { base: 10.0 },
           "Denmark": { base: 8.0 },
           "Germany": { base: 12.0 },
           "France": { base: 12.0 },
           "United Kingdom": { base: 15.0 },
-          "United States": { base: 30.0, zones: { "New York": 28, "California": 32, "Texas": 31, "Florida": 30 }},
+          "United States": { base: 30.0, zones: { "New York": 28, "California": 32, "Texas": 31, "Florida": 30 } },
           "Canada": { base: 35.0 },
           "Australia": { base: 40.0 },
           "Japan": { base: 35.0 },
@@ -9654,7 +9654,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
   try {
     const { id } = req.params;
     const { img: imgParam } = req.query;
-    
+
     connection = await pool.getConnection();
     const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [id]);
     if (!rows || rows.length === 0) {
@@ -9670,7 +9670,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     connection = null;
 
     const photos = productSocialSeo.parseProductPhotos(p);
-    
+
     // Better image selection for sharing
     let imgIdx = 0;
     if (imgParam) {
@@ -9679,10 +9679,10 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
         imgIdx = parsed;
       }
     }
-    
+
     // Use the new image function
     const firstImage = productSocialSeo.getImageUrlForSharing(photos[imgIdx], 1200, 630);
-    
+
     const canonicalPath = productSocialSeo.buildCanonicalProductPath(p, sitemapPath, id);
     const canonicalUrl = `${siteBase}${canonicalPath}`;
     const meta = productSocialSeo.buildProductSocialMetaTags(p, { canonicalUrl, imageUrl: firstImage });
@@ -9725,14 +9725,14 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     const schemaScripts = `
       <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>
       <script type="application/ld+json">${JSON.stringify({
-        '@context': 'https://schema.org',
-        '@type': 'BreadcrumbList',
-        itemListElement: [
-          { '@type': 'ListItem', position: 1, name: 'Home', item: siteBase },
-          { '@type': 'ListItem', position: 2, name: String(p.category || 'Products') || 'Products', item: `${siteBase}/` },
-          { '@type': 'ListItem', position: 3, name: name, item: canonicalUrl }
-        ]
-      })}</script>
+      '@context': 'https://schema.org',
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Home', item: siteBase },
+        { '@type': 'ListItem', position: 2, name: String(p.category || 'Products') || 'Products', item: `${siteBase}/` },
+        { '@type': 'ListItem', position: 3, name: name, item: canonicalUrl }
+      ]
+    })}</script>
     `;
 
     const html = `<!doctype html><html lang="en"><head>
@@ -9876,12 +9876,12 @@ app.get('/api/products/:productId/discount-ranges', async (req, res) => {
   try {
     const { productId } = req.params;
     connection = await pool.getConnection();
-    
+
     const [rows] = await connection.query(
       'SELECT * FROM quantity_discount_ranges WHERE product_id = ? ORDER BY min_quantity ASC',
       [productId]
     );
-    
+
     connection.release();
     res.json({ success: true, data: rows });
   } catch (error) {
@@ -9898,31 +9898,31 @@ app.post('/api/products/:productId/discount-ranges', requireAdminAuth, async (re
     const { productId } = req.params;
     console.log('POST /discount-ranges req.body:', req.body);
     const { min_quantity, max_quantity, discount_percentage, discounted_price } = req.body;
-    
+
     if (min_quantity === undefined || min_quantity === null || min_quantity < 1) {
       return res.status(400).json({ success: false, message: 'Minimum quantity is required and must be at least 1' });
     }
-    
+
     if ((discount_percentage === undefined || discount_percentage === null) && (discounted_price === undefined || discounted_price === null)) {
       return res.status(400).json({ success: false, message: 'Either discount percentage or discounted price is required' });
     }
-    
+
     connection = await pool.getConnection();
-    
+
     // Check if product exists
     const [product] = await connection.query('SELECT id FROM products WHERE id = ?', [productId]);
     if (product.length === 0) {
       connection.release();
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
-    
+
     const [result] = await connection.query(
       `INSERT INTO quantity_discount_ranges 
        (product_id, min_quantity, max_quantity, discount_percentage, discounted_price) 
        VALUES (?, ?, ?, ?, ?)`,
       [productId, min_quantity, max_quantity || null, discount_percentage || 0, discounted_price || null]
     );
-    
+
     connection.release();
     res.json({ success: true, message: 'Discount range added successfully', id: result.insertId });
   } catch (error) {
@@ -9938,21 +9938,21 @@ app.put('/api/products/:productId/discount-ranges/:id', requireAdminAuth, async 
   try {
     const { productId, id } = req.params;
     const { min_quantity, max_quantity, discount_percentage, discounted_price } = req.body;
-    
+
     connection = await pool.getConnection();
-    
+
     const [result] = await connection.query(
       `UPDATE quantity_discount_ranges 
        SET min_quantity = ?, max_quantity = ?, discount_percentage = ?, discounted_price = ?, updated_at = NOW()
        WHERE id = ? AND product_id = ?`,
       [min_quantity, max_quantity || null, discount_percentage || 0, discounted_price || null, id, productId]
     );
-    
+
     if (result.affectedRows === 0) {
       connection.release();
       return res.status(404).json({ success: false, message: 'Discount range not found' });
     }
-    
+
     connection.release();
     res.json({ success: true, message: 'Discount range updated successfully' });
   } catch (error) {
@@ -9968,17 +9968,17 @@ app.delete('/api/products/:productId/discount-ranges/:id', requireAdminAuth, asy
   try {
     const { productId, id } = req.params;
     connection = await pool.getConnection();
-    
+
     const [result] = await connection.query(
       'DELETE FROM quantity_discount_ranges WHERE id = ? AND product_id = ?',
       [id, productId]
     );
-    
+
     if (result.affectedRows === 0) {
       connection.release();
       return res.status(404).json({ success: false, message: 'Discount range not found' });
     }
-    
+
     connection.release();
     res.json({ success: true, message: 'Discount range deleted successfully' });
   } catch (error) {
@@ -11627,33 +11627,33 @@ Sitemap: https://www.yokebud.fi/sitemap.xml
     });
 
     // SPA fallback with Dynamic SEO for product pages
-// SPA fallback with Dynamic SEO for product pages
-app.get([
-  '/',
-  /^\/(?!api|uploads|assets|.*sitemap.*\.xml|sitemap\.xsl|robots\.txt|health|debug\/email-preview|.*\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|xsl)$).*/
-], async (req, res) => {
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
+    // SPA fallback with Dynamic SEO for product pages
+    app.get([
+      '/',
+      /^\/(?!api|uploads|assets|.*sitemap.*\.xml|sitemap\.xsl|robots\.txt|health|debug\/email-preview|.*\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|xsl)$).*/
+    ], async (req, res) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
 
-  const indexPath = path.join(distDir, 'index.html');
+      const indexPath = path.join(distDir, 'index.html');
 
-  // Product pages: inject server-rendered Open Graph / Twitter Card meta for social crawlers
-  if (productSocialSeo.extractProductIdFromRequestPath(req.path)) {
-    try {
-      const baseHtml = fs.readFileSync(indexPath, 'utf8');
-      const html = await productSocialSeo.buildProductSocialHtml(pool, req.path, baseHtml);
-      if (html) {
-        return res.send(html);
+      // Product pages: inject server-rendered Open Graph / Twitter Card meta for social crawlers
+      if (productSocialSeo.extractProductIdFromRequestPath(req.path)) {
+        try {
+          const baseHtml = fs.readFileSync(indexPath, 'utf8');
+          const html = await productSocialSeo.buildProductSocialHtml(pool, req.path, baseHtml);
+          if (html) {
+            return res.send(html);
+          }
+        } catch (err) {
+          console.error('Error injecting product social meta tags:', err);
+        }
       }
-    } catch (err) {
-      console.error('Error injecting product social meta tags:', err);
-    }
-  }
 
-  // Default fallback
-  res.sendFile(indexPath);
-});
+      // Default fallback
+      res.sendFile(indexPath);
+    });
   }
 } catch (_) { /* ignore */ }
 
@@ -13197,22 +13197,22 @@ app.get('/share*', async (req, res) => {
   try {
     const originalPath = req.path.replace(/^\/share/, '') || '/';
     const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
-    
+
     // Check if index.html exists
     if (!fs.existsSync(indexPath)) {
       console.warn('Client index.html not found, falling back to default');
       return res.sendFile(path.join(__dirname, '../client/index.html'));
     }
-    
+
     // Read index.html
     let html = fs.readFileSync(indexPath, 'utf8');
-    
+
     // Try to build social HTML
     const socialHtml = await productSocialSeo.buildProductSocialHtml(pool, originalPath, html);
     if (socialHtml) {
       return res.send(socialHtml);
     }
-    
+
     // Fallback to original index.html
     res.sendFile(indexPath);
   } catch (err) {
