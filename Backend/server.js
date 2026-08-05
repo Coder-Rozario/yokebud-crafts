@@ -1011,7 +1011,7 @@ const { exec } = require('child_process');
 
 // Public site URL for SEO
 const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
-const PUBLIC_API_BASE = process.env.PUBLIC_API_BASE || 'http://localhost:5000';
+const PUBLIC_API_BASE = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
 
 const productSocialSeo = (() => {
   const DEFAULT_OG_IMAGE = `${PUBLIC_SITE_URL}/LOGO.png`;
@@ -7491,7 +7491,7 @@ app.get('/api/user/wishlist', async (req, res) => {
         }
       } catch { }
       const image = firstImage
-        ? (String(firstImage).startsWith('http') ? firstImage : `http://localhost:5000${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
+        ? (String(firstImage).startsWith('http') ? firstImage : `https://api.yokebud.fi${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
         : null;
       return { _id: r._id, product_name: r.product_name, price: r.price, image };
     });
@@ -8546,7 +8546,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_mode,
         customization_images,
         customization_dimensions
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
@@ -8899,6 +8899,62 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
   }
 });
 
+app.put('/api/products/:id/status', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const productId = req.params.id;
+    const normalizedStatus = String(req.body?.status || '').trim().toLowerCase();
+
+    if (!['active', 'inactive'].includes(normalizedStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product status'
+      });
+    }
+
+    connection = await pool.getConnection();
+
+    const [existingProducts] = await connection.query(
+      'SELECT id, status FROM products WHERE id = ? LIMIT 1',
+      [productId]
+    );
+
+    if (existingProducts.length === 0) {
+      connection.release();
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    await connection.query(
+      'UPDATE products SET status = ?, updated_at = NOW() WHERE id = ?',
+      [normalizedStatus, productId]
+    );
+
+    connection.release();
+
+    res.json({
+      success: true,
+      message: `Product ${normalizedStatus === 'active' ? 'activated' : 'deactivated'} successfully`,
+      product: {
+        id: Number(productId),
+        status: normalizedStatus
+      }
+    });
+
+    regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product status update:', err));
+  } catch (error) {
+    try { if (connection) connection.release(); } catch { }
+    console.error('Product status update error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update product status',
+      error: error.message
+    });
+  }
+});
+
 // Get single product endpoint
 app.get('/api/products/:id', async (req, res) => {
   try {
@@ -9014,8 +9070,15 @@ app.get('/api/products/:id', async (req, res) => {
 app.get('/api/products', async (req, res) => {
   try {
     const connection = await pool.getConnection();
+    const includeInactive = String(req.query.includeInactive || '').toLowerCase() === 'true';
+    const limitValue = Number.parseInt(req.query.limit, 10);
+    const hasLimit = Number.isInteger(limitValue) && limitValue > 0;
+    const productsQuery = includeInactive
+      ? `SELECT * FROM products ORDER BY created_at DESC${hasLimit ? ' LIMIT ?' : ''}`
+      : `SELECT * FROM products WHERE status = 'active' ORDER BY created_at DESC${hasLimit ? ' LIMIT ?' : ''}`;
     const [products] = await connection.query(
-      'SELECT * FROM products ORDER BY created_at DESC'
+      productsQuery,
+      hasLimit ? [limitValue] : []
     );
     const [summaries] = await connection.query(
       'SELECT product_id, ROUND(AVG(rating),1) AS avg_rating, COUNT(*) AS review_count FROM user_reviews WHERE is_approved = 1 GROUP BY product_id'
