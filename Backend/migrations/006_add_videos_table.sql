@@ -1,0 +1,13 @@
+
+-- Add videos table for homepage video section
+CREATE TABLE IF NOT EXISTS videos (
+  id INT NOT NULL AUTO_INCREMENT,
+  title VARCHAR(255) NOT NULL,
+  embed_url TEXT NOT NULL,
+  description TEXT,
+  sort_order INT DEFAULT 0,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+);

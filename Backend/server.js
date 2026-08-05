@@ -117,69 +117,225 @@ app.use(fileUpload({
   abortOnLimit: true,
   useTempFiles: true
 }));
+const toSlug = (str) => {
+  try {
+    return String(str || '')
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .slice(0, 80);
+  } catch {
+    return '';
+  }
+};
+
+function parseMetadataObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function isFreeShippingEnabled(value) {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function parseFreeShippingMinAmount(value) {
+  if (value === null || typeof value === 'undefined' || value === '') return null;
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue < 0) return null;
+  return Math.round(numericValue * 100) / 100;
+}
+
+function getNormalizedFreeShippingConfig(source = {}) {
+  const productMeta = parseMetadataObject(source.product?.metadata) || {};
+  const itemMeta = parseMetadataObject(source.metadata) || {};
+
+  const enabledValue =
+    source.free_shipping ??
+    source.product?.free_shipping ??
+    productMeta.free_shipping ??
+    productMeta.freeShipping ??
+    itemMeta.free_shipping ??
+    itemMeta.freeShipping;
+
+  const minimumAmountValue =
+    source.free_shipping_min_amount ??
+    source.product?.free_shipping_min_amount ??
+    productMeta.free_shipping_min_amount ??
+    productMeta.freeShippingMinAmount ??
+    itemMeta.free_shipping_min_amount ??
+    itemMeta.freeShippingMinAmount;
+
+  return {
+    enabled: isFreeShippingEnabled(enabledValue),
+    minimumAmount: parseFreeShippingMinAmount(minimumAmountValue)
+  };
+}
+
+function calculateItemsMerchandiseTotal(items = []) {
+  const subtotal = (Array.isArray(items) ? items : []).reduce((sum, item) => {
+    const unitPrice = Number(item?.discounted_price ?? item?.price ?? 0) || 0;
+    const quantity = Number(item?.quantity ?? 1) || 1;
+    return sum + (unitPrice * quantity);
+  }, 0);
+
+  return Math.round(subtotal * 100) / 100;
+}
+
+function getFreeShippingStatus(items = [], merchandiseTotal = null) {
+  const orderItems = Array.isArray(items) ? items : [];
+  const normalizedTotal = Number.isFinite(Number(merchandiseTotal))
+    ? Number(merchandiseTotal)
+    : calculateItemsMerchandiseTotal(orderItems);
+
+  let hasOffer = false;
+  let minimumThreshold = null;
+
+  for (const item of orderItems) {
+    const config = getNormalizedFreeShippingConfig(item);
+    if (!config.enabled) continue;
+
+    hasOffer = true;
+
+    if (config.minimumAmount === null) {
+      return {
+        hasOffer: true,
+        qualifies: true,
+        threshold: null
+      };
+    }
+
+    minimumThreshold = minimumThreshold === null
+      ? config.minimumAmount
+      : Math.min(minimumThreshold, config.minimumAmount);
+  }
+
+  if (!hasOffer) {
+    return {
+      hasOffer: false,
+      qualifies: false,
+      threshold: null
+    };
+  }
+
+  return {
+    hasOffer: true,
+    qualifies: minimumThreshold !== null && normalizedTotal >= minimumThreshold,
+    threshold: minimumThreshold
+  };
+}
+
+
 
 // URL Redirection Middleware
+// ==================== SSR MIDDLEWARE FOR SOCIAL SHARING ====================
+// এই middleware social crawlers detect করে সোশ্যাল মেটা ট্যাগ সহ HTML সরবরাহ করবে
+// URL structure অপরিবর্তিত থাকবে
+
 app.use(async (req, res, next) => {
-  // Only handle GET requests for potential redirects
+  // Only handle GET requests for HTML pages
   if (req.method !== 'GET') return next();
-  
+
   // Skip API, static files, and sitemap XMLs
-  if (req.path.startsWith('/api') || 
-      req.path.includes('.') || 
-      req.path.endsWith('sitemap.xml')) {
+  if (req.path.startsWith('/api') ||
+    req.path.startsWith('/share') ||
+    req.path.includes('.') ||
+    req.path.endsWith('sitemap.xml') ||
+    req.path.endsWith('.xsl') ||
+    req.path === '/robots.txt' ||
+    req.path === '/health' ||
+    req.path === '/version.json') {
     return next();
   }
 
-  let connection;
+  // Check if this is a product page
+  const productId = productSocialSeo.extractProductIdFromRequestPath(req.path);
+
+  // Debug log
+  console.log(`[SSR Middleware] Path: ${req.path}, Extracted Product ID: ${productId}`);
+  console.log(`[SSR Middleware] User-Agent: ${req.headers['user-agent']}`);
+
+  if (!productId) return next();
+
   try {
-    connection = await pool.getConnection();
-    const [rows] = await connection.query(
-      'SELECT new_path FROM url_redirects WHERE old_path = ? LIMIT 1',
-      [req.path]
-    );
-    
-    if (rows.length > 0) {
-      console.log(`Redirecting old path ${req.path} to ${rows[0].new_path}`);
-      return res.redirect(301, rows[0].new_path);
-    }
+    // For social media crawlers, serve the social HTML directly without redirecting
+    const userAgent = (req.headers['user-agent'] || '').toLowerCase();
+    const isSocialCrawler =
+      // Facebook
+      userAgent.includes('facebookexternalhit') ||
+      userAgent.includes('facebot') ||
+      userAgent.includes('facebookbot') ||
+      // Twitter/X
+      userAgent.includes('twitterbot') ||
+      userAgent.includes('tweetmemebot') ||
+      userAgent.includes('twurly') ||
+      // LinkedIn
+      userAgent.includes('linkedinbot') ||
+      userAgent.includes('linkedin') ||
+      // Slack
+      userAgent.includes('slackbot') ||
+      userAgent.includes('slack') ||
+      // Pinterest
+      userAgent.includes('pinterest') ||
+      userAgent.includes('pinterestbot') ||
+      // WhatsApp
+      userAgent.includes('whatsapp') ||
+      // Telegram
+      userAgent.includes('telegrambot') ||
+      userAgent.includes('telegram') ||
+      // Discord
+      userAgent.includes('discordbot') ||
+      userAgent.includes('discord') ||
+      // Reddit
+      userAgent.includes('redditbot') ||
+      userAgent.includes('reddit') ||
+      // Apple Messages
+      userAgent.includes('applebot') ||
+      // Other crawlers
+      userAgent.includes('googlebot') ||
+      userAgent.includes('bingbot') ||
+      userAgent.includes('yahoo') ||
+      userAgent.includes('baiduspider') ||
+      // Generic crawlers
+      userAgent.includes('bot') ||
+      userAgent.includes('crawler') ||
+      userAgent.includes('spider');
 
-    // Dynamic ID-to-Slug Redirects for Products (Old pattern: /products/:id)
-    const productMatch = req.path.match(/^\/products\/(\d+)$/);
-    if (productMatch) {
-      const productId = productMatch[1];
-      const [pRows] = await connection.query('SELECT slug, product_name FROM products WHERE id = ? LIMIT 1', [productId]);
-      if (pRows.length > 0) {
-        const slug = pRows[0].slug || toSlug(pRows[0].product_name);
-        const newPath = `/products/${slug}-${productId}`;
-        return res.redirect(301, newPath);
+    console.log(`[SSR Middleware] Is social crawler? ${isSocialCrawler}`);
+
+    if (isSocialCrawler) {
+      const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
+      const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
+
+      let html;
+      if (fs.existsSync(indexPath)) {
+        console.log(`[SSR Middleware] Using dist index.html at ${indexPath}`);
+        html = fs.readFileSync(indexPath, 'utf8');
+      } else {
+        console.log(`[SSR Middleware] Using source index.html`);
+        html = fs.readFileSync(path.join(__dirname, '../client/index.html'), 'utf8');
       }
-    }
 
-    // Handle old pattern: /products/:id/:slug
-    const productMatchOld = req.path.match(/^\/products\/(\d+)\/([^\/]+)$/);
-    if (productMatchOld) {
-      const productId = productMatchOld[1];
-      const oldSlug = productMatchOld[2];
-      const newPath = `/products/${oldSlug}-${productId}`;
-      return res.redirect(301, newPath);
-    }
-
-    // Dynamic ID-to-Slug Redirects for Blogs
-    const blogMatch = req.path.match(/^\/blogs\/(\d+)$/);
-    if (blogMatch) {
-      const blogId = blogMatch[1];
-      const [bRows] = await connection.query('SELECT slug FROM blogs WHERE id = ? LIMIT 1', [blogId]);
-      if (bRows.length > 0 && bRows[0].slug) {
-        const newPath = `/blogs/${bRows[0].slug}`;
-        return res.redirect(301, newPath);
+      const socialHtml = await productSocialSeo.buildProductSocialHtml(pool, req.path, html);
+      if (socialHtml) {
+        console.log(`[SSR Middleware] Sending social HTML for product ${productId}`);
+        return res.send(socialHtml);
       }
+      console.log(`[SSR Middleware] No social HTML generated, falling through`);
     }
-  } catch (err) {
-    console.error('Redirect middleware error:', err.message);
-  } finally {
-    if (connection) connection.release();
+
+    next();
+  } catch (error) {
+    console.error('SSR middleware error:', error);
+    next();
   }
-  next();
 });
 
 const ADMIN_ID = parseInt(process.env.ADMIN_ID || '1', 10);
@@ -236,6 +392,86 @@ async function ensureProductVariantsSchema() {
 
 ensureProductVariantsSchema();
 
+// ===== এই ফাংশনটি যোগ করুন =====
+async function ensureQuantityDiscountRangesSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.query(
+      `CREATE TABLE IF NOT EXISTS quantity_discount_ranges (
+        id INT NOT NULL AUTO_INCREMENT,
+        product_id INT NOT NULL,
+        min_quantity INT NOT NULL,
+        max_quantity INT NULL,
+        discount_percentage DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+        discounted_price DECIMAL(10,2) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_product_id (product_id)
+      )`
+    );
+    console.log('✅ Quantity discount ranges table checked/created');
+  } catch (e) {
+    console.warn('Quantity discount ranges schema setup error:', e.message || e);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureQuantityDiscountRangesSchema();
+
+async function ensureCustomLaserOrdersSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS custom_laser_orders (
+        id INT NOT NULL AUTO_INCREMENT,
+        user_id INT NULL,
+        title VARCHAR(255) NOT NULL,
+        description TEXT NOT NULL,
+        image_url TEXT NULL,
+        width DECIMAL(10,2) NULL,
+        height DECIMAL(10,2) NULL,
+        depth DECIMAL(10,2) NULL,
+        material VARCHAR(100) NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        notes TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_user (user_id)
+      )
+    `);
+
+    // Check if columns exist and add if missing
+    const [cols] = await connection.query("SHOW COLUMNS FROM custom_laser_orders");
+    const colNames = new Set(cols.map(c => c.Field));
+
+    if (!colNames.has('inquiry_id')) {
+      await connection.query("ALTER TABLE custom_laser_orders ADD COLUMN inquiry_id VARCHAR(100) NULL");
+      console.log('Added inquiry_id column to custom_laser_orders table.');
+    }
+
+    if (!colNames.has('price')) {
+      await connection.query("ALTER TABLE custom_laser_orders ADD COLUMN price DECIMAL(10,2) NULL DEFAULT 0.00");
+      console.log('Added price column to custom_laser_orders table.');
+    }
+
+    if (!colNames.has('category')) {
+      await connection.query("ALTER TABLE custom_laser_orders ADD COLUMN category VARCHAR(100) NULL");
+      console.log('Added category column to custom_laser_orders table.');
+    }
+  } catch (err) {
+    console.error('Custom laser orders schema setup error:', err.message);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureCustomLaserOrdersSchema();
+
 async function ensureAdminOtpSchema() {
   let connection;
   try {
@@ -288,7 +524,7 @@ async function ensureCategoriesExtendedSchema() {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Check and add missing columns to categories table
     const [categoryCols] = await connection.query(
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
@@ -298,7 +534,7 @@ async function ensureCategoriesExtendedSchema() {
     const categoryColNames = new Set((categoryCols || []).map(c => c.COLUMN_NAME));
 
     if (!categoryColNames.has('type')) {
-      await connection.query('ALTER TABLE categories ADD COLUMN type VARCHAR(50) DEFAULT "crafts"');
+      await connection.query('ALTER TABLE categories ADD COLUMN type VARCHAR(50) DEFAULT "craft"');
     }
     if (!categoryColNames.has('image_url')) {
       await connection.query('ALTER TABLE categories ADD COLUMN image_url TEXT NULL');
@@ -309,7 +545,7 @@ async function ensureCategoriesExtendedSchema() {
     if (!categoryColNames.has('updated_at')) {
       await connection.query('ALTER TABLE categories ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
     }
-    
+
     // Ensure all categories have a slug if missing
     const [rows] = await connection.query('SELECT id, name FROM categories WHERE slug IS NULL OR slug = ""');
     for (const row of rows) {
@@ -331,7 +567,7 @@ async function ensureSeoSchema() {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Check and add SEO columns to products table
     const [productCols] = await connection.query(
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
@@ -351,6 +587,27 @@ async function ensureSeoSchema() {
     }
     if (!productColNames.has('schema_json')) {
       await connection.query('ALTER TABLE products ADD COLUMN schema_json JSON NULL');
+    }
+    if (!productColNames.has('image_alt_text')) {
+      await connection.query('ALTER TABLE products ADD COLUMN image_alt_text VARCHAR(255) NULL');
+    }
+    if (!productColNames.has('og_image')) {
+      await connection.query('ALTER TABLE products ADD COLUMN og_image TEXT NULL');
+    }
+    if (!productColNames.has('twitter_image')) {
+      await connection.query('ALTER TABLE products ADD COLUMN twitter_image TEXT NULL');
+    }
+    if (!productColNames.has('canonical_url')) {
+      await connection.query('ALTER TABLE products ADD COLUMN canonical_url TEXT NULL');
+    }
+    if (!productColNames.has('hreflang_fi')) {
+      await connection.query('ALTER TABLE products ADD COLUMN hreflang_fi TEXT NULL');
+    }
+    if (!productColNames.has('hreflang_de')) {
+      await connection.query('ALTER TABLE products ADD COLUMN hreflang_de TEXT NULL');
+    }
+    if (!productColNames.has('gtin')) {
+      await connection.query('ALTER TABLE products ADD COLUMN gtin VARCHAR(50) NULL');
     }
 
     // Check and add SEO columns to categories table
@@ -373,21 +630,42 @@ async function ensureSeoSchema() {
     if (!categoryColNames.has('seo_content')) {
       await connection.query('ALTER TABLE categories ADD COLUMN seo_content TEXT NULL');
     }
+    if (!categoryColNames.has('image_alt')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN image_alt VARCHAR(255) NULL');
+    }
+    if (!categoryColNames.has('og_image')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN og_image TEXT NULL');
+    }
+    if (!categoryColNames.has('canonical_url')) {
+      await connection.query('ALTER TABLE categories ADD COLUMN canonical_url TEXT NULL');
+    }
+    if (!categoryColNames.has('hreflang_tags')) {
+      try { await connection.query('ALTER TABLE categories ADD COLUMN hreflang_tags JSON NULL'); } catch { }
+    }
+    if (!categoryColNames.has('parent_category_id')) {
+      try { await connection.query('ALTER TABLE categories ADD COLUMN parent_category_id INT NULL DEFAULT NULL'); } catch { }
+    }
+    if (!categoryColNames.has('slug')) {
+      try { await connection.query('ALTER TABLE categories ADD COLUMN slug VARCHAR(255) NULL'); } catch { }
+    }
+    if (!categoryColNames.has('description')) {
+      try { await connection.query('ALTER TABLE categories ADD COLUMN description TEXT NULL'); } catch { }
+    }
 
     // Add default home page SEO content if it doesn't exist
     const [homeSeo] = await connection.query('SELECT 1 FROM seo_content WHERE page_name = "home" LIMIT 1');
     if (homeSeo.length === 0) {
       const defaultHomeTitle = 'Laser Engraving, Custom Apparel & Resin Art | Personalized Gifts Finland';
       const defaultHomeContent = `
-        <p>Welcome to <strong>Yokebud Crafts</strong>, your premier destination for high-quality <strong>laser engraving Finland</strong>, <strong>custom apparel</strong>, and <strong>resin art</strong>. We specialize in precision <strong>laser cutting services</strong>, professional engraving, and unique handcrafted creations that transform everyday objects into meaningful treasures.</p>
+        <p>Welcome to <strong>Yokebud craft</strong>, your premier destination for high-quality <strong>laser engraving Finland</strong>, <strong>custom apparel</strong>, and <strong>resin art</strong>. We specialize in precision <strong>laser cutting services</strong>, professional engraving, and unique handcrafted creations that transform everyday objects into meaningful treasures.</p>
         
         <h3>Expert Laser Engraving & Custom Apparel in Finland</h3>
         <p>Our state-of-the-art technology allows us to provide the finest <strong>laser engraving Helsinki</strong> has to offer, alongside premium <strong>customized hoodies</strong> and <strong>t-shirts</strong>. Whether you're looking for corporate branding, personalized wedding gifts, or custom streetwear, our team ensures every detail is captured with perfection.</p>
         
         <h3>Resin Art & Handcrafted Jewelry</h3>
-        <p>Explore our stunning collection of <strong>resin art</strong> and <strong>handcrafted jewelry</strong>. Each piece is uniquely designed and made with care in our Finnish studio, combining traditional craftsmanship with modern artistic techniques. From <strong>engraved wood gifts</strong> to <strong>personalized leather accessories</strong>, we have something for everyone.</p>
+        <p>Explore our stunning collection of <strong>resin art</strong> and <strong>handcrafted jewelry</strong>. Each piece is uniquely designed and made with care in our Finnish studio, combining traditional craftmanship with modern artistic techniques. From <strong>engraved wood gifts</strong> to <strong>personalized leather accessories</strong>, we have something for everyone.</p>
         
-        <h3>Why Choose Yokebud Crafts?</h3>
+        <h3>Why Choose Yokebud craft?</h3>
         <ul>
           <li><strong>Precision and Quality:</strong> Advanced laser systems and high-quality apparel materials.</li>
           <li><strong>Local Expertise:</strong> Proudly based in Helsinki, serving all of Finland.</li>
@@ -406,10 +684,10 @@ async function ensureSeoSchema() {
     if (laserSeo.length === 0) {
       const laserTitle = 'Premium Laser Engraving Services in Finland';
       const laserContent = `
-        <p>Yokebud Crafts is the leading provider of <strong>laser engraving Finland</strong>, offering unparalleled precision and artistic flair for all your customization needs. Our <strong>laser cutting products</strong> and engraving services are designed to meet the highest standards of quality, whether you're looking for a single personalized gift or large-scale corporate branding solutions.</p>
+        <p>Yokebud craft is the leading provider of <strong>laser engraving Finland</strong>, offering unparalleled precision and artistic flair for all your customization needs. Our <strong>laser cutting products</strong> and engraving services are designed to meet the highest standards of quality, whether you're looking for a single personalized gift or large-scale corporate branding solutions.</p>
         
         <h3>Why Laser Engraving?</h3>
-        <p>Laser engraving is a permanent, high-precision method of marking materials. Unlike traditional printing, <strong>engraved gifts</strong> do not fade or wear off over time. At Yokebud Crafts, we use state-of-the-art CO2 and Fiber lasers to work with wood, leather, acrylic, metal, and more. Our <strong>laser cutting services</strong> allow us to create intricate shapes and designs that were once thought impossible.</p>
+        <p>Laser engraving is a permanent, high-precision method of marking materials. Unlike traditional printing, <strong>engraved gifts</strong> do not fade or wear off over time. At Yokebud craft, we use state-of-the-art CO2 and Fiber lasers to work with wood, leather, acrylic, metal, and more. Our <strong>laser cutting services</strong> allow us to create intricate shapes and designs that were once thought impossible.</p>
         
         <h3>Our Laser Engraving Capabilities in Helsinki</h3>
         <p>Based in the heart of <strong>Helsinki</strong>, we serve clients across Finland with fast turnaround times and exceptional attention to detail. Our services include:</p>
@@ -438,7 +716,7 @@ async function ensureSeoSchema() {
         [laserTitle, laserContent]
       );
     }
-    
+
     console.log('✅ SEO schema updated successfully.');
   } catch (e) {
     console.warn('SEO schema update failed:', e.message || e);
@@ -451,7 +729,7 @@ async function ensureCustomizationSchema() {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Check and add customization columns to products table
     const [productCols] = await connection.query(
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
@@ -478,8 +756,30 @@ async function ensureCustomizationSchema() {
   }
 }
 
+async function ensureOrdersEstimatedDeliveryDate() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+
+    // Check and add estimated_delivery_date column to orders
+    try {
+      await connection.query('ALTER TABLE orders ADD COLUMN estimated_delivery_date DATE NULL AFTER delivered_at');
+      console.log('✅ Added estimated_delivery_date column to orders table');
+    } catch (err) {
+      if (!err.message.includes('Duplicate column name')) {
+        console.warn('⚠️ Could not add estimated_delivery_date column:', err.message);
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ Orders estimated delivery date check failed:', e.message);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
 ensureSeoSchema().then(() => {
   ensureCustomizationSchema();
+  ensureOrdersEstimatedDeliveryDate();
 });
 
 // Using existing 'user_wishlist' table provisioned in the database
@@ -565,6 +865,33 @@ async function ensureProductStockStatusSchema() {
 
 ensureProductStockStatusSchema();
 
+async function ensureVideosSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.query(
+      `CREATE TABLE IF NOT EXISTS videos (
+        id INT NOT NULL AUTO_INCREMENT,
+        title VARCHAR(255),
+        embed_url TEXT NOT NULL,
+        description TEXT,
+        sort_order INT DEFAULT 1,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id)
+      )`
+    );
+    console.log('✅ Videos table checked/created');
+  } catch (e) {
+    console.warn('Videos schema setup error:', e.message || e);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureVideosSchema();
+
 async function ensureSeoContentSchema() {
   let connection;
   try {
@@ -580,12 +907,12 @@ async function ensureSeoContentSchema() {
         PRIMARY KEY (id)
       )`
     );
-    
+
     // Check if home page content exists, if not, insert a placeholder
     const [rows] = await connection.query('SELECT * FROM seo_content WHERE page_name = "home"');
     if (rows.length === 0) {
       await connection.query(
-        'INSERT INTO seo_content (page_name, title, content) VALUES ("home", "Welcome to Yokebud Crafts", "<p>Your SEO content here...</p>")'
+        'INSERT INTO seo_content (page_name, title, content) VALUES ("home", "Welcome to Yokebud craft", "<p>Your SEO content here...</p>")'
       );
     }
   } catch (e) {
@@ -601,7 +928,7 @@ async function ensureSitemapSchema() {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Sitemap entries table
     await connection.query(
       `CREATE TABLE IF NOT EXISTS sitemap_entries (
@@ -678,23 +1005,292 @@ async function ensureSitemapSchema() {
 
 ensureSitemapSchema();
 
+
+
 const { exec } = require('child_process');
 
 // Public site URL for SEO
 const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
+const PUBLIC_API_BASE = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
+
+const productSocialSeo = (() => {
+  const DEFAULT_OG_IMAGE = `${PUBLIC_SITE_URL}/LOGO.png`;
+
+  function escapeAttr(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function stripHtml(s) {
+    return String(s || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function toSlug(str) {
+    try {
+      return String(str || '')
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .slice(0, 80);
+    } catch {
+      return 'product';
+    }
+  }
+
+  function extractProductIdFromRequestPath(reqPath) {
+    try {
+      const pathValue = String(reqPath || '').split('?')[0].replace(/\/+$/, '');
+      const match = pathValue.match(/^\/(?:products|p)\/(.+)$/i);
+      if (!match) return null;
+
+      const segment = match[1];
+      const parts = segment.split('/');
+
+      if (parts.length >= 2 && /^\d+$/.test(parts[0])) {
+        return parts[0];
+      }
+
+      const first = parts[0];
+      if (/^\d+$/.test(first)) return first;
+
+      const lastHyphenPart = first.split('-').pop();
+      if (/^\d+$/.test(lastHyphenPart)) return lastHyphenPart;
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getProductIdFromSitemapPath(pathStr) {
+    try {
+      const pathValue = String(pathStr || '');
+      const legacy = pathValue.match(/^\/products\/(\d+)\//);
+      if (legacy) return legacy[1];
+      const slugId = pathValue.match(/\/products\/[^/]*-(\d+)$/);
+      if (slugId) return slugId[1];
+      const bare = pathValue.match(/^\/products\/(\d+)$/);
+      if (bare) return bare[1];
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ========== NEW: Social sharing optimized image URL ==========
+  function getImageUrlForSharing(imgPath, width = 1200, height = 630) {
+    console.log(`[getImageUrlForSharing] imgPath: ${imgPath}`);
+    if (!imgPath) {
+      console.log(`[getImageUrlForSharing] No image path, returning default: ${DEFAULT_OG_IMAGE}`);
+      return DEFAULT_OG_IMAGE;
+    }
+    const s = String(imgPath);
+    console.log(`[getImageUrlForSharing] s: ${s}`);
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      // Cloudinary optimization for social sharing
+      if (s.includes('cloudinary.com')) {
+        const parts = s.split('/upload/');
+        if (parts.length === 2) {
+          const optimizedUrl = `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
+          console.log(`[getImageUrlForSharing] Optimized Cloudinary URL: ${optimizedUrl}`);
+          return optimizedUrl;
+        }
+      }
+      console.log(`[getImageUrlForSharing] Returning as-is: ${s}`);
+      return s;
+    }
+    const clean = s.startsWith('/') ? s : `/${s}`;
+    const result = `${PUBLIC_API_BASE}${clean}`;
+    console.log(`[getImageUrlForSharing] Returning local image: ${result}`);
+    return result;
+  }
+
+  // ========== UPDATED: absoluteImageUrl uses the new function ==========
+  function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
+    if (!imgPath) return DEFAULT_OG_IMAGE;
+    return getImageUrlForSharing(imgPath, 1200, 630);
+  }
+
+  function parseProductPhotos(product) {
+    try {
+      console.log(`[parseProductPhotos] product.images: ${product.images}`);
+      console.log(`[parseProductPhotos] product.product_photos: ${product.product_photos}`);
+      const raw = product.images || product.product_photos || '[]';
+      console.log(`[parseProductPhotos] raw: ${raw}`);
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const result = Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+      console.log(`[parseProductPhotos] result: ${JSON.stringify(result)}`);
+      return result;
+    } catch (err) {
+      console.error(`[parseProductPhotos] Error: ${err}`);
+      return [];
+    }
+  }
+
+  async function resolveProductSitemapPath(connection, productId) {
+    const [rows] = await connection.query(
+      `SELECT path FROM sitemap_entries
+       WHERE type = 'product' AND (is_active = TRUE OR is_active = 1)
+       AND (path LIKE ? OR path LIKE ? OR path = ?)
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [`/products/${productId}/%`, `/products/%-${productId}`, `/products/${productId}`]
+    );
+    return rows.length > 0 ? rows[0].path : null;
+  }
+
+  function buildCanonicalProductPath(product, sitemapPath, productId) {
+    if (sitemapPath) return sitemapPath;
+    const slug = product.slug || toSlug(product.product_name || 'product');
+    return `/products/${slug}-${productId}`;
+  }
+
+  function buildProductSocialMetaTags(product, { canonicalUrl, imageUrl, siteName = 'Yokebud craft' } = {}) {
+    console.log(`[buildProductSocialMetaTags] product.product_name: ${product.product_name}`);
+    const name = product.product_name || 'Product';
+    const desc = stripHtml(
+      product.seo_description || product.product_details || product.product_description || ''
+    ).slice(0, 200);
+    console.log(`[buildProductSocialMetaTags] desc: ${desc}`);
+    const title = escapeAttr(`${name} | ${siteName}`);
+    const safeName = escapeAttr(name);
+    const safeDesc = escapeAttr(desc);
+    const safeUrl = escapeAttr(canonicalUrl);
+    const safeImage = escapeAttr(imageUrl);
+    const imageAlt = escapeAttr(name);
+    console.log(`[buildProductSocialMetaTags] imageUrl: ${imageUrl}`);
+
+    const tags = `
+    <!-- Dynamic product social meta -->
+    <title>${title}</title>
+    <meta name="description" content="${safeDesc}" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="${safeUrl}" />
+    <meta property="og:site_name" content="${escapeAttr(siteName)}" />
+    <meta property="og:title" content="${safeName}" />
+    <meta property="og:description" content="${safeDesc}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="${safeUrl}" />
+    <meta property="og:image" content="${safeImage}" />
+    <meta property="og:image:secure_url" content="${safeImage}" />
+    <meta property="og:image:alt" content="${imageAlt}" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@yokebud" />
+    <meta name="twitter:creator" content="@yokebud" />
+    <meta name="twitter:title" content="${safeName}" />
+    <meta name="twitter:description" content="${safeDesc}" />
+    <meta name="twitter:image" content="${safeImage}" />
+    <meta name="twitter:image:alt" content="${imageAlt}" />
+  `;
+
+    const noscriptBody = `
+    <noscript id="product-seo-fallback">
+      <article style="max-width:720px;margin:0 auto;padding:24px;font-family:system-ui,sans-serif;color:#111;">
+        <h1 style="font-size:1.5rem;margin:0 0 12px;">${safeName}</h1>
+        <p style="line-height:1.5;margin:0 0 16px;">${safeDesc}</p>
+        <img src="${safeImage}" alt="${imageAlt}" style="max-width:100%;height:auto;border-radius:8px;" />
+        <p style="margin-top:16px;"><a href="${safeUrl}">View product on Yokebud craft</a></p>
+      </article>
+    </noscript>
+  `;
+
+    console.log(`[buildProductSocialMetaTags] Generated tags`);
+    return { tags, noscriptBody };
+  }
+
+  function injectSocialMetaIntoHtml(html, { tags, noscriptBody }) {
+    console.log(`[injectSocialMetaIntoHtml] Starting injection`);
+    let result = String(html || '');
+    result = result.replace(/<title>[\s\S]*?<\/title>/i, '');
+    result = result.replace(/<meta\s+name="description"[^>]*\/?>/gi, '');
+    result = result.replace(/<meta\s+name="robots"[^>]*\/?>/gi, '');
+    result = result.replace(/<link\s+rel="canonical"[^>]*\/?>/gi, '');
+    result = result.replace(/<meta\s+property="og:[^"]*"[^>]*\/?>/gi, '');
+    result = result.replace(/<meta\s+name="twitter:[^"]*"[^>]*\/?>/gi, '');
+
+    console.log(`[injectSocialMetaIntoHtml] Replacing <head> tag`);
+    result = result.replace(/<head>/i, `<head>${tags}`);
+
+    if (noscriptBody && !result.includes('id="product-seo-fallback"')) {
+      console.log(`[injectSocialMetaIntoHtml] Adding noscript body`);
+      result = result.replace(/<body([^>]*)>/i, `<body$1>${noscriptBody}`);
+    }
+
+    console.log(`[injectSocialMetaIntoHtml] Done!`);
+    return result;
+  }
+
+  // ========== UPDATED: buildProductSocialHtml with proper image ==========
+  async function buildProductSocialHtml(pool, reqPath, html) {
+    const productId = extractProductIdFromRequestPath(reqPath);
+    console.log(`[buildProductSocialHtml] Product ID: ${productId}`);
+    if (!productId) return null;
+
+    let connection;
+    try {
+      connection = await pool.getConnection();
+      const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
+      console.log(`[buildProductSocialHtml] Product rows found: ${rows.length}`);
+      if (!rows.length) {
+        connection.release();
+        return null;
+      }
+
+      const product = rows[0];
+      const sitemapPath = await resolveProductSitemapPath(connection, productId);
+      connection.release();
+      connection = null;
+
+      const canonicalPath = buildCanonicalProductPath(product, sitemapPath, productId);
+      const canonicalUrl = `${PUBLIC_SITE_URL}${canonicalPath}`;
+      const photos = parseProductPhotos(product);
+      const imageUrl = photos[0] ? getImageUrlForSharing(photos[0], 1200, 630) : DEFAULT_OG_IMAGE;
+      console.log(`[buildProductSocialHtml] Image URL: ${imageUrl}`);
+      const meta = buildProductSocialMetaTags(product, { canonicalUrl, imageUrl });
+
+      const result = injectSocialMetaIntoHtml(html, meta);
+      console.log(`[buildProductSocialHtml] Generated social HTML successfully`);
+      return result;
+    } catch (err) {
+      if (connection) connection.release();
+      console.error(`[buildProductSocialHtml] Error: ${err}`);
+      throw err;
+    }
+  }
+
+  // ========== EXPORT all functions ==========
+  return {
+    PUBLIC_SITE_URL,
+    PUBLIC_API_BASE,
+    DEFAULT_OG_IMAGE,
+    escapeAttr,
+    stripHtml,
+    toSlug,
+    extractProductIdFromRequestPath,
+    getProductIdFromSitemapPath,
+    absoluteImageUrl,
+    getImageUrlForSharing,   // <-- NEW: export this
+    parseProductPhotos,
+    resolveProductSitemapPath,
+    buildCanonicalProductPath,
+    buildProductSocialMetaTags,
+    injectSocialMetaIntoHtml,
+    buildProductSocialHtml,
+  };
+})();
 
 // Helper: extract productId from a sitemap path like `/products/slug-id`
 function getProductIdFromPath(pathStr) {
-  try {
-    const parts = String(pathStr || '').split('-');
-    const lastPart = parts[parts.length - 1];
-    if (/^\d+$/.test(lastPart)) return lastPart;
-    // Support legacy pattern /products/123/slug
-    const m = String(pathStr || '').match(/^\/products\/(\d+)\//);
-    return m ? m[1] : null;
-  } catch {
-    return null;
-  }
+  return productSocialSeo.getProductIdFromSitemapPath(pathStr);
 }
 
 async function regenerateSitemap() {
@@ -711,7 +1307,7 @@ async function regenerateSitemap() {
   try {
     console.log('🔄 Sitemap regeneration started...');
     connection = await pool.getConnection();
-    
+
     // Fetch ALL sitemap entries directly from DB table
     // This query mirrors:
     // SELECT `id`, `path`, `priority`, `changefreq`, `type`, `is_active`, `created_at`, `updated_at` FROM `sitemap_entries` WHERE 1
@@ -762,7 +1358,56 @@ async function regenerateSitemap() {
       }
     }
 
-    // Refetch entries after sync
+    // =============================================================
+    // CLEANUP: De-duplicate product URLs (same productId → keep 1 best)
+    // =============================================================
+    try {
+      const [productEntries] = await connection.query(
+        `SELECT id, path, priority, is_active, updated_at
+         FROM sitemap_entries
+         WHERE (type = 'product' OR path LIKE '/products/%')
+         ORDER BY
+           CASE WHEN path REGEXP '/products/[a-z0-9-]+-[0-9]+/?$' THEN 0 ELSE 1 END,
+           CAST(priority AS DECIMAL(3,2)) DESC,
+           updated_at DESC,
+           id DESC`
+      );
+
+      const seenProductIds = new Set();
+      const idsToKeep = new Set();
+      const idsToDeactivate = [];
+
+      for (const e of productEntries) {
+        const pid = getProductIdFromPath(e.path);
+        if (!pid) {
+          // path looks like product but no id detectable → only keep if path is exactly canonical
+          const looksCanonical = /^\/products\/[a-z0-9-]+-[0-9]+\/?$/.test(String(e.path || '').toLowerCase());
+          if (!looksCanonical) {
+            idsToDeactivate.push(e.id);
+          }
+          continue;
+        }
+        if (seenProductIds.has(pid)) {
+          idsToDeactivate.push(e.id);
+        } else {
+          seenProductIds.add(pid);
+          idsToKeep.add(e.id);
+        }
+      }
+
+      if (idsToDeactivate.length > 0) {
+        const placeholders = idsToDeactivate.map(() => '?').join(',');
+        await connection.query(
+          `UPDATE sitemap_entries SET is_active = FALSE, updated_at = NOW() WHERE id IN (${placeholders})`,
+          idsToDeactivate
+        );
+        console.log(`🧹 Deactivated ${idsToDeactivate.length} duplicate/non-canonical product sitemap entries.`);
+      }
+    } catch (dedupErr) {
+      console.warn('Duplicate product URL cleanup skipped:', dedupErr.message);
+    }
+
+    // Refetch entries after sync + dedup
     [entries] = await connection.query(
       'SELECT id, path, priority, changefreq, type, is_active, created_at, updated_at FROM sitemap_entries WHERE 1'
     );
@@ -836,9 +1481,9 @@ async function regenerateSitemap() {
         console.warn('Category sitemap import skipped due to error:', importErr.message);
       }
     }
-    
+
     const today = new Date().toISOString().slice(0, 10);
-    const header = `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
+    const header = `<?xml version="1.0" encoding="UTF-8"?>\n` +
       `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" ` +
       `xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`;
 
@@ -898,12 +1543,12 @@ async function regenerateSitemap() {
           type === 'static'
             ? 'Pages'
             : type === 'category'
-            ? 'Categories'
-            : type === 'product'
-            ? 'Products'
-            : type === 'blog'
-            ? 'Blog'
-            : 'Other',
+              ? 'Categories'
+              : type === 'product'
+                ? 'Products'
+                : type === 'blog'
+                  ? 'Blog'
+                  : 'Other',
         images: []
       };
 
@@ -934,30 +1579,62 @@ async function regenerateSitemap() {
     sortUrls(pageUrls);
     sortUrls(blogUrls);
 
-    // Write main sitemap
-    const mainXml = buildXml(allUrls);
-    const outPath = path.join(__dirname, '..', 'client', 'public', 'sitemap.xml');
-    fs.writeFileSync(outPath, mainXml, 'utf8');
+    const mainXml = buildSitemapIndexXml([
+      { loc: `${PUBLIC_SITE_URL}/product-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/category-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/blog-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/page-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/component-sitemap.xml` }
+    ]);
+    const publicDir = path.join(__dirname, '..', 'client', 'public');
+    const outPath = path.join(publicDir, 'sitemap.xml');
+    const productPath = path.join(publicDir, 'product-sitemap.xml');
+    const categoryPath = path.join(publicDir, 'category-sitemap.xml');
+    const pagePath = path.join(publicDir, 'page-sitemap.xml');
+    const blogPath = path.join(publicDir, 'blog-sitemap.xml');
+    const componentPath = path.join(publicDir, 'component-sitemap.xml');
+    const componentXml = await generateComponentSitemapXml();
 
-    // Write product-only sitemap
+    try {
+      const legacyFiles = fs.readdirSync(publicDir).filter((fileName) =>
+        fileName === 'product-sitemap.xml' ||
+        fileName === 'category-sitemap.xml' ||
+        fileName === 'page-sitemap.xml' ||
+        fileName === 'blog-sitemap.xml' ||
+        fileName === 'component-sitemap.xml' ||
+        /^category-sitemap-[a-z0-9-]+\.xml$/i.test(fileName)
+      );
+      for (const legacyFile of legacyFiles) {
+        try {
+          fs.unlinkSync(path.join(publicDir, legacyFile));
+        } catch (cleanupErr) {
+          console.warn(`Could not remove legacy sitemap file ${legacyFile}:`, cleanupErr.message);
+        }
+      }
+    } catch (cleanupErr) {
+      console.warn('Legacy sitemap cleanup skipped:', cleanupErr.message);
+    }
+
     const productXml = buildXml(productUrls);
-    const productPath = path.join(__dirname, '..', 'client', 'public', 'product-sitemap.xml');
-    fs.writeFileSync(productPath, productXml, 'utf8');
-
-    // Write category-only sitemap
     const categoryXml = buildXml(categoryUrls);
-    const categoryPath = path.join(__dirname, '..', 'client', 'public', 'category-sitemap.xml');
-    fs.writeFileSync(categoryPath, categoryXml, 'utf8');
-
-    // Write page-only sitemap (static pages)
     const pageXml = buildXml(pageUrls);
-    const pagePath = path.join(__dirname, '..', 'client', 'public', 'page-sitemap.xml');
-    fs.writeFileSync(pagePath, pageXml, 'utf8');
-
-    // Write blog-only sitemap
     const blogXml = buildXml(blogUrls);
-    const blogPath = path.join(__dirname, '..', 'client', 'public', 'blog-sitemap.xml');
+    fs.writeFileSync(outPath, mainXml, 'utf8');
+    fs.writeFileSync(productPath, productXml, 'utf8');
+    fs.writeFileSync(categoryPath, categoryXml, 'utf8');
+    fs.writeFileSync(pagePath, pageXml, 'utf8');
     fs.writeFileSync(blogPath, blogXml, 'utf8');
+    fs.writeFileSync(componentPath, componentXml, 'utf8');
+
+    // Notify Google & Bing about the updated sitemap
+    try {
+      // Fire-and-forget (non-blocking) so regeneration latency stays low
+      setImmediate(() => {
+        pingSitemapToSearchEngines(`${PUBLIC_SITE_URL}/sitemap.xml`).catch(() => { });
+      });
+    } catch (_pingErr) {
+      // ignore ping errors; regeneration itself succeeded
+    }
 
     console.log(
       `✅ Sitemap regenerated: all=${allUrls.length}, products=${productUrls.length}, categories=${categoryUrls.length}, pages=${pageUrls.length}, blogs=${blogUrls.length}`
@@ -973,7 +1650,8 @@ async function regenerateSitemap() {
       pageCount: pageUrls.length,
       pagePath,
       blogCount: blogUrls.length,
-      blogPath
+      blogPath,
+      componentPath
     };
   } catch (error) {
     console.error(`❌ Sitemap regeneration error: ${error.message}`);
@@ -1101,16 +1779,16 @@ const EMAIL_THEME = {
 
 // ==================== PREMIUM EMAIL TEMPLATE COMPONENTS ====================
 
-const renderThemedEmail = ({ 
-  title, 
-  subtitle, 
-  contentHtml, 
-  primaryCtaText, 
+const renderThemedEmail = ({
+  title,
+  subtitle,
+  contentHtml,
+  primaryCtaText,
   primaryCtaUrl,
   secondaryCtaText,
   secondaryCtaUrl,
   footerNote,
-  includeSocial = true 
+  includeSocial = true
 }) => {
   return `
     <!DOCTYPE html>
@@ -1120,7 +1798,7 @@ const renderThemedEmail = ({
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <meta name="color-scheme" content="light">
       <meta name="supported-color-schemes" content="light">
-      <title>${title || 'Yokebud Crafts'}</title>
+      <title>${title || 'Yokebud craft'}</title>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
       <style>
         /* Reset and Base Styles */
@@ -1411,8 +2089,8 @@ const renderThemedEmail = ({
         <!-- Header -->
         <div class="email-header">
           <div class="header-content">
-            <div class="brand-logo">YOKEBUD CRAFTS</div>
-            <h1 class="email-title">${title || 'Yokebud Crafts'}</h1>
+            <div class="brand-logo">YOKEBUD craft</div>
+            <h1 class="email-title">${title || 'Yokebud craft'}</h1>
             ${subtitle ? `<p class="email-subtitle">${subtitle}</p>` : ''}
           </div>
         </div>
@@ -1483,13 +2161,13 @@ const renderThemedEmail = ({
             ` : ''}
             
             <div class="contact-info">
-              <p>Yokebud Crafts</p>
+              <p>Yokebud craft</p>
               <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
               <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
             </div>
             
             <div class="copyright">
-              &copy; ${new Date().getFullYear()} Yokebud Crafts. All rights reserved.
+              &copy; ${new Date().getFullYear()} Yokebud craft. All rights reserved.
             </div>
           </div>
         </div>
@@ -1518,7 +2196,7 @@ const renderAdminOtpEmail = (otp) => {
       
       <div class="email-card" style="text-align: center; padding: 40px 20px;">
         <p class="content-text" style="margin-bottom: 20px;">
-          Use this OTP to login to your Yokebud Crafts account.
+          Use this OTP to login to your Yokebud craft account.
         </p>
 
         <div style="background: #1A202C; border-radius: 12px; padding: 20px; display: inline-block; margin: 0 auto 20px auto; min-width: 200px;">
@@ -1539,7 +2217,7 @@ const renderAdminOtpEmail = (otp) => {
   `;
 
   return renderThemedEmail({
-    title: 'Yokebud Crafts Admin',
+    title: 'Yokebud craft Admin',
     subtitle: 'Admin Access Verification',
     contentHtml,
     footerNote: 'This code was generated for Admin access.'
@@ -1555,7 +2233,7 @@ const sendAdminOtpEmail = async (otpRecord) => {
 
   const adminEmail = otpRecord.email || 'yokebud@gmail.com';
   const html = renderAdminOtpEmail(otpRecord.otp_code);
-  
+
   const mailOptions = {
     from: process.env.EMAIL_FROM || 'Yokebud Security <security@yokebud.com>',
     to: adminEmail,
@@ -1579,10 +2257,10 @@ const sendAdminOtpEmail = async (otpRecord) => {
 // 1. WELCOME EMAIL (NEWSLETTER SUBSCRIPTION)
 const renderWelcomeEmail = (email, token) => {
   const unsubscribeLink = `${PUBLIC_SITE_URL}/UnsubscribePage?token=${token}`;
-  
+
   const contentHtml = `
     <div class="content-section">
-      <h2 class="content-title">Welcome to Yokebud Crafts! </h2>
+      <h2 class="content-title">Welcome to Yokebud craft! </h2>
       <p class="content-text">
         Thank you for joining our exclusive community of fashion enthusiasts and wholesale buyers. 
         We're thrilled to have you on board!
@@ -1605,9 +2283,9 @@ const renderWelcomeEmail = (email, token) => {
       </p>
     </div>
   `;
-  
+
   return renderThemedEmail({
-    title: 'Welcome to Yokebud Crafts',
+    title: 'Welcome to Yokebud craft',
     subtitle: 'Your journey to premium wholesale fashion begins here',
     contentHtml,
     primaryCtaText: 'Explore Our Collection',
@@ -1626,7 +2304,7 @@ const renderAccountWelcomeEmail = (name) => {
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">Welcome${name ? `, ${name}` : ''}! 🎉</h2>
-        <p class="content-text">Your Yokebud Crafts account has been created successfully.</p>
+        <p class="content-text">Your Yokebud craft account has been created successfully.</p>
       </div>
 
       <div class="email-card">
@@ -1642,7 +2320,7 @@ const renderAccountWelcomeEmail = (name) => {
   `;
 
   return renderThemedEmail({
-    title: 'Welcome to Yokebud Crafts',
+    title: 'Welcome to Yokebud craft',
     subtitle: 'We are excited to have you here',
     contentHtml,
     primaryCtaText: 'Go to Your Profile',
@@ -1657,7 +2335,7 @@ const renderAccountWelcomeEmail = (name) => {
 const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
   const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
   const downloadUrl = `${PUBLIC_SITE_URL}/Checkout?orderId=${encodeURIComponent(orderId)}&download=invoice`;
-  
+
   const itemsHtml = `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
       ${items.map(item => `
@@ -1677,7 +2355,7 @@ const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
       `).join('')}
     </table>
   `;
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -1732,11 +2410,11 @@ const renderOrderConfirmationEmail = (orderId, customerInfo, items, totals) => {
       
       <p class="content-text">
         We've received your order and are preparing it for shipment. You'll receive another email 
-        with tracking information once your order ships. Thank you for choosing Yokebud Crafts!
+        with tracking information once your order ships. Thank you for choosing Yokebud craft!
       </p>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Order Confirmation',
     subtitle: `Order #${orderId}`,
@@ -1770,7 +2448,7 @@ const renderAdminNewOrderEmail = (orderId, customerInfo, items, totals) => {
       `).join('')}
     </table>
   `;
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -1824,7 +2502,7 @@ const renderAdminNewOrderEmail = (orderId, customerInfo, items, totals) => {
       </div>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'New Order Alert',
     subtitle: `Order #${orderId}`,
@@ -1857,14 +2535,14 @@ const renderManualNotificationEmail = (orderId, customerInfo) => {
       </div>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Order Update',
     subtitle: `Order #${orderId}`,
     contentHtml,
     primaryCtaText: 'View Order',
     primaryCtaUrl: `${process.env.PUBLIC_SITE_URL || 'http://localhost:5173'}/UserProfile`,
-    footerNote: 'Thank you for choosing Yokebud Crafts!'
+    footerNote: 'Thank you for choosing Yokebud craft!'
   });
 };
 
@@ -1896,13 +2574,13 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
               <td colspan="2" style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
                 <strong style="display: block; color: ${EMAIL_THEME.text};">Subscription Date</strong>
                 <span style="color: ${EMAIL_THEME.textLight};">
-                  ${new Date().toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
+                  ${new Date().toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })}
                 </span>
               </td>
             </tr>
@@ -1916,131 +2594,255 @@ const renderNewSubscriberNotificationEmail = (subscriberEmail) => {
       </div>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'New Subscriber Alert',
-    subtitle: 'Yokebud Crafts Newsletter System',
+    subtitle: 'Yokebud craft Newsletter System',
     contentHtml,
     primaryCtaText: 'View Subscriber Dashboard',
     primaryCtaUrl: `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}`,
-    footerNote: 'This is an automated notification from Yokebud Crafts Newsletter System'
+    footerNote: 'This is an automated notification from Yokebud craft Newsletter System'
   });
+};
+
+const escapeEmailHtml = (value) => {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+};
+
+const formatNewsletterPrice = (value) => {
+  const amount = Number(value || 0);
+  return `€${amount.toFixed(2)}`;
+};
+
+const getNewsletterProductLink = (product) => {
+  const slug = String(product.product_name || 'product')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `${PUBLIC_SITE_URL}/products/${slug}-${product.id}`;
+};
+
+const getNewsletterImageUrl = (product) => {
+  const raw = product.firstImage || '';
+  if (!raw) return `${PUBLIC_SITE_URL}/LOGO.png`;
+  const source = String(raw);
+  if (source.startsWith('http://') || source.startsWith('https://')) return source;
+  const clean = source.startsWith('/') ? source : `/${source}`;
+  return `${PUBLIC_API_BASE}${clean}`;
+};
+
+const getNewsletterDiscountMeta = (product) => {
+  const price = Number(product.price || 0);
+  const discountedPrice = Number(product.discounted_price || 0);
+  const hasDiscount = discountedPrice > 0 && discountedPrice < price;
+  if (!hasDiscount) {
+    return { hasDiscount: false, amountSaved: 0, percentSaved: 0 };
+  }
+
+  const amountSaved = price - discountedPrice;
+  const percentSaved = price > 0 ? Math.round((amountSaved / price) * 100) : 0;
+  return { hasDiscount, amountSaved, percentSaved };
+};
+
+const renderNewsletterProductGrid = (products, { accentColor, badgeBg, badgeText, ctaText }) => {
+  const safeProducts = Array.isArray(products) ? products : [];
+  if (safeProducts.length === 0) return '';
+
+  const rows = [];
+  for (let index = 0; index < safeProducts.length; index += 2) {
+    rows.push(safeProducts.slice(index, index + 2));
+  }
+
+  return rows.map(row => {
+    const cells = row.map(product => {
+      const productName = escapeEmailHtml(product.product_name || 'Product');
+      const productLink = getNewsletterProductLink(product);
+      const imageUrl = getNewsletterImageUrl(product);
+      const { hasDiscount, amountSaved, percentSaved } = getNewsletterDiscountMeta(product);
+      const priceHtml = hasDiscount
+        ? `
+            <div style="font-size: 13px; color: #8A94A6; text-decoration: line-through; margin-bottom: 4px;">
+              ${formatNewsletterPrice(product.price)}
+            </div>
+            <div style="font-size: 22px; line-height: 28px; font-weight: 800; color: ${EMAIL_THEME.danger};">
+              ${formatNewsletterPrice(product.discounted_price)}
+            </div>
+            <div style="font-size: 12px; line-height: 18px; color: ${EMAIL_THEME.accent}; font-weight: 700; margin-top: 4px;">
+              Save ${formatNewsletterPrice(amountSaved)}${percentSaved > 0 ? ` (${percentSaved}% off)` : ''}
+            </div>
+          `
+        : `
+            <div style="font-size: 22px; line-height: 28px; font-weight: 800; color: ${EMAIL_THEME.dark};">
+              ${formatNewsletterPrice(product.price)}
+            </div>
+          `;
+
+      return `
+        <td width="50%" valign="top" style="padding: 0 8px 16px 8px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border: 1px solid ${EMAIL_THEME.border}; border-radius: 14px; overflow: hidden; background: #ffffff;">
+            <tr>
+              <td style="padding: 0;">
+                <a href="${productLink}" style="text-decoration: none; display: block;">
+                  <img src="${imageUrl}" alt="${productName}" width="100%" style="display: block; width: 100%; height: 220px; object-fit: cover; background: #f7fafc;" />
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 18px 18px 16px 18px;">
+                <div style="margin-bottom: 12px;">
+                  <span style="display: inline-block; background: ${badgeBg}; color: ${badgeText}; font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; padding: 5px 9px; border-radius: 999px;">
+                    ${hasDiscount ? 'Special Offer' : 'Latest Upload'}
+                  </span>
+                </div>
+                <div style="font-size: 18px; line-height: 25px; color: ${EMAIL_THEME.dark}; font-weight: 700; min-height: 50px; margin-bottom: 10px;">
+                  ${productName}
+                </div>
+                <div style="margin-bottom: 16px;">
+                  ${priceHtml}
+                </div>
+                <a href="${productLink}" style="display: inline-block; background: ${accentColor}; color: #ffffff; text-decoration: none; padding: 11px 18px; border-radius: 8px; font-size: 13px; line-height: 18px; font-weight: 700;">
+                  ${ctaText}
+                </a>
+              </td>
+            </tr>
+          </table>
+        </td>
+      `;
+    }).join('');
+
+    const spacer = row.length === 1
+      ? '<td width="50%" valign="top" style="padding: 0 8px 16px 8px;"></td>'
+      : '';
+
+    return `<tr>${cells}${spacer}</tr>`;
+  }).join('');
+};
+
+const renderNewsletterSection = ({
+  title,
+  intro,
+  products,
+  accentColor,
+  badgeBg,
+  badgeText,
+  ctaText
+}) => {
+  if (!Array.isArray(products) || products.length === 0) return '';
+
+  return `
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top: 28px;">
+      <tr>
+        <td style="padding: 0 0 14px 0;">
+          <div style="font-size: 24px; line-height: 30px; color: ${EMAIL_THEME.dark}; font-weight: 800; margin-bottom: 8px;">
+            ${title}
+          </div>
+          <div style="font-size: 15px; line-height: 24px; color: ${EMAIL_THEME.textLight};">
+            ${intro}
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 0;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            ${renderNewsletterProductGrid(products, { accentColor, badgeBg, badgeText, ctaText })}
+          </table>
+        </td>
+      </tr>
+    </table>
+  `;
 };
 
 // 4. WEEKLY NEWSLETTER EMAIL
 const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
   const unsubscribeLink = `${PUBLIC_SITE_URL}/UnsubscribePage?token=${token}`;
-  const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
-  
-  const renderProductCards = (products) => {
-    return products.map(product => {
-      const slug = String(product.product_name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-      const productLink = `${PUBLIC_SITE_URL}/products/${slug}-${product.id}`;
-      const imageUrl = (() => {
-        const raw = product.firstImage || '';
-        if (!raw) return '';
-        const s = String(raw);
-        if (s.startsWith('http')) return s;
-        const clean = s.startsWith('/') ? s : `/${s}`;
-        return `${backendBase}${clean}`;
-      })();
-      
-      const hasDiscount = product.discounted_price && product.discounted_price < product.price;
-      const displayPrice = hasDiscount 
-        ? `<span style="text-decoration: line-through; color: #999; font-size: 14px;">€${product.price}</span> <span style="color: ${EMAIL_THEME.primary};">€${product.discounted_price}</span>`
-        : `<span>€${product.price}</span>`;
+  const newArrivals = Array.isArray(collections?.newArrivals) ? collections.newArrivals : [];
+  const discountedProducts = Array.isArray(collections?.discounted) ? collections.discounted : [];
+  const totalHighlights = newArrivals.length + discountedProducts.length;
 
-      return `
-        <div style="border: 1px solid ${EMAIL_THEME.border}; border-radius: 12px; overflow: hidden; margin-bottom: 20px; background: white; width: 100%;">
-          <div style="position: relative; width: 100%; height: 200px; overflow: hidden; background-color: #f8f8f8;">
-            <a href="${productLink}" style="display:block; width:100%; height:100%; text-decoration:none;">
-              <img src="${imageUrl}" 
-                   alt="${product.product_name}" 
-                   style="width: 100%; height: 100%; object-fit: cover;"
-                   onerror="this.style.display='none'">
-            </a>
-            ${hasDiscount ? `
-              <div style="position: absolute; top: 10px; right: 10px; background: ${EMAIL_THEME.danger}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold;">
-                OFFER
-              </div>
-            ` : ''}
-          </div>
-          <div style="padding: 15px;">
-            <a href="${productLink}" style="text-decoration:none; color: inherit;">
-              <h3 style="margin: 0 0 8px 0; font-size: 15px; color: ${EMAIL_THEME.dark}; font-weight: 600; line-height: 1.3; height: 38px; overflow: hidden;">
-                ${product.product_name}
-              </h3>
-            </a>
-            <p style="margin: 0 0 12px 0; font-size: 16px; font-weight: 700;">
-              ${displayPrice}
-            </p>
-            <a href="${productLink}" 
-               style="display: block; text-align: center; background: #000000; color: #ffffff; padding: 10px; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 600;">
-              View Details
-            </a>
-          </div>
-        </div>
-      `;
-    }).join('');
-  };
+  const highlightsSummary = [
+    newArrivals.length > 0 ? `${newArrivals.length} latest upload${newArrivals.length > 1 ? 's' : ''}` : null,
+    discountedProducts.length > 0 ? `${discountedProducts.length} special deal${discountedProducts.length > 1 ? 's' : ''}` : null
+  ].filter(Boolean).join(' and ');
 
-  const newArrivalsHtml = collections.newArrivals && collections.newArrivals.length > 0 ? `
-    <div style="margin-top: 30px;">
-      <h2 style="font-size: 20px; color: ${EMAIL_THEME.dark}; border-bottom: 2px solid ${EMAIL_THEME.primary}; padding-bottom: 8px; margin-bottom: 20px;">
-        ✨ New Arrivals
-      </h2>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-        ${renderProductCards(collections.newArrivals)}
-      </div>
-    </div>
-  ` : '';
+  const newArrivalsHtml = renderNewsletterSection({
+    title: 'Latest Uploads',
+    intro: 'Freshly uploaded products from the workshop, selected from the newest active items on the site.',
+    products: newArrivals,
+    accentColor: '#111111',
+    badgeBg: '#FFF4D8',
+    badgeText: '#8A5A00',
+    ctaText: 'View Product'
+  });
 
-  const discountedHtml = collections.discounted && collections.discounted.length > 0 ? `
-    <div style="margin-top: 40px;">
-      <h2 style="font-size: 20px; color: ${EMAIL_THEME.dark}; border-bottom: 2px solid ${EMAIL_THEME.danger}; padding-bottom: 8px; margin-bottom: 20px;">
-        🔥 Exclusive Deals
-      </h2>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-        ${renderProductCards(collections.discounted)}
-      </div>
-    </div>
-  ` : '';
-  
+  const discountedHtml = renderNewsletterSection({
+    title: 'Special Discounts',
+    intro: 'Current discounted products featured separately, so subscribers can spot active offers right away.',
+    products: discountedProducts,
+    accentColor: EMAIL_THEME.danger,
+    badgeBg: '#FDECEC',
+    badgeText: '#B42318',
+    ctaText: 'Claim Offer'
+  });
+
   const contentHtml = `
     <div class="content-section">
-      <div style="text-align: center; margin-bottom: 30px;">
-        <h2 class="content-title">Your Weekly Yokebud Update</h2>
-        <p class="content-text" style="text-align: center;">
+      <div style="text-align: center; margin-bottom: 28px;">
+        <div style="display: inline-block; padding: 7px 14px; border-radius: 999px; background: #FFF4D8; color: #8A5A00; font-size: 12px; line-height: 18px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: 16px;">
+          Weekly Product Newsletter
+        </div>
+        <h2 class="content-title" style="margin-bottom: 10px;">This Week at Yokebud craft</h2>
+        <p class="content-text" style="text-align: center; margin-bottom: 10px;">
           ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
         </p>
-      </div>
-      
-      <p class="content-text">
-        Hello! Here are the latest handpicked products and exclusive discounts from Yokebud Crafts. 
-        Whether you're looking for custom laser engraved gifts or premium handmade art, we've got something special for you this week.
-      </p>
-      
-      ${newArrivalsHtml}
-      ${discountedHtml}
-      
-      <div style="margin-top: 30px; padding: 20px; background: #fff8eb; border-radius: 12px; border: 1px dashed ${EMAIL_THEME.primary};">
-        <p style="margin: 0; font-size: 14px; color: ${EMAIL_THEME.dark}; text-align: center;">
-          <strong>Pro Tip:</strong> Most of our products can be personalized! 
-          Contact us for custom laser engraving requests.
+        <p class="content-text" style="text-align: center; max-width: 520px; margin: 0 auto;">
+          ${totalHighlights > 0
+      ? `We prepared ${escapeEmailHtml(highlightsSummary)} for this week's edition, with newly uploaded products and clearly separated offer items for faster browsing.`
+      : 'We prepared a curated weekly look at what is new on Yokebud craft.'}
         </p>
       </div>
+
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border: 1px solid ${EMAIL_THEME.border}; border-radius: 14px; background: #F9FBFC;">
+        <tr>
+          <td style="padding: 18px 20px;">
+            <div style="font-size: 14px; line-height: 23px; color: ${EMAIL_THEME.text};">
+              You are receiving the latest uploads directly from our store. Whenever a product has a live discount, it appears in its own dedicated section below instead of being mixed into the general product feed.
+            </div>
+          </td>
+        </tr>
+      </table>
+
+      ${newArrivalsHtml}
+      ${discountedHtml}
+
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top: 28px; border: 1px dashed ${EMAIL_THEME.primary}; border-radius: 14px; background: #FFF9ED;">
+        <tr>
+          <td style="padding: 20px;">
+            <div style="font-size: 16px; line-height: 24px; color: ${EMAIL_THEME.dark}; font-weight: 700; margin-bottom: 6px; text-align: center;">
+              Custom engraving available
+            </div>
+            <div style="font-size: 14px; line-height: 22px; color: ${EMAIL_THEME.textLight}; text-align: center;">
+              Many of our products can be personalized for gifts, events, and branded orders. Contact us for custom requests and bulk pricing.
+            </div>
+          </td>
+        </tr>
+      </table>
     </div>
   `;
-  
+
   return renderThemedEmail({
-    title: 'Weekly Crafts Update',
-    subtitle: 'Fresh arrivals & exclusive deals',
+    title: 'Weekly Product Highlights',
+    subtitle: 'Latest uploads and separate discount picks',
     contentHtml,
-    primaryCtaText: 'Shop All Products',
+    primaryCtaText: 'Browse All Products',
     primaryCtaUrl: `${PUBLIC_SITE_URL}/shop`,
     secondaryCtaText: 'Unsubscribe',
     secondaryCtaUrl: unsubscribeLink,
-    footerNote: `Prefer reading first? Visit our blog: <a href="${PUBLIC_SITE_URL}/blog" style="color:${EMAIL_THEME.primary}; text-decoration:none;">${PUBLIC_SITE_URL}/blog</a>`
+    footerNote: `Need inspiration first? Explore the latest stories on our blog: <a href="${PUBLIC_SITE_URL}/blog" style="color:${EMAIL_THEME.primary}; text-decoration:none;">${PUBLIC_SITE_URL}/blog</a>`
   });
 };
 
@@ -2058,7 +2860,7 @@ const renderUnsubscribeConfirmationEmail = (email) => {
       <div class="email-card">
         <p class="content-text" style="text-align: center; margin: 0;">
           You will no longer receive weekly product updates, exclusive offers, 
-          or fashion insights from Yokebud Crafts.
+          or fashion insights from Yokebud craft.
         </p>
       </div>
       
@@ -2068,7 +2870,7 @@ const renderUnsubscribeConfirmationEmail = (email) => {
       </p>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Unsubscribed',
     subtitle: 'You have left our newsletter',
@@ -2082,10 +2884,10 @@ const renderUnsubscribeConfirmationEmail = (email) => {
 // 6. OTP VERIFICATION EMAIL - Standalone version without external resources
 const renderOTPEmail = (email, otp, type = 'registration') => {
   const subjectText = type === 'registration' ? 'Verify Your Email Address' : 'Login Verification';
-  const descriptionText = type === 'registration' 
-    ? 'Thank you for signing up with Yokebud Crafts!' 
-    : 'Use this OTP to login to your Yokebud Crafts account.';
-  
+  const descriptionText = type === 'registration'
+    ? 'Thank you for signing up with Yokebud craft!'
+    : 'Use this OTP to login to your Yokebud craft account.';
+
   // Standalone HTML without external fonts or images
   return `
     <!DOCTYPE html>
@@ -2093,7 +2895,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${subjectText} - Yokebud Crafts</title>
+      <title>${subjectText} - Yokebud craft</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -2220,7 +3022,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
     <body>
       <div class="email-container">
         <div class="email-header">
-          <div class="brand-logo">YOKEBUD CRAFTS</div>
+          <div class="brand-logo">YOKEBUD craft</div>
           <h1 class="email-title">${subjectText}</h1>
           <p class="email-subtitle">Secure Verification Required</p>
         </div>
@@ -2270,12 +3072,12 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
             </a>
           </div>
           <div class="contact-info">
-            <p><strong>Yokebud Crafts</strong></p>
+            <p><strong>Yokebud craft</strong></p>
             <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
             <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
           </div>
           <div class="copyright">
-            &copy; ${new Date().getFullYear()} Yokebud Crafts. All rights reserved.
+            &copy; ${new Date().getFullYear()} Yokebud craft. All rights reserved.
           </div>
         </div>
       </div>
@@ -2285,18 +3087,18 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
 };
 
 // 7. ORDER STATUS UPDATE EMAIL
-const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNumber = null) => {
+const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNumber = null, estimatedDeliveryDate = null) => {
   const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
-  
+
   const statusConfig = {
     'processing': { color: EMAIL_THEME.primary, icon: '🔄', title: 'Order Processing' },
     'shipped': { color: EMAIL_THEME.accent, icon: '🚚', title: 'Order Shipped' },
     'delivered': { color: EMAIL_THEME.accent, icon: '✅', title: 'Order Delivered' },
     'cancelled': { color: EMAIL_THEME.danger, icon: '❌', title: 'Order Cancelled' }
   };
-  
+
   const config = statusConfig[status.toLowerCase()] || { color: EMAIL_THEME.primary, icon: '📦', title: 'Order Update' };
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -2331,17 +3133,31 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
                 </td>
               </tr>
             ` : ''}
+            ${estimatedDeliveryDate ? `
+              <tr>
+                <td colspan="2" style="padding: 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+                  <strong style="display: block; color: ${EMAIL_THEME.text};">Estimated Delivery Date</strong>
+                  <span style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
+                    ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  })}
+                  </span>
+                </td>
+              </tr>
+            ` : ''}
             <tr>
               <td colspan="2" style="padding: 15px 0 0 0;">
                 <strong style="display: block; color: ${EMAIL_THEME.text};">Update Date</strong>
                 <span style="color: ${EMAIL_THEME.textLight};">
-                  ${new Date().toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
+                  ${new Date().toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })}
                 </span>
               </td>
             </tr>
@@ -2357,9 +3173,93 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
       </p>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Order Status Update',
+    subtitle: `Order #${orderId}`,
+    contentHtml,
+    primaryCtaText: 'View Order Details',
+    primaryCtaUrl: viewOrdersUrl,
+    footerNote: 'If you have any questions about this update, please reply to this email.'
+  });
+};
+
+// Render estimated delivery date update email
+const renderEstimatedDeliveryUpdateEmail = (orderId, customerInfo, estimatedDeliveryDate) => {
+  const viewOrdersUrl = `${PUBLIC_SITE_URL}/UserProfile`;
+
+  const contentHtml = `
+    <div class="content-section">
+      <div style="text-align: center; margin-bottom: 30px;">
+        <h2 class="content-title">Estimated Delivery Update 📅</h2>
+        <p class="content-text" style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
+          Order #${orderId}
+        </p>
+      </div>
+      
+      <div class="email-card">
+        <h3 class="card-title">Delivery Details</h3>
+        <div style="padding: 15px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+            ${estimatedDeliveryDate ? `
+              <tr>
+                <td style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+                  <strong style="display: block; color: ${EMAIL_THEME.text};">Estimated Delivery Date</strong>
+                  <span style="color: ${EMAIL_THEME.accent}; font-weight: 600;">
+                    ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  })}
+                  </span>
+                </td>
+                <td align="right" style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border}; white-space: nowrap; font-size: 24px;">
+                  📅
+                </td>
+              </tr>
+            ` : `
+              <tr>
+                <td style="padding: 0 0 15px 0; border-bottom: 1px solid ${EMAIL_THEME.border};">
+                  <strong style="display: block; color: ${EMAIL_THEME.text};">Estimated Delivery Date</strong>
+                  <span style="color: ${EMAIL_THEME.textLight};">
+                    No estimated delivery date set
+                  </span>
+                </td>
+              </tr>
+            `}
+            <tr>
+              <td colspan="2" style="padding: 15px 0 0 0;">
+                <strong style="display: block; color: ${EMAIL_THEME.text};">Update Date</strong>
+                <span style="color: ${EMAIL_THEME.textLight};">
+                  ${new Date().toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })}
+                </span>
+              </td>
+            </tr>
+          </table>
+        </div>
+      </div>
+      
+      <p class="content-text">
+        ${estimatedDeliveryDate
+      ? `We have updated the estimated delivery date for your order. We aim to deliver your order by ${new Date(estimatedDeliveryDate).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      })}.`
+      : 'We have removed the estimated delivery date for your order. We will update you when we have more information.'
+    }
+      </p>
+    </div>
+  `;
+
+  return renderThemedEmail({
+    title: 'Estimated Delivery Update',
     subtitle: `Order #${orderId}`,
     contentHtml,
     primaryCtaText: 'View Order Details',
@@ -2371,7 +3271,7 @@ const renderOrderStatusUpdateEmail = (orderId, status, customerInfo, trackingNum
 // 8. CONTACT FORM NOTIFICATION EMAIL (ADMIN)
 const renderContactFormNotificationEmail = (name, email, whatsapp, message) => {
   const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin'}/messages`;
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -2410,14 +3310,14 @@ const renderContactFormNotificationEmail = (name, email, whatsapp, message) => {
       </p>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'New Contact Message',
     subtitle: 'From website contact form',
     contentHtml,
     primaryCtaText: 'Open Admin Inbox',
     primaryCtaUrl: adminUrl,
-    footerNote: 'This is an automated notification from Yokebud Crafts website.'
+    footerNote: 'This is an automated notification from Yokebud craft website.'
   });
 };
 
@@ -2428,7 +3328,7 @@ const renderContactFormConfirmationEmail = (name, email, message) => {
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">Message Received! ✨</h2>
         <p class="content-text">
-          Thank you for contacting Yokebud Crafts
+          Thank you for contacting Yokebud craft
         </p>
       </div>
       
@@ -2457,7 +3357,7 @@ const renderContactFormConfirmationEmail = (name, email, message) => {
       </div>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Message Confirmation',
     subtitle: 'We will respond soon',
@@ -2475,13 +3375,13 @@ const renderInquiryNotificationEmail = (recipientName, senderName, inquiryNumber
 
   const title = isToAdmin ? 'New Customer Message' : 'New Message Received';
   const subtitle = isToAdmin ? `From ${senderName} regarding Inquiry #${inquiryNumber}` : `Regarding your inquiry #${inquiryNumber}`;
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
         <h2 class="content-title">${title}</h2>
         <p class="content-text">
-          ${isToAdmin ? `Customer <strong>${senderName}</strong> has sent a new message.` : `You have received a new message from Yokebud Crafts support.`}
+          ${isToAdmin ? `Customer <strong>${senderName}</strong> has sent a new message.` : `You have received a new message from Yokebud craft support.`}
         </p>
       </div>
       
@@ -2513,7 +3413,7 @@ const renderInquiryNotificationEmail = (recipientName, senderName, inquiryNumber
 // 10. PASSWORD RESET EMAIL
 const renderPasswordResetEmail = (email, resetToken) => {
   const resetUrl = `${PUBLIC_SITE_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
-  
+
   const contentHtml = `
     <div class="content-section">
       <div style="text-align: center; margin-bottom: 30px;">
@@ -2554,7 +3454,7 @@ const renderPasswordResetEmail = (email, resetToken) => {
       </div>
     </div>
   `;
-  
+
   return renderThemedEmail({
     title: 'Password Reset',
     subtitle: 'Secure your account',
@@ -2571,13 +3471,13 @@ const renderPasswordResetEmail = (email, resetToken) => {
 const sendWelcomeEmail = async (email, token) => {
   const html = renderWelcomeEmail(email, token);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: email,
-    subject: '✅ Subscription Confirmed — Yokebud Crafts Newsletter',
+    subject: '✅ Subscription Confirmed — Yokebud craft Newsletter',
     html,
     priority: 'high'
   };
-  
+
   try {
     const result = await sendMail(mailOptions);
     console.log(`📧 Welcome email sent to ${email} via ${result?.provider || 'provider'}`);
@@ -2592,9 +3492,9 @@ const sendWelcomeEmail = async (email, token) => {
 const sendAccountWelcomeEmail = async (email, name) => {
   const html = renderAccountWelcomeEmail(name);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <welcome@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <welcome@yokebud.com>',
     to: email,
-    subject: '🎉 Welcome to Yokebud Crafts',
+    subject: '🎉 Welcome to Yokebud craft',
     html,
     priority: 'normal'
   };
@@ -2612,13 +3512,13 @@ const sendAccountWelcomeEmail = async (email, name) => {
 const sendOrderConfirmationEmail = async (orderId, customerInfo, items, totals) => {
   const html = renderOrderConfirmationEmail(orderId, customerInfo, items, totals);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: customerInfo.email,
-    subject: `✅ Order Confirmed #${orderId} - Yokebud Crafts`,
+    subject: `✅ Order Confirmed #${orderId} - Yokebud craft`,
     html,
     priority: 'high'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Order confirmation email sent for order #${orderId}`);
@@ -2633,13 +3533,13 @@ const sendOrderConfirmationEmail = async (orderId, customerInfo, items, totals) 
 const sendNewSubscriberNotification = async (subscriberEmail) => {
   const html = renderNewSubscriberNotificationEmail(subscriberEmail);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts System <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft System <yokebud@gmail.com>',
     to: 'yokebud@gmail.com',
     subject: `🎯 New Newsletter Subscriber: ${subscriberEmail}`,
     html,
     priority: 'normal'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log('📧 New subscriber notification sent to admin');
@@ -2654,13 +3554,13 @@ const sendNewSubscriberNotification = async (subscriberEmail) => {
 const sendWeeklyNewsletter = async (subscriber, products) => {
   const html = renderWeeklyNewsletterEmail(subscriber, products, subscriber.subscription_token);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: subscriber.email,
-    subject: `🚀 Yokebud Crafts Weekly Update - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+    subject: `🚀 Yokebud craft Weekly Update - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
     html,
     priority: 'normal'
   };
-  
+
   try {
     const result = await sendMail(mailOptions);
     console.log(`📧 Weekly newsletter sent to ${subscriber.email} via ${result?.provider || 'provider'}`);
@@ -2675,13 +3575,13 @@ const sendWeeklyNewsletter = async (subscriber, products) => {
 const sendUnsubscribeConfirmation = async (email) => {
   const html = renderUnsubscribeConfirmationEmail(email);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <newsletter@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <newsletter@yokebud.com>',
     to: email,
-    subject: '👋 You have been unsubscribed from Yokebud Crafts Newsletter',
+    subject: '👋 You have been unsubscribed from Yokebud craft Newsletter',
     html,
     priority: 'normal'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Unsubscribe confirmation sent to ${email}`);
@@ -2695,50 +3595,50 @@ const sendUnsubscribeConfirmation = async (email) => {
 // Send OTP email with retry mechanism for Render.com network issues
 const sendOTPEmail = async (email, otp, type = 'registration', customFrom = null, retries = 3) => {
   const html = renderOTPEmail(email, otp, type);
-  const subject = type === 'registration' 
-    ? 'Verify Your Email - Yokebud Crafts' 
+  const subject = type === 'registration'
+    ? 'Verify Your Email - Yokebud craft'
     : type === 'admin_login'
-    ? '🔐 Admin Login OTP - Yokebud Crafts'
-    : 'Login OTP - Yokebud Crafts';
-  
+      ? '🔐 Admin Login OTP - Yokebud craft'
+      : 'Login OTP - Yokebud craft';
+
   const mailOptions = {
-    from: customFrom || process.env.EMAIL_FROM || `Yokebud Crafts Security <${process.env.EMAIL_USER}>`,
+    from: customFrom || process.env.EMAIL_FROM || `Yokebud craft Security <${process.env.EMAIL_USER}>`,
     to: email,
     subject,
     html, // Add HTML content
     text: `Your OTP code is: ${otp}. It expires in 1 minute.`,
     priority: 'high'
   };
-  
+
   // Retry mechanism for connection timeout issues on Render.com
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       console.log(`📤 Attempt ${attempt}/${retries}: Sending ${type} OTP email to ${email}...`);
-      
+
       // Create a promise with timeout
       const sendPromise = sendMail(mailOptions);
-      const timeoutPromise = new Promise((_, reject) => 
+      const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Email send timeout after 55 seconds')), 55000)
       );
-      
+
       await Promise.race([sendPromise, timeoutPromise]);
       console.log(`✅ ${type} OTP email sent successfully to ${email} (attempt ${attempt})`);
       return true;
     } catch (error) {
       const isTimeout = error.code === 'ETIMEDOUT' || error.message.includes('timeout');
       const isLastAttempt = attempt === retries;
-      
+
       console.error(`❌ Attempt ${attempt}/${retries} failed:`, error.message || error.code);
-      
+
       if (isLastAttempt) {
         console.error(`❌ ${type} OTP email failed after ${retries} attempts for ${email}`);
         return false;
       }
-      
+
       // If timeout, wait before retry (exponential backoff)
       if (isTimeout) {
         const waitTime = attempt * 2000; // 2s, 4s, 6s
-        console.log(`⏳ Connection timeout. Retrying in ${waitTime/1000}s...`);
+        console.log(`⏳ Connection timeout. Retrying in ${waitTime / 1000}s...`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
         // For other errors, return immediately
@@ -2747,21 +3647,21 @@ const sendOTPEmail = async (email, otp, type = 'registration', customFrom = null
       }
     }
   }
-  
+
   return false;
 };
 
 // Send order status update email
-const sendOrderStatusUpdateEmail = async (orderId, status, customerInfo, trackingNumber = null) => {
-  const html = renderOrderStatusUpdateEmail(orderId, status, customerInfo, trackingNumber);
+const sendOrderStatusUpdateEmail = async (orderId, status, customerInfo, trackingNumber = null, estimatedDeliveryDate = null) => {
+  const html = renderOrderStatusUpdateEmail(orderId, status, customerInfo, trackingNumber, estimatedDeliveryDate);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || `Yokebud Crafts <${process.env.EMAIL_USER}>`,
+    from: process.env.EMAIL_FROM || `Yokebud craft <${process.env.EMAIL_USER}>`,
     to: customerInfo.email,
     subject: `📦 Order Status Update #${orderId} - ${status.charAt(0).toUpperCase() + status.slice(1)}`,
     html,
     priority: 'normal'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Order status update email sent for order #${orderId}`);
@@ -2772,17 +3672,38 @@ const sendOrderStatusUpdateEmail = async (orderId, status, customerInfo, trackin
   }
 };
 
+// Send estimated delivery date update email
+const sendEstimatedDeliveryUpdateEmail = async (orderId, customerInfo, estimatedDeliveryDate) => {
+  const html = renderEstimatedDeliveryUpdateEmail(orderId, customerInfo, estimatedDeliveryDate);
+  const mailOptions = {
+    from: process.env.EMAIL_FROM || `Yokebud craft <${process.env.EMAIL_USER}>`,
+    to: customerInfo.email,
+    subject: `📅 Estimated Delivery Update for Order #${orderId}`,
+    html,
+    priority: 'normal'
+  };
+
+  try {
+    await sendMail(mailOptions);
+    console.log(`📧 Estimated delivery update email sent for order #${orderId}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Estimated delivery update email error:', error);
+    return false;
+  }
+};
+
 // Send admin new order email
 const sendAdminNewOrderEmail = async (orderId, customerInfo, items, totals) => {
   const html = renderAdminNewOrderEmail(orderId, customerInfo, items, totals);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts System <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft System <yokebud@gmail.com>',
     to: 'yokebud@gmail.com',
     subject: `🚀 New Order Received: #${orderId}`,
     html,
     priority: 'high'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Admin notification sent for order #${orderId}`);
@@ -2797,13 +3718,13 @@ const sendAdminNewOrderEmail = async (orderId, customerInfo, items, totals) => {
 const sendManualNotificationEmail = async (orderId, customerInfo) => {
   const html = renderManualNotificationEmail(orderId, customerInfo);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: customerInfo.email,
-    subject: `✨ Update regarding Order #${orderId} - Yokebud Crafts`,
+    subject: `✨ Update regarding Order #${orderId} - Yokebud craft`,
     html,
     priority: 'normal'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Manual notification sent for order #${orderId}`);
@@ -2818,14 +3739,14 @@ const sendManualNotificationEmail = async (orderId, customerInfo) => {
 const sendContactFormNotification = async (name, email, whatsapp, message) => {
   const html = renderContactFormNotificationEmail(name, email, whatsapp, message);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || `Yokebud Crafts <${process.env.EMAIL_USER}>`,
+    from: process.env.EMAIL_FROM || `Yokebud craft <${process.env.EMAIL_USER}>`,
     replyTo: email,
     to: 'yokebud@gmail.com',
-    subject: `📩 New Contact Message from ${name} - Yokebud Crafts`,
+    subject: `📩 New Contact Message from ${name} - Yokebud craft`,
     html,
     priority: 'high'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Contact form notification sent to admin from ${email}`);
@@ -2840,13 +3761,13 @@ const sendContactFormNotification = async (name, email, whatsapp, message) => {
 const sendContactFormConfirmation = async (name, email, message) => {
   const html = renderContactFormConfirmationEmail(name, email, message);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: email,
-    subject: '✨ Thank you for contacting Yokebud Crafts',
+    subject: '✨ Thank you for contacting Yokebud craft',
     html,
     priority: 'normal'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Contact form confirmation sent to ${email}`);
@@ -2862,25 +3783,25 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
   const isToAdmin = senderType === 'user';
   const recipientEmail = isToAdmin ? 'yokebud@gmail.com' : inquiry.customer_email;
   const recipientName = isToAdmin ? 'Admin' : inquiry.customer_name;
-  const senderName = isToAdmin ? inquiry.customer_name : 'Yokebud Crafts Support';
-  
+  const senderName = isToAdmin ? inquiry.customer_name : 'Yokebud craft Support';
+
   // Parse product name safely
   let productName = 'Product Inquiry';
   try {
-    const productData = typeof inquiry.product_data === 'string' 
-      ? JSON.parse(inquiry.product_data) 
+    const productData = typeof inquiry.product_data === 'string'
+      ? JSON.parse(inquiry.product_data)
       : inquiry.product_data;
     productName = productData.product_name || 'Product Inquiry';
-  } catch (e) {}
+  } catch (e) { }
 
   const html = renderInquiryNotificationEmail(recipientName, senderName, inquiry.inquiry_number, productName, message, isToAdmin);
-  
-  const subject = isToAdmin 
+
+  const subject = isToAdmin
     ? `📩 New Message: Inquiry #${inquiry.inquiry_number} - ${productName}`
-    : `💬 New Message regarding Inquiry #${inquiry.inquiry_number} - Yokebud Crafts`;
+    : `💬 New Message regarding Inquiry #${inquiry.inquiry_number} - Yokebud craft`;
 
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>',
     to: recipientEmail,
     subject: subject,
     html,
@@ -2901,13 +3822,13 @@ const sendInquiryNotification = async (inquiry, message, senderType) => {
 const sendPasswordResetEmail = async (email, resetToken) => {
   const html = renderPasswordResetEmail(email, resetToken);
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Yokebud Crafts Security <security@yokebud.com>',
+    from: process.env.EMAIL_FROM || 'Yokebud craft Security <security@yokebud.com>',
     to: email,
-    subject: '🔐 Password Reset Request - Yokebud Crafts',
+    subject: '🔐 Password Reset Request - Yokebud craft',
     html,
     priority: 'high'
   };
-  
+
   try {
     await sendMail(mailOptions);
     console.log(`📧 Password reset email sent to ${email}`);
@@ -2929,10 +3850,10 @@ const slugify = (str) => String(str || '')
 
 const generateProductSEO = (name, description, price, imageUrls) => {
   const seo_title = `Personalized Laser Engraved ${name} – Finland Handmade Gift`;
-  
+
   // Create a description focusing on laser engraving
   const baseDescription = description || '';
-  const seo_description = `Discover this exquisite ${name}, a premium handmade custom gift from Finland. Our professional laser engraving service ensures each piece is a unique masterpiece of personalization. Perfect for those seeking high-quality engraved treasures in Finland. This handcrafted item showcases the precision of modern laser engraving technology while maintaining the charm of a traditional handmade gift. Experience the best of Finnish craftsmanship with our custom engraving options, tailored specifically for your special occasions. Each ${name} is carefully processed to meet our high standards of excellence. ${baseDescription.slice(0, 300)}...`;
+  const seo_description = `Discover this exquisite ${name}, a premium handmade custom gift from Finland. Our professional laser engraving service ensures each piece is a unique masterpiece of personalization. Perfect for those seeking high-quality engraved treasures in Finland. This handcrafted item showcases the precision of modern laser engraving technology while maintaining the charm of a traditional handmade gift. Experience the best of Finnish craftmanship with our custom engraving options, tailored specifically for your special occasions. Each ${name} is carefully processed to meet our high standards of excellence. ${baseDescription.slice(0, 300)}...`;
 
   const seo_keywords = `laser engraving Finland, engraved ${name}, custom engraving, personalized gift Finland, handmade ${name}, laser cutting services, custom personalized gifts`;
 
@@ -2944,7 +3865,7 @@ const generateProductSEO = (name, description, price, imageUrls) => {
     "image": imageUrls || [],
     "brand": {
       "@type": "Brand",
-      "name": "Yokebud Crafts"
+      "name": "Yokebud craft"
     },
     "offers": {
       "@type": "Offer",
@@ -2985,12 +3906,12 @@ const validateProductPayload = (payload) => {
   if (!description || typeof description !== 'string') return { valid: false, message: 'Invalid description' };
   if (price == null || isNaN(Number(price)) || Number(price) <= 0) return { valid: false, message: 'Invalid price' };
   if (!Array.isArray(categories) || categories.length === 0) return { valid: false, message: 'Invalid categories' };
-  
+
   // Only validate stock if not a preorder
   if (!is_preorder && stock_status !== 'Pre-order') {
     if (stock == null || isNaN(parseInt(stock))) return { valid: false, message: 'Invalid stock' };
   }
-  
+
   if (!sku || typeof sku !== 'string') return { valid: false, message: 'Invalid SKU' };
   const hasImages = (Array.isArray(imageUrls) && imageUrls.length > 0) || (Array.isArray(images) && images.length > 0);
   if (!hasImages) return { valid: false, message: 'At least one image is required' };
@@ -3002,6 +3923,43 @@ async function generateSitemapXmlFromDb({ type = 'all' } = {}) {
   let connection;
   try {
     connection = await pool.getConnection();
+
+    const escapeXml = (unsafe) => {
+      return String(unsafe || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    };
+    const absImg = (raw) => {
+      if (!raw) return null;
+      const s = String(raw);
+      if (s.startsWith('http')) return s;
+      const clean = s.startsWith('/') ? s : `/${s}`;
+      if (clean.startsWith('//')) return null;
+      return `${PUBLIC_API_BASE}${clean}`;
+    };
+    const parseImgs = (p) => {
+      try {
+        const raw = p?.images || p?.product_photos || p?.photos || '[]';
+        const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!Array.isArray(list)) return [];
+        return list.map(x => absImg(x)).filter(Boolean).slice(0, 4);
+      } catch { return []; }
+    };
+    const extractProductIdFromPath = (pathVal) => {
+      try {
+        const v = String(pathVal || '');
+        const m1 = v.match(/^\/products\/(\d+)\//);
+        if (m1) return m1[1];
+        const m2 = v.match(/\/products\/[^/]*-(\d+)\/?$/);
+        if (m2) return m2[1];
+        const m3 = v.match(/^\/products\/(\d+)\/?$/);
+        if (m3) return m3[1];
+        return null;
+      } catch { return null; }
+    };
 
     let where = 'WHERE is_active = TRUE AND type != "product_exclude"';
     const params = [];
@@ -3018,35 +3976,256 @@ async function generateSitemapXmlFromDb({ type = 'all' } = {}) {
       params
     );
 
-    const header = `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
+    let productImages = new Map();
+    if (type === 'all' || type === 'product') {
+      try {
+        const [pRows] = await connection.query(
+          'SELECT id, product_name, images, product_photos, thumbnail FROM products'
+        );
+        for (const p of pRows) {
+          const imgList = parseImgs(p);
+          if (imgList.length) productImages.set(String(p.id), { imgs: imgList, name: p.product_name || '' });
+          if (p.thumbnail) {
+            const t = absImg(p.thumbnail);
+            if (t && !imgList.length) productImages.set(String(p.id), { imgs: [t], name: p.product_name || '' });
+          }
+        }
+      } catch (imgErr) {
+        console.warn('Product images lookup failed', imgErr.message);
+      }
+    }
+
+    let categoryImages = new Map();
+    if (type === 'all' || type === 'category') {
+      try {
+        const [cRows] = await connection.query(
+          'SELECT id, name, slug, image, image_alt FROM categories WHERE 1'
+        );
+        const toSlugLocal = (str) => {
+          try {
+            return String(str || '').toLowerCase().trim()
+              .replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
+          } catch { return ''; }
+        };
+        for (const c of cRows || []) {
+          const entry = {
+            name: c.name || '',
+            imageUrl: absImg(c.image),
+            imageAlt: c.image_alt || `${c.name || 'Category'} Collection | Yokebud craft Finland`
+          };
+          if (c.slug) categoryImages.set(String(c.slug).toLowerCase().trim(), entry);
+          if (c.name) categoryImages.set(toSlugLocal(c.name), entry);
+        }
+      } catch (catErr) {
+        console.warn('Category images lookup failed', catErr.message);
+      }
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const header = `<?xml version="1.0" encoding="UTF-8"?>\n` +
       `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" ` +
       `xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`;
 
     const nodes = rows.map(r => {
       const loc = `${PUBLIC_SITE_URL}${r.path}`;
-      const lastmod = (r.updated_at ? new Date(r.updated_at) : new Date()).toISOString().slice(0, 10);
+      const updatedMs = r.updated_at ? new Date(r.updated_at).getTime() : 0;
+      const lastmod = (updatedMs && updatedMs > 0) ? new Date(updatedMs).toISOString().slice(0, 10) : today;
       const changefreq = r.changefreq || 'weekly';
-      const priority = r.priority || (r.type === 'product' ? '0.8' : '0.6');
-      const category =
-        r.type === 'static'
-          ? 'Pages'
-          : r.type === 'category'
-          ? 'Categories'
-          : r.type === 'product'
-          ? 'Products'
-          : 'Other';
+      const priority = r.priority || (r.type === 'product' ? '0.8' : (r.type === 'category' ? '0.8' : '0.6'));
 
-      return (
-        `  <url>\n` +
-        `    <loc>${loc}</loc>\n` +
-        `    <lastmod>${lastmod}</lastmod>\n` +
-        `    <changefreq>${changefreq}</changefreq>\n` +
-        `    <priority>${priority}</priority>\n` +
-        `  </url>`
-      );
+      const parts = [];
+      parts.push('  <url>');
+      parts.push(`    <loc>${escapeXml(loc)}</loc>`);
+      parts.push(`    <lastmod>${escapeXml(lastmod)}</lastmod>`);
+      parts.push(`    <changefreq>${escapeXml(changefreq)}</changefreq>`);
+      parts.push(`    <priority>${escapeXml(priority)}</priority>`);
+
+      if (r.type === 'product') {
+        const pid = extractProductIdFromPath(r.path);
+        if (pid && productImages.has(pid)) {
+          const info = productImages.get(pid);
+          for (const img of info.imgs) {
+            parts.push('    <image:image>');
+            parts.push(`      <image:loc>${escapeXml(img)}</image:loc>`);
+            if (info?.name) {
+              parts.push(`      <image:title>${escapeXml(info.name)} | Yokebud craft</image:title>`);
+              parts.push(`      <image:caption>${escapeXml(`${info.name} - Handcrafted personalized gift by Yokebud craft Finland Europe`)}</image:caption>`);
+            }
+            parts.push('    </image:image>');
+          }
+        }
+      } else if (r.type === 'category') {
+        try {
+          const slugMatch = String(r.path || '').match(/^\/shop\/(.+)$/);
+          if (slugMatch && slugMatch[1]) {
+            const slug = slugMatch[1].toLowerCase().trim();
+            const catInfo = categoryImages.get(slug);
+            const nameCapitalized = (catInfo?.name || slug.replace(/-/g, ' ')).replace(/\b\w/g, c => c.toUpperCase());
+            const catImg = catInfo?.imageUrl || absImg(catInfo?.imageUrl) || `${PUBLIC_SITE_URL}/LOGO.png`;
+            const captionBase = (catInfo?.imageAlt && String(catInfo.imageAlt).length > 3)
+              ? catInfo.imageAlt
+              : `Shop ${slug.replace(/-/g, ' ')} products - custom ${slug.replace(/-/g, ' ')}, premium ${slug.replace(/-/g, ' ')} collection, laser engraving, personalized gifts Finland, shipping Europe. Unique ${slug.replace(/-/g, ' ')} gift ideas by Yokebud craft Helsinki.`;
+
+            parts.push('    <image:image>');
+            parts.push(`      <image:loc>${escapeXml(catImg)}</image:loc>`);
+            parts.push(`      <image:title>${escapeXml(`${nameCapitalized} Collection | Yokebud craft Finland Europe`)}</image:title>`);
+            parts.push(`      <image:caption>${escapeXml(captionBase)}</image:caption>`);
+            parts.push('      <image:geo_location>Helsinki, Finland</image:geo_location>');
+            parts.push('    </image:image>');
+          }
+        } catch { }
+      }
+      parts.push('  </url>');
+      return parts.join('\n');
     }).join('\n');
 
     return `${header}\n${nodes}\n</urlset>\n`;
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+function buildSitemapIndexXml(items = []) {
+  const today = new Date().toISOString().slice(0, 10);
+  const nodes = items
+    .filter((item) => item && item.loc)
+    .map((item) =>
+      `  <sitemap>\n` +
+      `    <loc>${String(item.loc)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;')}</loc>\n` +
+      `    <lastmod>${String(item.lastmod || today)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;')}</lastmod>\n` +
+      `  </sitemap>`
+    )
+    .join('\n');
+
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    `${nodes}\n` +
+    `</sitemapindex>\n`
+  );
+}
+
+function buildSimpleUrlsetXml(items = []) {
+  const escapeXml = (unsafe) => {
+    return String(unsafe || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  };
+
+  const nodes = items
+    .filter((item) => item && item.loc)
+    .map((item) => {
+      const parts = [];
+      parts.push('  <url>');
+      parts.push(`    <loc>${escapeXml(item.loc)}</loc>`);
+      parts.push(`    <lastmod>${escapeXml(item.lastmod || new Date().toISOString().slice(0, 10))}</lastmod>`);
+      parts.push(`    <changefreq>${escapeXml(item.changefreq || 'monthly')}</changefreq>`);
+      parts.push(`    <priority>${escapeXml(item.priority || '0.4')}</priority>`);
+      parts.push('  </url>');
+      return parts.join('\n');
+    })
+    .join('\n');
+
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    `${nodes}\n` +
+    `</urlset>\n`
+  );
+}
+
+async function generateComponentSitemapXml() {
+  let connection;
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const componentItems = [];
+    const seen = new Set();
+    const publicRoots = [
+      path.join(__dirname, '..', 'client', 'public'),
+      path.join(__dirname, 'public')
+    ];
+    const allowedExtensions = new Set([
+      '.png', '.jpg', '.jpeg', '.svg', '.webp', '.gif', '.ico', '.avif',
+      '.glb', '.gltf', '.json', '.webmanifest', '.txt', '.pdf', '.js', '.css'
+    ]);
+    const excludedNames = new Set([
+      'robots.txt',
+      'sitemap.xml',
+      'product-sitemap.xml',
+      'category-sitemap.xml',
+      'page-sitemap.xml',
+      'blog-sitemap.xml',
+      'component-sitemap.xml'
+    ]);
+
+    const addItem = (loc, lastmod = today, changefreq = 'monthly', priority = '0.3') => {
+      const normalized = String(loc || '').trim();
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      componentItems.push({ loc: normalized, lastmod, changefreq, priority });
+    };
+
+    const walk = (rootPath, dirPath) => {
+      for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+        const fullPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+          walk(rootPath, fullPath);
+          continue;
+        }
+
+        const ext = path.extname(entry.name).toLowerCase();
+        if (!allowedExtensions.has(ext)) continue;
+        if (excludedNames.has(entry.name.toLowerCase())) continue;
+
+        const relativePath = path.relative(rootPath, fullPath).replace(/\\/g, '/');
+        const stats = fs.statSync(fullPath);
+        addItem(
+          `${PUBLIC_SITE_URL}/${relativePath}`,
+          new Date(stats.mtimeMs || Date.now()).toISOString().slice(0, 10),
+          ext === '.json' || ext === '.txt' ? 'weekly' : 'monthly',
+          ['.png', '.jpg', '.jpeg', '.svg', '.webp'].includes(ext) ? '0.5' : '0.3'
+        );
+      }
+    };
+
+    for (const rootPath of publicRoots) {
+      if (!fs.existsSync(rootPath)) continue;
+      walk(rootPath, rootPath);
+    }
+
+    connection = await pool.getConnection();
+    const [rows] = await connection.query(
+      `SELECT path, priority, changefreq, updated_at, type, is_active
+       FROM sitemap_entries
+       WHERE is_active = TRUE
+         AND type NOT IN ('static', 'product', 'category', 'blog', 'product_exclude')`
+    );
+
+    for (const row of rows || []) {
+      addItem(
+        `${PUBLIC_SITE_URL}${row.path}`,
+        row.updated_at ? new Date(row.updated_at).toISOString().slice(0, 10) : today,
+        row.changefreq || 'monthly',
+        row.priority || '0.4'
+      );
+    }
+
+    componentItems.sort((a, b) => a.loc.localeCompare(b.loc));
+    return buildSimpleUrlsetXml(componentItems);
   } finally {
     if (connection) connection.release();
   }
@@ -3061,48 +4240,15 @@ function sendXml(res, xml) {
   res.send(xml);
 }
 
-// Serve XSL from same origin (api.yokebud.fi) so browser can apply it to sitemap XML (no cross-origin block)
-app.get('/sitemap.xsl', (req, res) => {
-  try {
-    const xslPath = path.join(__dirname, '..', 'client', 'public', 'sitemap.xsl');
-    if (!fs.existsSync(xslPath)) {
-      return res.status(404).send('sitemap.xsl not found');
-    }
-    const xsl = fs.readFileSync(xslPath, 'utf8');
-    res.setHeader('Cache-Control', 'no-store, max-age=0');
-    res.setHeader('Content-Type', 'application/xml');
-    res.send(xsl);
-  } catch (err) {
-    console.error('sitemap.xsl serve error:', err);
-    res.status(500).send('Error loading stylesheet');
-  }
-});
-
 app.get('/sitemap.xml', async (req, res) => {
   try {
-    // Sitemap index: only points to other sitemaps (no URL list here)
-    const today = new Date().toISOString().slice(0, 10);
-    const xml =
-      `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
-      `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
-      `  <sitemap>\n` +
-      `    <loc>${PUBLIC_SITE_URL}/page-sitemap.xml</loc>\n` +
-      `    <lastmod>${today}</lastmod>\n` +
-      `  </sitemap>\n` +
-      `  <sitemap>\n` +
-      `    <loc>${PUBLIC_SITE_URL}/category-sitemap.xml</loc>\n` +
-      `    <lastmod>${today}</lastmod>\n` +
-      `  </sitemap>\n` +
-      `  <sitemap>\n` +
-      `    <loc>${PUBLIC_SITE_URL}/product-sitemap.xml</loc>\n` +
-      `    <lastmod>${today}</lastmod>\n` +
-      `  </sitemap>\n` +
-      `  <sitemap>\n` +
-      `    <loc>${PUBLIC_SITE_URL}/blog-sitemap.xml</loc>\n` +
-      `    <lastmod>${today}</lastmod>\n` +
-      `  </sitemap>\n` +
-      `</sitemapindex>\n`;
-
+    const xml = buildSitemapIndexXml([
+      { loc: `${PUBLIC_SITE_URL}/product-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/category-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/blog-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/page-sitemap.xml` },
+      { loc: `${PUBLIC_SITE_URL}/component-sitemap.xml` }
+    ]);
     return sendXml(res, xml);
   } catch (error) {
     console.error('Sitemap index generation error:', error);
@@ -3111,67 +4257,17 @@ app.get('/sitemap.xml', async (req, res) => {
 });
 
 app.get('/product-sitemap.xml', async (req, res) => {
-  let connection;
   try {
-    connection = await pool.getConnection();
-
-    // Fetch only PRODUCT-type entries from the sitemap_entries table
-    const [entries] = await connection.query(
-      'SELECT path, priority, changefreq, is_active, created_at, updated_at FROM sitemap_entries WHERE type = "product"'
-    );
-
-    const today = new Date().toISOString().slice(0, 10);
-    const header =
-      `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
-      `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" ` +
-      `xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">`;
-
-    const nodes = (entries || [])
-      .filter((e) => {
-        // Treat anything that looks like 0 / '0' / false as inactive
-        const active =
-          e.is_active === undefined || e.is_active === null
-            ? true
-            : !(e.is_active === 0 || e.is_active === '0' || e.is_active === false);
-        return active && e.path;
-      })
-      .map((e) => {
-        const lastmodSource = e.updated_at || e.created_at;
-        const lastmod =
-          lastmodSource instanceof Date
-            ? lastmodSource.toISOString().slice(0, 10)
-            : lastmodSource
-            ? new Date(lastmodSource).toISOString().slice(0, 10)
-            : today;
-
-        const loc = `${PUBLIC_SITE_URL}${e.path}`;
-        const priority = e.priority || '0.8';
-        const changefreq = e.changefreq || 'weekly';
-
-        return [
-          '  <url>',
-          `    <loc>${loc}</loc>`,
-          `    <lastmod>${lastmod}</lastmod>`,
-          `    <changefreq>${changefreq}</changefreq>`,
-          `    <priority>${priority}</priority>`,
-          '  </url>'
-        ].join('\n');
-      })
-      .join('\n');
-
-    const xml = `${header}\n${nodes}\n</urlset>\n`;
+    const xml = await generateSitemapXmlFromDb({ type: 'product' });
     return sendXml(res, xml);
   } catch (error) {
     console.error('Product sitemap generation error:', error);
     res.status(500).send('Sitemap unavailable');
-  } finally {
-    if (connection) connection.release();
   }
 });
 
 app.get('/category-sitemap.xml', async (req, res) => {
   try {
-    // Real-time from sitemap_entries (AdminSitemap edits reflected immediately)
     const xml = await generateSitemapXmlFromDb({ type: 'category' });
     return sendXml(res, xml);
   } catch (error) {
@@ -3180,89 +4276,12 @@ app.get('/category-sitemap.xml', async (req, res) => {
   }
 });
 
-// Per-category product sitemap XML
-// Example: /category-sitemap-jewelry.xml
-app.get('/category-sitemap-:slug.xml', async (req, res) => {
+app.get('/blog-sitemap.xml', async (req, res) => {
   try {
-    const { slug } = req.params;
-    if (!slug) return res.status(400).send('Bad request');
-
-    const toSlug = (str) => {
-      try {
-        return String(str || '')
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9\s-]/g, '')
-          .replace(/\s+/g, '-')
-          .replace(/-+/g, '-')
-          .slice(0, 80);
-      } catch {
-        return '';
-      }
-    };
-
-    let connection;
-    try {
-      connection = await pool.getConnection();
-      const [cats] = await connection.query('SELECT name FROM categories');
-      const categoryName =
-        (cats || []).map((c) => c.name).find((name) => toSlug(name) === String(slug).toLowerCase()) || null;
-
-      if (!categoryName) {
-        const empty =
-          `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
-          `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>\n`;
-        return sendXml(res, empty);
-      }
-
-      // Fetch products that match this category
-      // products.category can be JSON array or string; handle both.
-      const [rows] = await connection.query(
-        `SELECT id, product_name, sitemap_path, updated_at, category
-         FROM products
-         WHERE (
-           category = ?
-           OR JSON_CONTAINS(category, JSON_QUOTE(?))
-         )`,
-        [categoryName, categoryName]
-      );
-
-      const today = new Date().toISOString().slice(0, 10);
-      const header = `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
-        `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`;
-
-      const safeSlug = (name) =>
-        String(name || 'product')
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9\s-]/g, '')
-          .replace(/\s+/g, '-')
-          .replace(/-+/g, '-')
-          .slice(0, 80);
-
-      const nodes = (rows || [])
-        .map((p) => {
-          const path = p.sitemap_path || `/products/${p.id}/${safeSlug(p.product_name)}`;
-          const loc = `${PUBLIC_SITE_URL}${path}`;
-          const lastmod = (p.updated_at ? new Date(p.updated_at) : new Date(today)).toISOString().slice(0, 10);
-          return (
-            `  <url>\n` +
-            `    <loc>${loc}</loc>\n` +
-            `    <lastmod>${lastmod}</lastmod>\n` +
-            `    <changefreq>weekly</changefreq>\n` +
-            `    <priority>0.8</priority>\n` +
-            `  </url>`
-          );
-        })
-        .join('\n');
-
-      const xml = `${header}\n${nodes}\n</urlset>\n`;
-      return sendXml(res, xml);
-    } finally {
-      if (connection) connection.release();
-    }
+    const xml = await generateSitemapXmlFromDb({ type: 'blog' });
+    return sendXml(res, xml);
   } catch (error) {
-    console.error('Per-category sitemap generation error:', error);
+    console.error('Blog sitemap generation error:', error);
     res.status(500).send('Sitemap unavailable');
   }
 });
@@ -3277,122 +4296,88 @@ app.get('/page-sitemap.xml', async (req, res) => {
   }
 });
 
-// Blog sitemap: list of /blog and individual blog posts
-// Uses blog table for URLs and optionally overrides priority/changefreq/activation
-// based on matching entries in sitemap_entries (editable from AdminSitemap).
-app.get('/blog-sitemap.xml', async (req, res) => {
-  let connection;
+app.get('/component-sitemap.xml', async (req, res) => {
   try {
-    connection = await pool.getConnection();
-    // Do not depend on slug column existing; we generate slugs from title/excerpt.
-    // Use all blogs to keep behavior consistent with sitemap.
-    const [blogs] = await connection.query(
-      'SELECT title, excerpt, updated_at, created_at, is_published FROM blogs ORDER BY created_at DESC'
-    );
-
-    // Optional overrides coming from sitemap_entries so admin can tune blog URLs.
-    const [sitemapEntries] = await connection.query(
-      "SELECT path, priority, changefreq, is_active, type FROM sitemap_entries WHERE path = '/blog' OR path LIKE '/blogs/%' OR type = 'blog'"
-    );
-
-    const today = new Date().toISOString().slice(0, 10);
-
-    const createSlug = (title, excerpt) => {
-      try {
-        if (!title) return '';
-        const base = String(title)
-          .toLowerCase()
-          .replace(/[^\w\s-]/g, '')
-          .replace(/[\s_]+/g, '-')
-          .replace(/^-+|-+$/g, '');
-
-        if (!excerpt) return base;
-        const kw = String(excerpt)
-          .toLowerCase()
-          .replace(/[^\w\s-]/g, '')
-          .replace(/[\s_]+/g, '-')
-          .replace(/^-+|-+$/g, '');
-
-        return kw ? `${base}-${kw}` : base;
-      } catch {
-        return '';
-      }
-    };
-
-    const isEntryActive = (entry) => {
-      if (!entry) return true;
-      const v = entry.is_active;
-      if (v === undefined || v === null) return true;
-      return !(v === 0 || v === '0' || v === false);
-    };
-
-    const findConfigForPath = (path) =>
-      (sitemapEntries || []).find((e) => e.path === path);
-
-    const header =
-      `<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>\n` +
-      `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`;
-
-    const nodes = [];
-
-    // Main blog listing page
-    const mainPath = '/blog';
-    const mainCfg = findConfigForPath(mainPath);
-    if (isEntryActive(mainCfg)) {
-      const mainPriority = (mainCfg && mainCfg.priority) || '0.6';
-      const mainFreq = (mainCfg && mainCfg.changefreq) || 'weekly';
-      nodes.push(
-        `  <url>\n` +
-        `    <loc>${PUBLIC_SITE_URL}${mainPath}</loc>\n` +
-        `    <lastmod>${today}</lastmod>\n` +
-        `    <changefreq>${mainFreq}</changefreq>\n` +
-        `    <priority>${mainPriority}</priority>\n` +
-        `  </url>`
-      );
-    }
-
-    // Individual blog posts
-    for (const b of blogs || []) {
-      const slugFromTitle = createSlug(b.title, b.excerpt);
-      const path = slugFromTitle ? `/blogs/${slugFromTitle}` : `/blogs/${b.slug || ''}`;
-      const cfg = findConfigForPath(path);
-      if (!isEntryActive(cfg)) continue; // allow admin to deactivate a single blog URL
-
-      const loc = `${PUBLIC_SITE_URL}${path}`;
-      const lastmod =
-        (b.updated_at || b.created_at || new Date()).toISOString().slice(0, 10);
-      const priority = (cfg && cfg.priority) || '0.5';
-      const freq = (cfg && cfg.changefreq) || 'weekly';
-
-      nodes.push(
-        `  <url>\n` +
-        `    <loc>${loc}</loc>\n` +
-        `    <lastmod>${lastmod}</lastmod>\n` +
-        `    <changefreq>${freq}</changefreq>\n` +
-        `    <priority>${priority}</priority>\n` +
-        `  </url>`
-      );
-    }
-
-    const xml = `${header}\n${nodes.join('\n')}\n</urlset>\n`;
+    const xml = await generateComponentSitemapXml();
     return sendXml(res, xml);
   } catch (error) {
-    console.error('Blog sitemap generation error:', error);
+    console.error('Component sitemap generation error:', error);
     res.status(500).send('Sitemap unavailable');
-  } finally {
-    if (connection) connection.release();
   }
 });
+
+app.get('/category-sitemap-:slug.xml', (req, res) => {
+  res.redirect(301, '/category-sitemap.xml');
+});
+
+// Helper: Notify Google & Bing when sitemap is regenerated
+async function pingSitemapToSearchEngines(sitemapUrl) {
+  const target = sitemapUrl || `${PUBLIC_SITE_URL}/sitemap.xml`;
+  const encoded = encodeURIComponent(target);
+  const endpoints = [
+    `https://www.google.com/ping?sitemap=${encoded}`,
+    `https://www.bing.com/ping?sitemap=${encoded}`
+  ];
+  const results = [];
+  for (const ep of endpoints) {
+    try {
+      // Use node:https/http directly so no new dependency needed
+      const isHttps = ep.startsWith('https:');
+      const lib = require(isHttps ? 'https' : 'http');
+      const p = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => { reject(new Error('timeout')); }, 4000);
+        const req = lib.get(ep, (res) => {
+          clearTimeout(timeout);
+          resolve({ ok: res.statusCode >= 200 && res.statusCode < 400, status: res.statusCode });
+          res.resume();
+        }).on('error', (e) => { clearTimeout(timeout); reject(e); });
+        req.setTimeout(4000, () => { req.destroy(); reject(new Error('timeout')); });
+      });
+      const r = await p;
+      results.push({ endpoint: ep, ...r });
+    } catch (err) {
+      results.push({ endpoint: ep, ok: false, error: err.message });
+    }
+  }
+  console.log('📡 Search engine ping results:', JSON.stringify(results));
+  return results;
+}
 
 // robots.txt
 app.get('/robots.txt', (req, res) => {
   const lines = [
     'User-agent: *',
-    'Disallow: /admin',
     'Allow: /',
+    '',
+    '# Allow images & static assets to be indexed for Image Search',
+    'Allow: /uploads/',
+    'Allow: /upload/',
+    'Allow: /images/',
+    'Allow: /img/',
+    'Allow: /static/',
+    'Allow: /LOGO.png',
+    '',
+    '# Protect admin & internal paths',
+    'Disallow: /admin',
+    'Disallow: /admin/',
+    'Disallow: /admin/*',
+    'Disallow: /admin/login',
+    'Disallow: /api/admin/',
+    'Disallow: /cart',
+    'Disallow: /checkout',
+    'Disallow: /account',
+    'Disallow: /inquiry',
+    '',
+    '# Finland / Europe / Global friendly crawl delay',
+    'Crawl-delay: 1',
+    '',
+    `Host: ${PUBLIC_SITE_URL.replace(/^https?:\/\//, '')}`,
+    '',
+    '# Canonical sitemap',
     `Sitemap: ${PUBLIC_SITE_URL}/sitemap.xml`
   ];
   res.header('Content-Type', 'text/plain');
+  res.header('Cache-Control', 'public, max-age=3600');
   res.send(lines.join('\n'));
 });
 
@@ -3458,12 +4443,12 @@ const checkUnreadMessageReminders = async () => {
         const content = `<p style="margin:0 0 12px 0;color:${EMAIL_THEME.textLight};">A new message has remained unviewed for over 1 hour in your conversation about <span style="color:${EMAIL_THEME.text};font-weight:700;">${product.product_name || 'your product'}</span>.</p><div style="background:#0D0D0D;border:1px solid #1a1a1a;border-radius:12px;padding:16px;margin-top:8px;"><div style="color:${EMAIL_THEME.textLight};font-size:12px;margin-bottom:6px;">Message preview</div><div style="color:${EMAIL_THEME.text};line-height:1.6;">${preview || 'No text'}</div></div>`;
         const clientUrl = `${process.env.CLIENT_URL || 'https://www.yokebud.fi'}/messages`;
         const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin/inquiries'}`;
-        const userHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
-        const adminHtml = renderThemedEmail({ title: 'Yokebud Crafts', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
-        const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
-        const mailAdmin = { from: process.env.EMAIL_FROM || 'Yokebud Crafts <yokebud@gmail.com>', to: 'yokebud@gmail.com', subject: `${subject} - ${inquiry.customer_name || ''}`, html: adminHtml };
-        try { await sendMail(mailUser); } catch {}
-        try { await sendMail(mailAdmin); } catch {}
+        const userHtml = renderThemedEmail({ title: 'Yokebud craft', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
+        const adminHtml = renderThemedEmail({ title: 'Yokebud craft', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
+        const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
+        const mailAdmin = { from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>', to: 'yokebud@gmail.com', subject: `${subject} - ${inquiry.customer_name || ''}`, html: adminHtml };
+        try { await sendMail(mailUser); } catch { }
+        try { await sendMail(mailAdmin); } catch { }
         messages[i] = { ...msg, reminder_sent: true };
         changed = true;
       }
@@ -3473,7 +4458,7 @@ const checkUnreadMessageReminders = async () => {
         conn2.release();
       }
     }
-  } catch {}
+  } catch { }
 };
 
 setInterval(() => { checkUnreadMessageReminders(); }, 5 * 60 * 1000);
@@ -3519,10 +4504,99 @@ app.post('/api/create-checkout-session', async (req, res) => {
       items = [],
       currency = 'eur',
       customer = {},
+      totals = null,
+      shippingMethod = 'automatic',
       successUrl,
       cancelUrl,
       shipping = 0
     } = req.body || {};
+
+    // Normalize items and compute server-side shipping from server-trusted rules
+    const normalizedItems = (Array.isArray(items) ? items : []).map(it => ({
+      ...it,
+      free_shipping: getNormalizedFreeShippingConfig(it).enabled,
+      free_shipping_min_amount: getNormalizedFreeShippingConfig(it).minimumAmount
+    }));
+
+    const computeServerShippingSimple = (itemsArr, country, city) => {
+      if (!itemsArr || itemsArr.length === 0) return 0;
+      const countryRates = {
+        "Finland": { base: 3.0, zones: { "Helsinki": 2.5, "Espoo": 2.5, "Tampere": 2.8, "Vantaa": 2.5, "Oulu": 3.2, "Turku": 2.8 } },
+        "Sweden": { base: 8.0 },
+        "Norway": { base: 10.0 },
+        "Denmark": { base: 8.0 },
+        "Germany": { base: 12.0 },
+        "France": { base: 12.0 },
+        "United Kingdom": { base: 15.0 },
+        "United States": { base: 30.0, zones: { "New York": 28, "California": 32, "Texas": 31, "Florida": 30 } },
+        "Canada": { base: 35.0 },
+        "Australia": { base: 40.0 },
+        "Japan": { base: 35.0 },
+        "China": { base: 38.0 },
+        "India": { base: 42.0 }
+      };
+      const weightBrackets = [
+        { max: 0.5, rate: 0 }, { max: 1, rate: 0 }, { max: 2, rate: 3 }, { max: 5, rate: 8 }, { max: 10, rate: 15 }, { max: 20, rate: 25 }, { max: Infinity, rate: 40 }
+      ];
+      const defaultCountryConfig = { base: 15.0 };
+      const totalActualWeight = itemsArr.reduce((sum, item) => {
+        let itemWeight = 0.2;
+        const category = (item.category || (item.product && item.product.category) || '').toString().toLowerCase();
+        if (item.shipping) itemWeight = Number(item.shipping) || itemWeight;
+        else if (item.weight) itemWeight = Number(item.weight) || itemWeight;
+        else if (item.product && item.product.shipping) itemWeight = Number(item.product.shipping) || itemWeight;
+        else if (item.product && item.product.weight) itemWeight = Number(item.product.weight) || itemWeight;
+        else {
+          if (category.includes('hoodie') || category.includes('hoody')) itemWeight = 0.6;
+          else if (category.includes('apparel') || category.includes('tshirt') || category.includes('t-shirt') || category.includes('clothing')) itemWeight = 0.25;
+          else if (category.includes('jewelry') || category.includes('accessory')) itemWeight = 0.1;
+          else if (category.includes('mug') || category.includes('ceramic')) itemWeight = 0.5;
+        }
+        return sum + (itemWeight * (Number(item.quantity) || 1));
+      }, 0);
+      const totalVolumetricWeight = itemsArr.reduce((sum, item) => {
+        let dimensions = null;
+        if (item.customization_dimensions || (item.product && item.product.customization_dimensions)) {
+          dimensions = item.customization_dimensions || (item.product && item.product.customization_dimensions);
+          if (typeof dimensions === 'string') {
+            try { dimensions = JSON.parse(dimensions); } catch (e) { dimensions = null; }
+          }
+        }
+        if (!dimensions) return sum;
+        const h = Number(dimensions.height?.value || 0);
+        const w = Number(dimensions.width?.value || 0);
+        const t = Number(dimensions.thickness?.value || 0);
+        const itemVol = (h * w * t) / 5000;
+        return sum + (itemVol * (Number(item.quantity) || 1));
+      }, 0);
+      const billableWeight = Math.max(totalActualWeight, totalVolumetricWeight, 0.1);
+      const countryConfig = (countryRates[country] || defaultCountryConfig);
+      let baseRate = countryConfig.base;
+      if (countryConfig.zones && city && countryConfig.zones[city]) baseRate = countryConfig.zones[city];
+      let weightSurcharge = 0;
+      for (const bracket of weightBrackets) { if (billableWeight <= bracket.max) { weightSurcharge = bracket.rate; break; } }
+      const packagingCost = Math.min(billableWeight * 0.5, 5.0);
+      const totalShipping = baseRate + weightSurcharge + packagingCost;
+      return Math.round(totalShipping * 100) / 100;
+    };
+
+    const promoDiscount = Number(totals?.promoDiscount || totals?.promo || 0) || 0;
+    const subtotal = Number(totals?.subtotal);
+    const merchandiseTotal = Math.max(
+      (Number.isFinite(subtotal) ? subtotal : calculateItemsMerchandiseTotal(normalizedItems)) - promoDiscount,
+      0
+    );
+    const freeShippingStatus = getFreeShippingStatus(normalizedItems, merchandiseTotal);
+    const requestedShippingMethod = String(totals?.shippingMethod || shippingMethod || 'automatic');
+    const effectiveShippingMethod = requestedShippingMethod === 'pickup'
+      ? 'pickup'
+      : (freeShippingStatus.qualifies ? 'free' : 'automatic');
+    const serverShippingForSession = effectiveShippingMethod === 'automatic'
+      ? computeServerShippingSimple(normalizedItems, (customer && customer.country) || '', (customer && customer.city) || '')
+      : 0;
+    const shippingToUse = effectiveShippingMethod === 'automatic'
+      ? Number(serverShippingForSession ?? shipping ?? 0)
+      : 0;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: 'No items provided' });
@@ -3548,12 +4622,12 @@ app.post('/api/create-checkout-session', async (req, res) => {
       };
     });
 
-    if (shipping && Number(shipping) > 0) {
+    if (shippingToUse && Number(shippingToUse) > 0) {
       line_items.push({
         price_data: {
           currency,
           product_data: { name: 'Shipping' },
-          unit_amount: Math.round(Number(shipping) * 100)
+          unit_amount: Math.round(Number(shippingToUse) * 100)
         },
         quantity: 1
       });
@@ -3583,26 +4657,26 @@ app.put('/api/inquiries/:inquiryId/admin-unread', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { admin_unread_count } = req.body;
-    
+
     connection = await pool.getConnection();
-    
+
     await connection.query(
       'UPDATE inquiry_conversations SET admin_unread_count = ?, updated_at = NOW() WHERE id = ?',
       [admin_unread_count, inquiryId]
     );
-    
+
     connection.release();
-    
-    res.json({ 
-      success: true, 
-      message: 'Admin unread count updated successfully' 
+
+    res.json({
+      success: true,
+      message: 'Admin unread count updated successfully'
     });
   } catch (error) {
     console.error('Error updating admin unread count:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to update admin unread count' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update admin unread count'
     });
   }
 });
@@ -3618,11 +4692,11 @@ io.on('connection', (socket) => {
   socket.on('send_message', async (data) => {
     try {
       const { inquiryId, message, senderType, files = [], temporaryId } = data;
-      
+
       console.log('Received message via socket:', { inquiryId, message, senderType, temporaryId });
 
       const connection = await pool.getConnection();
-      
+
       // Get current inquiry
       const [inquiries] = await connection.query(
         'SELECT * FROM inquiry_conversations WHERE id = ?',
@@ -3637,7 +4711,7 @@ io.on('connection', (socket) => {
 
       const inquiry = inquiries[0];
       const currentMessages = JSON.parse(inquiry.messages || '[]');
-      
+
       // Create new message
       const newMessage = {
         id: uuidv4(),
@@ -3701,7 +4775,7 @@ io.on('connection', (socket) => {
         message: newMessage,
         temporaryId: temporaryId
       });
-      
+
       // REAL-TIME NOTIFICATION: Only show toast for relevant users
       if (senderType === 'admin') {
         // Notify user about new admin message
@@ -3739,9 +4813,9 @@ io.on('connection', (socket) => {
 
     } catch (error) {
       console.error('Socket message error:', error);
-      socket.emit('message_error', { 
-        error: 'Failed to send message', 
-        temporaryId: data.temporaryId 
+      socket.emit('message_error', {
+        error: 'Failed to send message',
+        temporaryId: data.temporaryId
       });
     }
   });
@@ -3761,7 +4835,7 @@ io.on('connection', (socket) => {
       if (inquiries.length > 0) {
         const inquiry = inquiries[0];
         const currentMessages = JSON.parse(inquiry.messages || '[]');
-        
+
         // Mark messages as read based on user type and set status
         const updatedMessages = currentMessages.map(msg => {
           if (userType === 'user' && msg.sender_type === 'admin') {
@@ -3884,7 +4958,7 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { userId, userType } = req.body;
-    
+
     connection = await pool.getConnection();
 
     // Get current inquiry
@@ -3895,15 +4969,15 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
 
     if (inquiries.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
     const inquiry = inquiries[0];
     const currentMessages = JSON.parse(inquiry.messages || '[]');
-    
+
     // Mark messages as read based on user type
     const updatedMessages = currentMessages.map(msg => {
       if (userType === 'user' && msg.sender_type === 'admin') {
@@ -3932,7 +5006,7 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
       'UPDATE inquiry_conversations SET messages = ?, unread_count = ?, admin_unread_count = ?, has_new_message = ?, updated_at = NOW() WHERE id = ?',
       [JSON.stringify(updatedMessages), newUnreadCount, newAdminUnreadCount, hasNewMessage, inquiryId]
     );
-    
+
     connection.release();
 
     // Emit real-time update
@@ -3944,8 +5018,8 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
       hasNewMessage: hasNewMessage
     });
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Messages marked as read',
       newUnreadCount: newUnreadCount,
       newAdminUnreadCount: newAdminUnreadCount,
@@ -3954,9 +5028,9 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
   } catch (error) {
     console.error('Error marking messages as read:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to mark messages as read: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark messages as read: ' + error.message
     });
   }
 });
@@ -3994,11 +5068,11 @@ io.on('connection', (socket) => {
   socket.on('send_message', async (data) => {
     try {
       const { inquiryId, message, senderType, files = [], temporaryId } = data;
-      
+
       console.log('Received message via socket:', { inquiryId, message, senderType, temporaryId });
 
       const connection = await pool.getConnection();
-      
+
       // Get current inquiry with unread_count
       const [inquiries] = await connection.query(
         'SELECT * FROM inquiry_conversations WHERE id = ?',
@@ -4013,7 +5087,7 @@ io.on('connection', (socket) => {
 
       const inquiry = inquiries[0];
       const currentMessages = JSON.parse(inquiry.messages || '[]');
-      
+
       // Duplicate check: block identical content from same sender within 60s
       const lastMsg = currentMessages[currentMessages.length - 1];
       const isDup = lastMsg && lastMsg.sender_type === senderType &&
@@ -4078,7 +5152,7 @@ io.on('connection', (socket) => {
         message: newMessage,
         temporaryId: temporaryId
       });
-      
+
       // REAL-TIME NOTIFICATION: Notify user about new admin message
       if (senderType === 'admin') {
         // Emit to user's personal room
@@ -4106,9 +5180,9 @@ io.on('connection', (socket) => {
 
     } catch (error) {
       console.error('Socket message error:', error);
-      socket.emit('message_error', { 
-        error: 'Failed to send message', 
-        temporaryId: data.temporaryId 
+      socket.emit('message_error', {
+        error: 'Failed to send message',
+        temporaryId: data.temporaryId
       });
     }
   });
@@ -4128,7 +5202,7 @@ io.on('connection', (socket) => {
       if (inquiries.length > 0) {
         const inquiry = inquiries[0];
         const currentMessages = JSON.parse(inquiry.messages || '[]');
-        
+
         // Mark messages as read and update status
         const updatedMessages = currentMessages.map(msg => {
           if (messageIds.includes(msg.id) || (messageIds.length === 0 && msg.sender_type === 'admin')) {
@@ -4138,7 +5212,7 @@ io.on('connection', (socket) => {
         });
 
         // Calculate EXACT unread count - only unread admin messages
-        const newUnreadCount = updatedMessages.filter(msg => 
+        const newUnreadCount = updatedMessages.filter(msg =>
           msg.sender_type === 'admin' && !msg.is_read
         ).length;
 
@@ -4155,8 +5229,8 @@ io.on('connection', (socket) => {
         // Notify all clients in the room
         io.to(inquiryId).emit('messages_read', {
           inquiryId: inquiryId,
-          messageIds: messageIds.length === 0 ? 
-            currentMessages.filter(msg => msg.sender_type === 'admin').map(msg => msg.id) : 
+          messageIds: messageIds.length === 0 ?
+            currentMessages.filter(msg => msg.sender_type === 'admin').map(msg => msg.id) :
             messageIds,
           newUnreadCount: newUnreadCount
         });
@@ -4270,16 +5344,16 @@ io.on('connection', (socket) => {
 // ==================== ENHANCED TIME FORMATTING ====================
 const formatTimeForDisplay = (timestamp) => {
   if (!timestamp) return 'Unknown';
-  
+
   try {
     const now = new Date();
     const time = new Date(timestamp);
-    
+
     // Validate the date
     if (isNaN(time.getTime())) {
       return 'Invalid date';
     }
-    
+
     const diffMs = now - time;
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
@@ -4289,7 +5363,7 @@ const formatTimeForDisplay = (timestamp) => {
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
-    
+
     // For older dates, show actual date and time
     return time.toLocaleDateString('en-US', {
       month: 'short',
@@ -4312,11 +5386,11 @@ io.on('connection', (socket) => {
   socket.on('send_message', async (data) => {
     try {
       const { inquiryId, message, senderType, files = [], temporaryId } = data;
-      
+
       console.log('Received message via socket:', { inquiryId, message, senderType, temporaryId });
 
       const connection = await pool.getConnection();
-      
+
       // Get current inquiry
       const [inquiries] = await connection.query(
         'SELECT * FROM inquiry_conversations WHERE id = ?',
@@ -4331,7 +5405,7 @@ io.on('connection', (socket) => {
 
       const inquiry = inquiries[0];
       const currentMessages = JSON.parse(inquiry.messages || '[]');
-      
+
       // Duplicate check: block identical content from same sender within 60s
       const lastMsg = currentMessages[currentMessages.length - 1];
       const isDup = lastMsg && lastMsg.sender_type === senderType &&
@@ -4397,7 +5471,7 @@ io.on('connection', (socket) => {
         message: newMessage,
         temporaryId: temporaryId
       });
-      
+
       // REAL-TIME NOTIFICATION: Only show toast for admin messages
       if (senderType === 'admin') {
         // Emit to user's personal room
@@ -4426,9 +5500,9 @@ io.on('connection', (socket) => {
 
     } catch (error) {
       console.error('Socket message error:', error);
-      socket.emit('message_error', { 
-        error: 'Failed to send message', 
-        temporaryId: data.temporaryId 
+      socket.emit('message_error', {
+        error: 'Failed to send message',
+        temporaryId: data.temporaryId
       });
     }
   });
@@ -4442,9 +5516,9 @@ app.put('/api/inquiries/mark-all-read', async (req, res) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication required' 
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -4481,16 +5555,16 @@ app.put('/api/inquiries/mark-all-read', async (req, res) => {
       totalUnread: 0
     });
 
-    res.json({ 
-      success: true, 
-      message: 'All messages marked as read' 
+    res.json({
+      success: true,
+      message: 'All messages marked as read'
     });
   } catch (error) {
     console.error('Error marking all messages as read:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to mark messages as read' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark messages as read'
     });
   }
 });
@@ -4501,9 +5575,9 @@ app.get('/api/user/unread-count', async (req, res) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication required' 
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -4521,16 +5595,16 @@ app.get('/api/user/unread-count', async (req, res) => {
 
     const totalUnread = result[0].total_unread || 0;
 
-    res.json({ 
-      success: true, 
-      totalUnread: totalUnread 
+    res.json({
+      success: true,
+      totalUnread: totalUnread
     });
   } catch (error) {
     console.error('Error getting unread count:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get unread count' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get unread count'
     });
   }
 });
@@ -4542,17 +5616,17 @@ app.post('/api/inquiries', async (req, res) => {
   let connection;
   try {
     const { userId, product, customerInfo } = req.body;
-    
+
     if (!userId || !product || !customerInfo) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Missing required fields' 
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields'
       });
     }
 
     // NEW: Check for initial message to prevent empty inquiry creation
     const { initialMessage } = req.body;
-    
+
     connection = await pool.getConnection();
 
     // Check if inquiry already exists for this user-product combination
@@ -4562,11 +5636,11 @@ app.post('/api/inquiries', async (req, res) => {
     );
 
     let inquiry;
-    
+
     if (existingInquiries.length > 0) {
       // Existing inquiry found - use the existing one
       inquiry = existingInquiries[0];
-      
+
       // Update inquiry timestamp but keep unread_count
       await connection.query(
         'UPDATE inquiry_conversations SET last_activity = NOW(), updated_at = NOW() WHERE id = ?',
@@ -4577,16 +5651,16 @@ app.post('/api/inquiries', async (req, res) => {
     } else {
       // If creating NEW inquiry, REQUIRE an initial message
       if (!initialMessage || !initialMessage.trim()) {
-         connection.release();
-         // If no message, we return success: false but with a specific code or just don't create it.
-         // However, the frontend expects a success if it wants to just "check".
-         // But "check" should be done via GET /api/inquiries/user/... or similar.
-         // This POST is for CREATION/RETRIEVAL.
-         // If we strictly want to prevent empty creation, we fail here.
-         return res.status(400).json({
-            success: false,
-            message: 'Initial message required for new inquiry'
-         });
+        connection.release();
+        // If no message, we return success: false but with a specific code or just don't create it.
+        // However, the frontend expects a success if it wants to just "check".
+        // But "check" should be done via GET /api/inquiries/user/... or similar.
+        // This POST is for CREATION/RETRIEVAL.
+        // If we strictly want to prevent empty creation, we fail here.
+        return res.status(400).json({
+          success: false,
+          message: 'Initial message required for new inquiry'
+        });
       }
 
       const inquiryId = generateInquiryId(userId, product.id);
@@ -4594,13 +5668,13 @@ app.post('/api/inquiries', async (req, res) => {
 
       // Prepare initial messages array
       const initialMessages = [{
-          id: uuidv4(),
-          sender_type: 'user',
-          message: initialMessage,
-          files: [],
-          timestamp: new Date().toISOString(),
-          is_read: true, // User's own message is read
-          status: 'sent'
+        id: uuidv4(),
+        sender_type: 'user',
+        message: initialMessage,
+        files: [],
+        timestamp: new Date().toISOString(),
+        is_read: true, // User's own message is read
+        status: 'sent'
       }];
 
       // Create new inquiry with unread_count = 0 (or 1? No, user sent it, admin hasn't read it? 
@@ -4611,7 +5685,7 @@ app.post('/api/inquiries', async (req, res) => {
       // Wait, line 2610: "if (senderType === 'admin') newUnreadCount += 1".
       // So unread_count is "Unread by User".
       // So creating new inquiry (by User), unread_count = 0.
-      
+
       await connection.query(
         `INSERT INTO inquiry_conversations (
           id, user_id, product_id, inquiry_number, 
@@ -4642,7 +5716,7 @@ app.post('/api/inquiries', async (req, res) => {
         'SELECT * FROM inquiry_conversations WHERE id = ?',
         [inquiryId]
       );
-      
+
       inquiry = newInquiries[0];
       console.log('New inquiry created:', inquiryId, 'unread_count: 0');
 
@@ -4676,8 +5750,8 @@ app.post('/api/inquiries', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       inquiry: {
         ...inquiry,
         product_data: JSON.parse(inquiry.product_data),
@@ -4689,9 +5763,9 @@ app.post('/api/inquiries', async (req, res) => {
   } catch (error) {
     console.error('Error managing inquiry:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to manage inquiry: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to manage inquiry: ' + error.message
     });
   }
 });
@@ -4701,9 +5775,9 @@ app.get('/api/inquiries/user/:userId', async (req, res) => {
   let connection;
   try {
     const { userId } = req.params;
-    
+
     connection = await pool.getConnection();
-    
+
     const [inquiries] = await connection.query(
       'SELECT * FROM inquiry_conversations WHERE user_id = ? ORDER BY last_activity DESC',
       [userId]
@@ -4718,16 +5792,16 @@ app.get('/api/inquiries/user/:userId', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
-      inquiries: parsedInquiries 
+    res.json({
+      success: true,
+      inquiries: parsedInquiries
     });
   } catch (error) {
     console.error('Error fetching user inquiries:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch user inquiries: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user inquiries: ' + error.message
     });
   }
 });
@@ -4737,9 +5811,9 @@ app.get('/api/inquiries/:inquiryId', async (req, res) => {
   let connection;
   try {
     const { inquiryId } = req.params;
-    
+
     connection = await pool.getConnection();
-    
+
     const [inquiries] = await connection.query(
       'SELECT * FROM inquiry_conversations WHERE id = ?',
       [inquiryId]
@@ -4747,9 +5821,9 @@ app.get('/api/inquiries/:inquiryId', async (req, res) => {
 
     if (inquiries.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
@@ -4763,16 +5837,16 @@ app.get('/api/inquiries/:inquiryId', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
-      inquiry: parsedInquiry 
+    res.json({
+      success: true,
+      inquiry: parsedInquiry
     });
   } catch (error) {
     console.error('Error fetching inquiry details:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch inquiry details: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch inquiry details: ' + error.message
     });
   }
 });
@@ -4782,7 +5856,7 @@ app.get('/api/inquiries', async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     const [inquiries] = await connection.query(
       'SELECT * FROM inquiry_conversations ORDER BY last_activity DESC'
     );
@@ -4803,9 +5877,9 @@ app.get('/api/inquiries', async (req, res) => {
   } catch (error) {
     console.error('Error fetching inquiries:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch inquiries: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch inquiries: ' + error.message
     });
   }
 });
@@ -4816,11 +5890,11 @@ app.post('/api/inquiries/:inquiryId/messages', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { message, senderType, files = [] } = req.body;
-    
+
     if ((!message || !message.trim()) && files.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Message or files are required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Message or files are required'
       });
     }
 
@@ -4834,15 +5908,15 @@ app.post('/api/inquiries/:inquiryId/messages', async (req, res) => {
 
     if (inquiries.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
     const inquiry = inquiries[0];
     const currentMessages = JSON.parse(inquiry.messages || '[]');
-    
+
     // Create new message
     const newMessage = {
       id: uuidv4(),
@@ -4929,8 +6003,8 @@ app.post('/api/inquiries/:inquiryId/messages', async (req, res) => {
       console.error('Failed to send inquiry notification email:', emailError);
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Message sent successfully',
       messageData: newMessage,
       status: newStatus,
@@ -4939,9 +6013,9 @@ app.post('/api/inquiries/:inquiryId/messages', async (req, res) => {
   } catch (error) {
     console.error('Error sending message:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to send message: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send message: ' + error.message
     });
   }
 });
@@ -4952,7 +6026,7 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { messageIds, userId } = req.body;
-    
+
     connection = await pool.getConnection();
 
     // Get current inquiry
@@ -4963,15 +6037,15 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
 
     if (inquiries.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
     const inquiry = inquiries[0];
     const currentMessages = JSON.parse(inquiry.messages || '[]');
-    
+
     // Mark messages as read
     const updatedMessages = currentMessages.map(msg => {
       if (messageIds && messageIds.includes(msg.id)) {
@@ -4983,7 +6057,7 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
     });
 
     // Calculate EXACT new unread count - only unread admin messages
-    const newUnreadCount = updatedMessages.filter(msg => 
+    const newUnreadCount = updatedMessages.filter(msg =>
       msg.sender_type === 'admin' && !msg.is_read
     ).length;
 
@@ -5020,17 +6094,17 @@ app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
       });
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Messages marked as read',
       newUnreadCount: newUnreadCount
     });
   } catch (error) {
     console.error('Error marking messages as read:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to mark messages as read: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark messages as read: ' + error.message
     });
   }
 });
@@ -5041,11 +6115,11 @@ app.put('/api/inquiries/:inquiryId/status', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { status } = req.body;
-    
+
     if (!status) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Status is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Status is required'
       });
     }
 
@@ -5068,22 +6142,22 @@ app.put('/api/inquiries/:inquiryId/status', async (req, res) => {
     connection.release();
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
-    res.json({ 
-      success: true, 
-      message: 'Status updated successfully' 
+    res.json({
+      success: true,
+      message: 'Status updated successfully'
     });
   } catch (error) {
     console.error('Error updating inquiry status:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to update status: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update status: ' + error.message
     });
   }
 });
@@ -5094,11 +6168,11 @@ app.put('/api/inquiries/:inquiryId/activate-checkout', async (req, res) => {
   try {
     const { inquiryId } = req.params;
     const { prices, status = 'completed' } = req.body;
-    
+
     if (!prices || Object.keys(prices).length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Price data is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Price data is required'
       });
     }
 
@@ -5119,23 +6193,23 @@ app.put('/api/inquiries/:inquiryId/activate-checkout', async (req, res) => {
     connection.release();
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Checkout activated successfully',
       status: status
     });
   } catch (error) {
     console.error('Error activating checkout:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to activate checkout: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to activate checkout: ' + error.message
     });
   }
 });
@@ -5145,9 +6219,9 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
   let connection;
   try {
     if (!req.files || Object.keys(req.files).length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No files were uploaded.' 
+      return res.status(400).json({
+        success: false,
+        message: 'No files were uploaded.'
       });
     }
 
@@ -5164,14 +6238,14 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
 
     if (inquiries.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Inquiry not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Inquiry not found'
       });
     }
 
     const toSlug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    let inquiryFolder = `yokebud crafts/inquiries/${inquiryId}`;
+    let inquiryFolder = `yokebud craft/inquiries/${inquiryId}`;
     try {
       const uid = inquiries[0] && inquiries[0].user_id;
       if (uid) {
@@ -5184,16 +6258,16 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
           name = full || name;
         }
         const userSlug = toSlug(name);
-        inquiryFolder = `yokebud crafts/users/${userSlug}/inquiries/${inquiryId}`;
+        inquiryFolder = `yokebud craft/users/${userSlug}/inquiries/${inquiryId}`;
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // Upload each file to Cloudinary
     for (const file of files) {
       const allowedTypes = [
         'image/jpeg', 'image/png', 'image/webp', 'image/gif',
-        'application/pdf', 
-        'text/plain', 
+        'application/pdf',
+        'text/plain',
         'application/msword',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'application/vnd.ms-excel',
@@ -5201,12 +6275,12 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
         'application/zip',
         'application/vnd.rar'
       ];
-      
+
       if (!allowedTypes.includes(file.mimetype)) {
         connection.release();
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid file type. Only images, PDF, documents, and archives are allowed.' 
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid file type. Only images, PDF, documents, and archives are allowed.'
         });
       }
 
@@ -5245,18 +6319,18 @@ app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: `${uploadResults.length} file(s) uploaded successfully`,
-      files: uploadResults 
+      files: uploadResults
     });
   } catch (error) {
     console.error('Upload endpoint error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to upload files',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -5267,17 +6341,17 @@ app.get('/health', async (req, res) => {
     const connection = await pool.getConnection();
     await connection.query('SELECT 1');
     connection.release();
-    
-    res.status(200).json({ 
-      status: 'OK', 
+
+    res.status(200).json({
+      status: 'OK',
       timestamp: new Date().toISOString(),
       uptime: process.uptime()
     });
   } catch (error) {
-    res.status(500).json({ 
-      status: 'Error', 
+    res.status(500).json({
+      status: 'Error',
       message: 'Database connection failed',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -5289,7 +6363,7 @@ app.get('/debug/email-preview', (req, res) => {
     <p style="margin:0;color:${EMAIL_THEME.textLight};line-height:1.7;">This is a sample preview for the current email template without logo.</p>
   </div>`;
   const html = renderThemedEmail({
-    title: 'Yokebud Crafts',
+    title: 'Yokebud craft',
     subtitle: 'Template Preview',
     contentHtml: sampleContent,
     primaryCtaText: 'Visit Website',
@@ -5316,13 +6390,13 @@ app.post('/api/user/register/send-otp', async (req, res) => {
   let connection;
   try {
     const { email } = req.body;
-    
+
     console.log('Registration OTP request for email:', email);
-    
+
     if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
       });
     }
 
@@ -5345,9 +6419,9 @@ app.post('/api/user/register/send-otp', async (req, res) => {
 
     if (existingUsers.length > 0) {
       connection.release();
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email already registered' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email already registered'
       });
     }
 
@@ -5379,17 +6453,17 @@ app.post('/api/user/register/send-otp', async (req, res) => {
     }
 
     console.log('Registration OTP sent successfully to:', email);
-    
-    res.json({ 
-      success: true, 
-      message: 'OTP sent successfully' 
+
+    res.json({
+      success: true,
+      message: 'OTP sent successfully'
     });
   } catch (error) {
     console.error('Send OTP error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to send OTP: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send OTP: ' + error.message
     });
   }
 });
@@ -5399,13 +6473,13 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
   let connection;
   try {
     const { email, otp, userData } = req.body;
-    
+
     console.log('Registration OTP verification request:', { email, otp, userData });
-    
+
     if (!email || !otp) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email and OTP are required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email and OTP are required'
       });
     }
 
@@ -5432,28 +6506,28 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
          WHERE email = ? AND otp_code = ? AND otp_type = ?`,
         [email, otp, 'registration']
       );
-      
+
       if (expiredOtps.length > 0) {
         if (expiredOtps[0].is_used) {
           console.log('Registration OTP already used');
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has already been used' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has already been used'
           });
         } else if (expiredOtps[0].attempt_count >= 5) {
           console.log('Registration OTP exceeded max attempts');
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has been blocked due to too many failed attempts. Please request a new OTP.' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has been blocked due to too many failed attempts. Please request a new OTP.'
           });
         } else {
           console.log('Registration OTP expired at:', expiredOtps[0].expires_at);
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has expired' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has expired'
           });
         }
       } else {
@@ -5476,9 +6550,9 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
 
         console.log('No valid registration OTP found for this email and code');
         connection.release();
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid OTP code' 
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid OTP code'
         });
       }
     }
@@ -5501,9 +6575,9 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
       if (existingUsers.length > 0) {
         await connection.rollback();
         connection.release();
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Email already registered' 
+        return res.status(400).json({
+          success: false,
+          message: 'Email already registered'
         });
       }
 
@@ -5569,7 +6643,7 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
       }
 
       const user = userDataResult[0];
-      
+
       // Check if profile needs completion
       const needsProfileCompletion = !user.first_name || !user.last_name || !user.phone;
 
@@ -5590,9 +6664,9 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
       }
 
       console.log('Registration completed successfully for user:', email, 'User ID:', userId);
-      
-      res.json({ 
-        success: true, 
+
+      res.json({
+        success: true,
         message: 'Registration successful',
         token,
         user: user,
@@ -5611,9 +6685,9 @@ app.post('/api/user/register/verify-otp', async (req, res) => {
       await connection.rollback();
       connection.release();
     }
-    res.status(500).json({ 
-      success: false, 
-      message: 'Registration failed: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Registration failed: ' + error.message
     });
   }
 });
@@ -5623,13 +6697,13 @@ app.post('/api/user/login/send-otp', async (req, res) => {
   let connection;
   try {
     const { email } = req.body;
-    
+
     console.log('Login OTP request for email:', email);
-    
+
     if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
       });
     }
 
@@ -5652,9 +6726,9 @@ app.post('/api/user/login/send-otp', async (req, res) => {
 
     if (users.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Email not registered' 
+      return res.status(404).json({
+        success: false,
+        message: 'Email not registered'
       });
     }
 
@@ -5682,17 +6756,17 @@ app.post('/api/user/login/send-otp', async (req, res) => {
     await sendEnhancedOTPEmail(email, otp, 'email_verification');
 
     console.log('Login OTP sent successfully to:', email);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'OTP sent successfully'
     });
   } catch (error) {
     console.error('Login OTP error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to send OTP: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send OTP: ' + error.message
     });
   }
 });
@@ -5702,13 +6776,13 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
   let connection;
   try {
     const { email, otp } = req.body;
-    
+
     console.log('Login OTP verification request:', { email, otp });
-    
+
     if (!email || !otp) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email and OTP are required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email and OTP are required'
       });
     }
 
@@ -5735,28 +6809,28 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
          WHERE email = ? AND otp_code = ? AND otp_type = ?`,
         [email, otp, 'email_verification']
       );
-      
+
       if (expiredOtps.length > 0) {
         if (expiredOtps[0].is_used) {
           console.log('Login OTP already used');
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has already been used' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has already been used'
           });
         } else if (expiredOtps[0].attempt_count >= 5) {
           console.log('Login OTP exceeded max attempts');
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has been blocked due to too many failed attempts. Please request a new OTP.' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has been blocked due to too many failed attempts. Please request a new OTP.'
           });
         } else {
           console.log('Login OTP expired at:', expiredOtps[0].expires_at);
           connection.release();
-          return res.status(400).json({ 
-            success: false, 
-            message: 'OTP has expired' 
+          return res.status(400).json({
+            success: false,
+            message: 'OTP has expired'
           });
         }
       } else {
@@ -5779,9 +6853,9 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
 
         console.log('No valid login OTP found for this email and code');
         connection.release();
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid OTP code' 
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid OTP code'
         });
       }
     }
@@ -5801,14 +6875,14 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
 
     if (users.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
       });
     }
 
     const user = users[0];
-    
+
     // Check if profile needs completion
     const needsProfileCompletion = !user.first_name || !user.last_name || !user.phone;
 
@@ -5831,9 +6905,9 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
     const token = generateToken(user.user_id);
 
     console.log('Login OTP verification successful for user:', user.email);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'Login successful',
       token,
       user: user,
@@ -5843,9 +6917,9 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
   } catch (error) {
     console.error('Login verify error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Login failed: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Login failed: ' + error.message
     });
   }
 });
@@ -5857,7 +6931,7 @@ app.post('/api/user/forgot-password', async (req, res) => {
   let connection;
   try {
     const { email } = req.body;
-    
+
     if (!email) {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
@@ -5960,13 +7034,13 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
   let connection;
   try {
     const { user: firebaseUser } = req.body;
-    
+
     console.log('Firebase Google auth request:', { email: firebaseUser?.email });
-    
+
     if (!firebaseUser) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Firebase user data is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Firebase user data is required'
       });
     }
 
@@ -6010,17 +7084,17 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
       // User exists
       const existingUser = users[0];
       userId = existingUser.user_id;
-      
+
       // Check if profile needs completion
       needsProfileCompletion = !existingUser.first_name || !existingUser.last_name || !existingUser.phone;
-      
+
       console.log('Existing user profile completion status:', {
         first_name: existingUser.first_name,
         last_name: existingUser.last_name,
         phone: existingUser.phone,
         needsCompletion: needsProfileCompletion
       });
-      
+
       // Update Firebase UID if not set or different
       if (!existingUser.firebase_uid || existingUser.firebase_uid !== firebaseUid) {
         await connection.query(
@@ -6091,7 +7165,7 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
     }
 
     const user = userData[0];
-    
+
     // Double check needsProfileCompletion status
     const finalNeedsProfileCompletion = !user.first_name || !user.last_name || !user.phone;
 
@@ -6108,9 +7182,9 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
     }
 
     console.log('Firebase Google auth successful for user:', email, 'isNewUser:', isNewUser, 'needsProfileCompletion:', finalNeedsProfileCompletion);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: isNewUser ? 'Registration successful' : 'Login successful',
       token,
       user: user,
@@ -6120,9 +7194,9 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
   } catch (error) {
     console.error('Firebase Google auth error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Firebase authentication failed: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Firebase authentication failed: ' + error.message
     });
   }
 });
@@ -6132,11 +7206,11 @@ app.get('/api/user/profile', async (req, res) => {
   let connection;
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
-    
+
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication required' 
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -6157,24 +7231,24 @@ app.get('/api/user/profile', async (req, res) => {
 
     if (users.length === 0) {
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
       });
     }
 
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       user: users[0]
     });
   } catch (error) {
     console.error('Get profile error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get profile: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get profile: ' + error.message
     });
   }
 });
@@ -6184,11 +7258,11 @@ app.put('/api/user/profile', async (req, res) => {
   let connection;
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
-    
+
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication required' 
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -6256,59 +7330,59 @@ app.put('/api/user/profile', async (req, res) => {
     connection.release();
 
     if (users.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
       });
     }
 
     console.log('Profile updated successfully for user:', userId);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'Profile updated successfully',
       user: users[0]
     });
   } catch (error) {
     console.error('Update profile error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to update profile: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update profile: ' + error.message
     });
   }
 });
 
-    // Get countries list (try DB, fallback to static list)
-    app.get('/api/countries', async (req, res) => {
-      let connection;
-      try {
-        connection = await pool.getConnection();
+// Get countries list (try DB, fallback to static list)
+app.get('/api/countries', async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
 
-        // Try to query a countries table if it exists
-        try {
-          const [rows] = await connection.query('SELECT code, name FROM countries ORDER BY name');
-          connection.release();
-          if (rows && rows.length > 0) {
-            return res.json({ success: true, countries: rows });
-          }
-        } catch (dbErr) {
-          // If table doesn't exist or query fails, fall back to static list
-          connection.release();
-        }
-
-        // Fallback static list (code, name)
-        const staticCountries = [
-          { code: 'AF', name: 'Afghanistan' },{ code: 'AL', name: 'Albania' },{ code: 'DZ', name: 'Algeria' },{ code: 'AD', name: 'Andorra' },{ code: 'AO', name: 'Angola' },{ code: 'AR', name: 'Argentina' },{ code: 'AM', name: 'Armenia' },{ code: 'AU', name: 'Australia' },{ code: 'AT', name: 'Austria' },{ code: 'AZ', name: 'Azerbaijan' },{ code: 'BD', name: 'Bangladesh' },{ code: 'BB', name: 'Barbados' },{ code: 'BY', name: 'Belarus' },{ code: 'BE', name: 'Belgium' },{ code: 'BJ', name: 'Benin' },{ code: 'BT', name: 'Bhutan' },{ code: 'BO', name: 'Bolivia' },{ code: 'BA', name: 'Bosnia and Herzegovina' },{ code: 'BW', name: 'Botswana' },{ code: 'BR', name: 'Brazil' },{ code: 'BN', name: 'Brunei' },{ code: 'BG', name: 'Bulgaria' },{ code: 'BF', name: 'Burkina Faso' },{ code: 'BI', name: 'Burundi' },{ code: 'KH', name: 'Cambodia' },{ code: 'CM', name: 'Cameroon' },{ code: 'CA', name: 'Canada' },{ code: 'CV', name: 'Cabo Verde' },{ code: 'CL', name: 'Chile' },{ code: 'CN', name: 'China' },{ code: 'CO', name: 'Colombia' },{ code: 'CR', name: 'Costa Rica' },{ code: 'HR', name: 'Croatia' },{ code: 'CU', name: 'Cuba' },{ code: 'CY', name: 'Cyprus' },{ code: 'CZ', name: 'Czech Republic' },{ code: 'DK', name: 'Denmark' },{ code: 'DO', name: 'Dominican Republic' },{ code: 'EC', name: 'Ecuador' },{ code: 'EG', name: 'Egypt' },{ code: 'SV', name: 'El Salvador' },{ code: 'EE', name: 'Estonia' },{ code: 'ET', name: 'Ethiopia' },{ code: 'FI', name: 'Finland' },{ code: 'FR', name: 'France' },{ code: 'DE', name: 'Germany' },{ code: 'GH', name: 'Ghana' },{ code: 'GR', name: 'Greece' },{ code: 'GT', name: 'Guatemala' },{ code: 'GN', name: 'Guinea' },{ code: 'GY', name: 'Guyana' },{ code: 'HT', name: 'Haiti' },{ code: 'HN', name: 'Honduras' },{ code: 'HU', name: 'Hungary' },{ code: 'IS', name: 'Iceland' },{ code: 'IN', name: 'India' },{ code: 'ID', name: 'Indonesia' },{ code: 'IR', name: 'Iran' },{ code: 'IQ', name: 'Iraq' },{ code: 'IE', name: 'Ireland' },{ code: 'IL', name: 'Israel' },{ code: 'IT', name: 'Italy' },{ code: 'JP', name: 'Japan' },{ code: 'JO', name: 'Jordan' },{ code: 'KZ', name: 'Kazakhstan' },{ code: 'KE', name: 'Kenya' },{ code: 'KR', name: 'South Korea' },{ code: 'KW', name: 'Kuwait' },{ code: 'KG', name: 'Kyrgyzstan' },{ code: 'LV', name: 'Latvia' },{ code: 'LB', name: 'Lebanon' },{ code: 'LT', name: 'Lithuania' },{ code: 'LU', name: 'Luxembourg' },{ code: 'MK', name: 'North Macedonia' },{ code: 'MG', name: 'Madagascar' },{ code: 'MW', name: 'Malawi' },{ code: 'MY', name: 'Malaysia' },{ code: 'MV', name: 'Maldives' },{ code: 'ML', name: 'Mali' },{ code: 'MT', name: 'Malta' },{ code: 'MH', name: 'Marshall Islands' },{ code: 'MR', name: 'Mauritania' },{ code: 'MU', name: 'Mauritius' },{ code: 'MX', name: 'Mexico' },{ code: 'MD', name: 'Moldova' },{ code: 'MC', name: 'Monaco' },{ code: 'MN', name: 'Mongolia' },{ code: 'ME', name: 'Montenegro' },{ code: 'MA', name: 'Morocco' },{ code: 'MZ', name: 'Mozambique' },{ code: 'MM', name: 'Myanmar' },{ code: 'NA', name: 'Namibia' },{ code: 'NP', name: 'Nepal' },{ code: 'NL', name: 'Netherlands' },{ code: 'NZ', name: 'New Zealand' },{ code: 'NI', name: 'Nicaragua' },{ code: 'NG', name: 'Nigeria' },{ code: 'NO', name: 'Norway' },{ code: 'OM', name: 'Oman' },{ code: 'PK', name: 'Pakistan' },{ code: 'PW', name: 'Palau' },{ code: 'PA', name: 'Panama' },{ code: 'PG', name: 'Papua New Guinea' },{ code: 'PY', name: 'Paraguay' },{ code: 'PE', name: 'Peru' },{ code: 'PH', name: 'Philippines' },{ code: 'PL', name: 'Poland' },{ code: 'PT', name: 'Portugal' },{ code: 'QA', name: 'Qatar' },{ code: 'RO', name: 'Romania' },{ code: 'RU', name: 'Russia' },{ code: 'SA', name: 'Saudi Arabia' },{ code: 'SN', name: 'Senegal' },{ code: 'RS', name: 'Serbia' },{ code: 'SC', name: 'Seychelles' },{ code: 'SL', name: 'Sierra Leone' },{ code: 'SG', name: 'Singapore' },{ code: 'SK', name: 'Slovakia' },{ code: 'SI', name: 'Slovenia' },{ code: 'SB', name: 'Solomon Islands' },{ code: 'SO', name: 'Somalia' },{ code: 'ZA', name: 'South Africa' },{ code: 'ES', name: 'Spain' },{ code: 'LK', name: 'Sri Lanka' },{ code: 'SD', name: 'Sudan' },{ code: 'SR', name: 'Suriname' },{ code: 'SE', name: 'Sweden' },{ code: 'CH', name: 'Switzerland' },{ code: 'SY', name: 'Syria' },{ code: 'TW', name: 'Taiwan' },{ code: 'TJ', name: 'Tajikistan' },{ code: 'TZ', name: 'Tanzania' },{ code: 'TH', name: 'Thailand' },{ code: 'TL', name: 'Timor-Leste' },{ code: 'TG', name: 'Togo' },{ code: 'TO', name: 'Tonga' },{ code: 'TT', name: 'Trinidad and Tobago' },{ code: 'TN', name: 'Tunisia' },{ code: 'TR', name: 'Turkey' },{ code: 'TM', name: 'Turkmenistan' },{ code: 'TV', name: 'Tuvalu' },{ code: 'UG', name: 'Uganda' },{ code: 'UA', name: 'Ukraine' },{ code: 'AE', name: 'United Arab Emirates' },{ code: 'GB', name: 'United Kingdom' },{ code: 'US', name: 'United States' },{ code: 'UY', name: 'Uruguay' },{ code: 'UZ', name: 'Uzbekistan' },{ code: 'VU', name: 'Vanuatu' },{ code: 'VA', name: 'Vatican City' },{ code: 'VE', name: 'Venezuela' },{ code: 'VN', name: 'Vietnam' },{ code: 'YE', name: 'Yemen' },{ code: 'ZM', name: 'Zambia' },{ code: 'ZW', name: 'Zimbabwe' }
-        ];
-
-        return res.json({ success: true, countries: staticCountries });
-      } catch (error) {
-        console.error('Countries endpoint error:', error);
-        if (connection) connection.release();
-        res.status(500).json({ success: false, message: 'Failed to get countries' });
+    // Try to query a countries table if it exists
+    try {
+      const [rows] = await connection.query('SELECT code, name FROM countries ORDER BY name');
+      connection.release();
+      if (rows && rows.length > 0) {
+        return res.json({ success: true, countries: rows });
       }
-    });
+    } catch (dbErr) {
+      // If table doesn't exist or query fails, fall back to static list
+      connection.release();
+    }
+
+    // Fallback static list (code, name)
+    const staticCountries = [
+      { code: 'AF', name: 'Afghanistan' }, { code: 'AL', name: 'Albania' }, { code: 'DZ', name: 'Algeria' }, { code: 'AD', name: 'Andorra' }, { code: 'AO', name: 'Angola' }, { code: 'AR', name: 'Argentina' }, { code: 'AM', name: 'Armenia' }, { code: 'AU', name: 'Australia' }, { code: 'AT', name: 'Austria' }, { code: 'AZ', name: 'Azerbaijan' }, { code: 'BD', name: 'Bangladesh' }, { code: 'BB', name: 'Barbados' }, { code: 'BY', name: 'Belarus' }, { code: 'BE', name: 'Belgium' }, { code: 'BJ', name: 'Benin' }, { code: 'BT', name: 'Bhutan' }, { code: 'BO', name: 'Bolivia' }, { code: 'BA', name: 'Bosnia and Herzegovina' }, { code: 'BW', name: 'Botswana' }, { code: 'BR', name: 'Brazil' }, { code: 'BN', name: 'Brunei' }, { code: 'BG', name: 'Bulgaria' }, { code: 'BF', name: 'Burkina Faso' }, { code: 'BI', name: 'Burundi' }, { code: 'KH', name: 'Cambodia' }, { code: 'CM', name: 'Cameroon' }, { code: 'CA', name: 'Canada' }, { code: 'CV', name: 'Cabo Verde' }, { code: 'CL', name: 'Chile' }, { code: 'CN', name: 'China' }, { code: 'CO', name: 'Colombia' }, { code: 'CR', name: 'Costa Rica' }, { code: 'HR', name: 'Croatia' }, { code: 'CU', name: 'Cuba' }, { code: 'CY', name: 'Cyprus' }, { code: 'CZ', name: 'Czech Republic' }, { code: 'DK', name: 'Denmark' }, { code: 'DO', name: 'Dominican Republic' }, { code: 'EC', name: 'Ecuador' }, { code: 'EG', name: 'Egypt' }, { code: 'SV', name: 'El Salvador' }, { code: 'EE', name: 'Estonia' }, { code: 'ET', name: 'Ethiopia' }, { code: 'FI', name: 'Finland' }, { code: 'FR', name: 'France' }, { code: 'DE', name: 'Germany' }, { code: 'GH', name: 'Ghana' }, { code: 'GR', name: 'Greece' }, { code: 'GT', name: 'Guatemala' }, { code: 'GN', name: 'Guinea' }, { code: 'GY', name: 'Guyana' }, { code: 'HT', name: 'Haiti' }, { code: 'HN', name: 'Honduras' }, { code: 'HU', name: 'Hungary' }, { code: 'IS', name: 'Iceland' }, { code: 'IN', name: 'India' }, { code: 'ID', name: 'Indonesia' }, { code: 'IR', name: 'Iran' }, { code: 'IQ', name: 'Iraq' }, { code: 'IE', name: 'Ireland' }, { code: 'IL', name: 'Israel' }, { code: 'IT', name: 'Italy' }, { code: 'JP', name: 'Japan' }, { code: 'JO', name: 'Jordan' }, { code: 'KZ', name: 'Kazakhstan' }, { code: 'KE', name: 'Kenya' }, { code: 'KR', name: 'South Korea' }, { code: 'KW', name: 'Kuwait' }, { code: 'KG', name: 'Kyrgyzstan' }, { code: 'LV', name: 'Latvia' }, { code: 'LB', name: 'Lebanon' }, { code: 'LT', name: 'Lithuania' }, { code: 'LU', name: 'Luxembourg' }, { code: 'MK', name: 'North Macedonia' }, { code: 'MG', name: 'Madagascar' }, { code: 'MW', name: 'Malawi' }, { code: 'MY', name: 'Malaysia' }, { code: 'MV', name: 'Maldives' }, { code: 'ML', name: 'Mali' }, { code: 'MT', name: 'Malta' }, { code: 'MH', name: 'Marshall Islands' }, { code: 'MR', name: 'Mauritania' }, { code: 'MU', name: 'Mauritius' }, { code: 'MX', name: 'Mexico' }, { code: 'MD', name: 'Moldova' }, { code: 'MC', name: 'Monaco' }, { code: 'MN', name: 'Mongolia' }, { code: 'ME', name: 'Montenegro' }, { code: 'MA', name: 'Morocco' }, { code: 'MZ', name: 'Mozambique' }, { code: 'MM', name: 'Myanmar' }, { code: 'NA', name: 'Namibia' }, { code: 'NP', name: 'Nepal' }, { code: 'NL', name: 'Netherlands' }, { code: 'NZ', name: 'New Zealand' }, { code: 'NI', name: 'Nicaragua' }, { code: 'NG', name: 'Nigeria' }, { code: 'NO', name: 'Norway' }, { code: 'OM', name: 'Oman' }, { code: 'PK', name: 'Pakistan' }, { code: 'PW', name: 'Palau' }, { code: 'PA', name: 'Panama' }, { code: 'PG', name: 'Papua New Guinea' }, { code: 'PY', name: 'Paraguay' }, { code: 'PE', name: 'Peru' }, { code: 'PH', name: 'Philippines' }, { code: 'PL', name: 'Poland' }, { code: 'PT', name: 'Portugal' }, { code: 'QA', name: 'Qatar' }, { code: 'RO', name: 'Romania' }, { code: 'RU', name: 'Russia' }, { code: 'SA', name: 'Saudi Arabia' }, { code: 'SN', name: 'Senegal' }, { code: 'RS', name: 'Serbia' }, { code: 'SC', name: 'Seychelles' }, { code: 'SL', name: 'Sierra Leone' }, { code: 'SG', name: 'Singapore' }, { code: 'SK', name: 'Slovakia' }, { code: 'SI', name: 'Slovenia' }, { code: 'SB', name: 'Solomon Islands' }, { code: 'SO', name: 'Somalia' }, { code: 'ZA', name: 'South Africa' }, { code: 'ES', name: 'Spain' }, { code: 'LK', name: 'Sri Lanka' }, { code: 'SD', name: 'Sudan' }, { code: 'SR', name: 'Suriname' }, { code: 'SE', name: 'Sweden' }, { code: 'CH', name: 'Switzerland' }, { code: 'SY', name: 'Syria' }, { code: 'TW', name: 'Taiwan' }, { code: 'TJ', name: 'Tajikistan' }, { code: 'TZ', name: 'Tanzania' }, { code: 'TH', name: 'Thailand' }, { code: 'TL', name: 'Timor-Leste' }, { code: 'TG', name: 'Togo' }, { code: 'TO', name: 'Tonga' }, { code: 'TT', name: 'Trinidad and Tobago' }, { code: 'TN', name: 'Tunisia' }, { code: 'TR', name: 'Turkey' }, { code: 'TM', name: 'Turkmenistan' }, { code: 'TV', name: 'Tuvalu' }, { code: 'UG', name: 'Uganda' }, { code: 'UA', name: 'Ukraine' }, { code: 'AE', name: 'United Arab Emirates' }, { code: 'GB', name: 'United Kingdom' }, { code: 'US', name: 'United States' }, { code: 'UY', name: 'Uruguay' }, { code: 'UZ', name: 'Uzbekistan' }, { code: 'VU', name: 'Vanuatu' }, { code: 'VA', name: 'Vatican City' }, { code: 'VE', name: 'Venezuela' }, { code: 'VN', name: 'Vietnam' }, { code: 'YE', name: 'Yemen' }, { code: 'ZM', name: 'Zambia' }, { code: 'ZW', name: 'Zimbabwe' }
+    ];
+
+    return res.json({ success: true, countries: staticCountries });
+  } catch (error) {
+    console.error('Countries endpoint error:', error);
+    if (connection) connection.release();
+    res.status(500).json({ success: false, message: 'Failed to get countries' });
+  }
+});
 
 // Get User Orders
 app.get('/api/user/orders', async (req, res) => {
@@ -6344,12 +7418,12 @@ app.get('/api/user/orders', async (req, res) => {
       let items = o.items;
       let totals = o.totals;
       let shipping_address = o.shipping_address;
-      try { customer_info = typeof customer_info === 'string' ? JSON.parse(customer_info) : customer_info; } catch {}
-      try { items = typeof items === 'string' ? JSON.parse(items) : items; } catch {}
-      try { totals = typeof totals === 'string' ? JSON.parse(totals) : totals; } catch {}
-      try { shipping_address = typeof shipping_address === 'string' ? JSON.parse(shipping_address) : shipping_address; } catch {}
+      try { customer_info = typeof customer_info === 'string' ? JSON.parse(customer_info) : customer_info; } catch { }
+      try { items = typeof items === 'string' ? JSON.parse(items) : items; } catch { }
+      try { totals = typeof totals === 'string' ? JSON.parse(totals) : totals; } catch { }
+      try { shipping_address = typeof shipping_address === 'string' ? JSON.parse(shipping_address) : shipping_address; } catch { }
       const firstItem = Array.isArray(items) && items[0] ? items[0] : null;
-      const product_details = firstItem ? { 
+      const product_details = firstItem ? {
         product_name: firstItem.product_name || firstItem.name || 'N/A',
         image: firstItem.image || null,
         price: firstItem.price || 0,
@@ -6415,7 +7489,7 @@ app.get('/api/user/wishlist', async (req, res) => {
         if (Array.isArray(imgs) && imgs.length > 0) {
           firstImage = imgs[0] || null;
         }
-      } catch {}
+      } catch { }
       const image = firstImage
         ? (String(firstImage).startsWith('http') ? firstImage : `https://api.yokebud.fi${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
         : null;
@@ -6549,11 +7623,11 @@ app.delete('/api/user/account', async (req, res) => {
   let connection;
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
-    
+
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Authentication required' 
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
       });
     }
 
@@ -6573,17 +7647,17 @@ app.delete('/api/user/account', async (req, res) => {
     connection.release();
 
     console.log('Account deleted successfully for user:', userId);
-    
-    res.json({ 
-      success: true, 
-      message: 'Account deleted successfully' 
+
+    res.json({
+      success: true,
+      message: 'Account deleted successfully'
     });
   } catch (error) {
     console.error('Delete account error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to delete account: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete account: ' + error.message
     });
   }
 });
@@ -6592,22 +7666,22 @@ app.delete('/api/user/account', async (req, res) => {
 app.post('/api/user/logout', async (req, res) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
-    
+
     if (token) {
       // In a real app, you might want to blacklist the token
       // For now, we'll just return success
       console.log('User logout with token');
     }
 
-    res.json({ 
-      success: true, 
-      message: 'Logged out successfully' 
+    res.json({
+      success: true,
+      message: 'Logged out successfully'
     });
   } catch (error) {
     console.error('Logout error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Logout failed: ' + error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Logout failed: ' + error.message
     });
   }
 });
@@ -6616,7 +7690,7 @@ app.post('/api/user/logout', async (req, res) => {
 // ==================== ORDER MANAGEMENT API ====================
 
 // Save order from checkout
-  app.post('/api/checkout', async (req, res) => {
+app.post('/api/checkout', async (req, res) => {
   let connection;
   try {
     const {
@@ -6655,7 +7729,7 @@ app.post('/api/user/logout', async (req, res) => {
       try {
         const decoded = jwt.verify(tokenRaw, JWT_SECRET);
         authUserId = decoded && decoded.userId ? decoded.userId : null;
-      } catch (_) {}
+      } catch (_) { }
     }
 
     if (paymentId) {
@@ -6677,13 +7751,22 @@ app.post('/api/user/logout', async (req, res) => {
 
     try {
       const arrItems = Array.isArray(items) ? items : [];
-      for (const it of arrItems) {
+      const processedItems = arrItems.map(it => {
+        const freeShippingConfig = getNormalizedFreeShippingConfig(it);
+        return {
+          ...it,
+          free_shipping: freeShippingConfig.enabled,
+          free_shipping_min_amount: freeShippingConfig.minimumAmount
+        };
+      });
+
+      for (const it of processedItems) {
         const pid = it && it.id != null ? Number(it.id) : null;
         const qty = it && it.quantity != null ? Number(it.quantity) : 0;
         if (!pid || qty <= 0) continue;
         const [prodRows] = await connection.query('SELECT stock, stock_status, is_preorder FROM products WHERE id = ? FOR UPDATE', [pid]);
         if (!prodRows || prodRows.length === 0) throw new Error('Product not found');
-        
+
         const isPreorder = prodRows[0].stock_status === 'Pre-order' || prodRows[0].is_preorder === 1;
         const currentStock = Number(prodRows[0].stock || 0);
 
@@ -6722,8 +7805,122 @@ app.post('/api/user/logout', async (req, res) => {
           await connection.query('UPDATE products SET stock = stock - ? WHERE id = ?', [qty, pid]);
         }
       }
+      // After updating stock and variants, recompute shipping server-side to avoid client tampering
+      const computeServerShipping = (itemsArr, country, city) => {
+        if (!itemsArr || itemsArr.length === 0) return 0;
+
+        const countryRates = {
+          "Finland": { base: 3.0, zones: { "Helsinki": 2.5, "Espoo": 2.5, "Tampere": 2.8, "Vantaa": 2.5, "Oulu": 3.2, "Turku": 2.8 } },
+          "Sweden": { base: 8.0 },
+          "Norway": { base: 10.0 },
+          "Denmark": { base: 8.0 },
+          "Germany": { base: 12.0 },
+          "France": { base: 12.0 },
+          "United Kingdom": { base: 15.0 },
+          "United States": { base: 30.0, zones: { "New York": 28, "California": 32, "Texas": 31, "Florida": 30 } },
+          "Canada": { base: 35.0 },
+          "Australia": { base: 40.0 },
+          "Japan": { base: 35.0 },
+          "China": { base: 38.0 },
+          "India": { base: 42.0 }
+        };
+
+        const weightBrackets = [
+          { max: 0.5, rate: 0 },
+          { max: 1, rate: 0 },
+          { max: 2, rate: 3 },
+          { max: 5, rate: 8 },
+          { max: 10, rate: 15 },
+          { max: 20, rate: 25 },
+          { max: Infinity, rate: 40 }
+        ];
+
+        const defaultCountryConfig = { base: 15.0 };
+
+        const totalActualWeight = itemsArr.reduce((sum, item) => {
+          let itemWeight = 0.2;
+          const category = (item.category || (item.product && item.product.category) || '').toString().toLowerCase();
+          if (item.shipping) {
+            itemWeight = Number(item.shipping) || itemWeight;
+          } else if (item.weight) {
+            itemWeight = Number(item.weight) || itemWeight;
+          } else if (item.product && item.product.shipping) {
+            itemWeight = Number(item.product.shipping) || itemWeight;
+          } else if (item.product && item.product.weight) {
+            itemWeight = Number(item.product.weight) || itemWeight;
+          } else {
+            if (category.includes('hoodie') || category.includes('hoody')) itemWeight = 0.6;
+            else if (category.includes('apparel') || category.includes('tshirt') || category.includes('t-shirt') || category.includes('clothing')) itemWeight = 0.25;
+            else if (category.includes('jewelry') || category.includes('accessory')) itemWeight = 0.1;
+            else if (category.includes('mug') || category.includes('ceramic')) itemWeight = 0.5;
+          }
+          return sum + (itemWeight * (Number(item.quantity) || 1));
+        }, 0);
+
+        const totalVolumetricWeight = itemsArr.reduce((sum, item) => {
+          let dimensions = null;
+          if (item.customization_dimensions || (item.product && item.product.customization_dimensions)) {
+            dimensions = item.customization_dimensions || (item.product && item.product.customization_dimensions);
+            if (typeof dimensions === 'string') {
+              try { dimensions = JSON.parse(dimensions); } catch (e) { dimensions = null; }
+            }
+          }
+          if (!dimensions) return sum;
+          const h = Number(dimensions.height?.value || 0);
+          const w = Number(dimensions.width?.value || 0);
+          const t = Number(dimensions.thickness?.value || 0);
+          const itemVol = (h * w * t) / 5000;
+          return sum + (itemVol * (Number(item.quantity) || 1));
+        }, 0);
+
+        const billableWeight = Math.max(totalActualWeight, totalVolumetricWeight, 0.1);
+
+        const countryConfig = (countryRates[country] || defaultCountryConfig);
+        let baseRate = countryConfig.base;
+        if (countryConfig.zones && city && countryConfig.zones[city]) baseRate = countryConfig.zones[city];
+
+        let weightSurcharge = 0;
+        for (const bracket of weightBrackets) {
+          if (billableWeight <= bracket.max) { weightSurcharge = bracket.rate; break; }
+        }
+
+        const packagingCost = Math.min(billableWeight * 0.5, 5.0);
+        const totalShipping = baseRate + weightSurcharge + packagingCost;
+        return Math.round(totalShipping * 100) / 100;
+      };
+
+      // Compute server-side shipping and override client-sent shipping to prevent tampering
+      try {
+        const promo = Number(req.body?.totals?.promoDiscount || req.body?.totals?.promo || 0) || 0;
+        const subtotal = Number(req.body?.totals?.subtotal);
+        const merchandiseTotal = Math.max(
+          (Number.isFinite(subtotal) ? subtotal : calculateItemsMerchandiseTotal(processedItems)) - promo,
+          0
+        );
+        const freeShippingStatus = getFreeShippingStatus(processedItems, merchandiseTotal);
+        const requestedShippingMethod = String(req.body?.totals?.shippingMethod || 'automatic');
+        const effectiveShippingMethod = requestedShippingMethod === 'pickup'
+          ? 'pickup'
+          : (freeShippingStatus.qualifies ? 'free' : 'automatic');
+        const serverShipping = effectiveShippingMethod === 'automatic'
+          ? computeServerShipping(processedItems, customerInfo.country, customerInfo.city)
+          : 0;
+        if (!totals || typeof totals !== 'object') {
+          req.body.totals = {};
+        }
+        req.body.totals.shipping = serverShipping;
+        req.body.totals.shippingMethod = effectiveShippingMethod;
+        // Recalculate grand total if subtotal present
+        if (req.body.totals && typeof req.body.totals.subtotal === 'number') {
+          req.body.totals.total = Math.round(((req.body.totals.subtotal - promo) + serverShipping) * 100) / 100;
+        }
+        // Replace items with processedItems for saving
+        req.body.items = processedItems;
+      } catch (e) {
+        console.warn('Server shipping calc failed, proceeding with client totals', e);
+      }
     } catch (e) {
-      try { await connection.rollback(); } catch {}
+      try { await connection.rollback(); } catch { }
       connection.release();
       return res.status(400).json({ success: false, message: e.message || 'Stock update failed' });
     }
@@ -6736,8 +7933,8 @@ app.post('/api/user/logout', async (req, res) => {
       order_id: orderId,
       user_id: authUserId || null,
       customer_info: JSON.stringify(customerInfo),
-      items: JSON.stringify(items),
-      totals: JSON.stringify(totals),
+      items: JSON.stringify(typeof processedItems !== 'undefined' ? processedItems : items),
+      totals: JSON.stringify(req.body && req.body.totals ? req.body.totals : totals),
       payment_method: paymentMethod,
       payment_id: paymentId || null,
       status: 'Pending',
@@ -6782,9 +7979,9 @@ app.post('/api/user/logout', async (req, res) => {
 
     // Send order confirmation email
     try {
-      await sendOrderConfirmationEmail(orderId, customerInfo, items, totals);
+      await sendOrderConfirmationEmail(orderId, customerInfo, (typeof processedItems !== 'undefined' ? processedItems : items), (req.body && req.body.totals ? req.body.totals : totals));
       // Send admin notification
-      await sendAdminNewOrderEmail(orderId, customerInfo, items, totals);
+      await sendAdminNewOrderEmail(orderId, customerInfo, (typeof processedItems !== 'undefined' ? processedItems : items), (req.body && req.body.totals ? req.body.totals : totals));
     } catch (e) {
       console.error('Order email error:', e.message || e);
     }
@@ -6823,10 +8020,10 @@ app.post('/api/checkout/upload-design', async (req, res) => {
 
       try {
         const result = await new Promise((resolve, reject) => {
-          const uploadOptions = { 
-            folder: 'yokebud-crafts/checkout/designs', 
-            public_id: `design_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, 
-            resource_type: 'auto' 
+          const uploadOptions = {
+            folder: 'yokebud-craft/checkout/designs',
+            public_id: `design_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            resource_type: 'auto'
           };
 
           // If useTempFiles is true, use the temp file path
@@ -6844,12 +8041,12 @@ app.post('/api/checkout/upload-design', async (req, res) => {
           }
         });
 
-        uploadResults.push({ 
-          url: result.secure_url, 
-          public_id: result.public_id, 
-          name: file.name, 
-          type: file.mimetype, 
-          size: file.size 
+        uploadResults.push({
+          url: result.secure_url,
+          public_id: result.public_id,
+          name: file.name,
+          type: file.mimetype,
+          size: file.size
         });
       } catch (e) {
         console.error('Cloudinary upload error:', e);
@@ -6881,13 +8078,13 @@ app.get('/api/orders', async (req, res) => {
       let design_files = order.design_files;
       let shipping_address = order.shipping_address;
       let billing_address = order.billing_address;
-      try { customer_info = typeof customer_info === 'string' ? JSON.parse(customer_info) : customer_info; } catch {}
-      try { items = typeof items === 'string' ? JSON.parse(items) : items; } catch {}
-      try { totals = typeof totals === 'string' ? JSON.parse(totals) : totals; } catch {}
-      try { customization_data = typeof customization_data === 'string' ? JSON.parse(customization_data) : customization_data; } catch {}
-      try { design_files = typeof design_files === 'string' ? JSON.parse(design_files) : design_files; } catch {}
-      try { shipping_address = typeof shipping_address === 'string' ? JSON.parse(shipping_address) : shipping_address; } catch {}
-      try { billing_address = typeof billing_address === 'string' ? JSON.parse(billing_address) : billing_address; } catch {}
+      try { customer_info = typeof customer_info === 'string' ? JSON.parse(customer_info) : customer_info; } catch { }
+      try { items = typeof items === 'string' ? JSON.parse(items) : items; } catch { }
+      try { totals = typeof totals === 'string' ? JSON.parse(totals) : totals; } catch { }
+      try { customization_data = typeof customization_data === 'string' ? JSON.parse(customization_data) : customization_data; } catch { }
+      try { design_files = typeof design_files === 'string' ? JSON.parse(design_files) : design_files; } catch { }
+      try { shipping_address = typeof shipping_address === 'string' ? JSON.parse(shipping_address) : shipping_address; } catch { }
+      try { billing_address = typeof billing_address === 'string' ? JSON.parse(billing_address) : billing_address; } catch { }
       const product_name = (Array.isArray(items) && items[0] && (items[0].product_name || items[0].name)) || order.product_name || 'N/A';
       return {
         ...order,
@@ -6920,7 +8117,7 @@ app.get('/api/orders/:orderId', async (req, res) => {
   let connection;
   try {
     const { orderId } = req.params;
-    
+
     connection = await pool.getConnection();
     await connection.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
     await connection.query("SET collation_connection = 'utf8mb4_unicode_ci'");
@@ -6950,12 +8147,12 @@ app.get('/api/orders/:orderId', async (req, res) => {
     }
 
     const order = orders[0];
-    
+
     // Parse all JSON fields
     const safeParse = (val) => {
       try {
         if (typeof val === 'string' && val.trim()) return JSON.parse(val);
-      } catch (_) {}
+      } catch (_) { }
       return val;
     };
 
@@ -6993,21 +8190,21 @@ app.post('/api/orders/:orderId/send-email', requireAdminAuth, async (req, res) =
   try {
     const { orderId } = req.params;
     connection = await pool.getConnection();
-    
+
     const [orders] = await connection.query('SELECT customer_info FROM orders WHERE order_id = ?', [orderId]);
     if (orders.length === 0) {
       connection.release();
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
-    
+
     const order = orders[0];
     let customerInfo = order.customer_info;
-    try { customerInfo = typeof customerInfo === 'string' ? JSON.parse(customerInfo) : customerInfo; } catch {}
-    
+    try { customerInfo = typeof customerInfo === 'string' ? JSON.parse(customerInfo) : customerInfo; } catch { }
+
     connection.release();
-    
+
     await sendManualNotificationEmail(orderId, customerInfo);
-    
+
     res.json({ success: true, message: 'Email sent successfully' });
   } catch (error) {
     if (connection) connection.release();
@@ -7020,7 +8217,7 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
   let connection;
   try {
     const { orderId } = req.params;
-    const { status, delivered_at } = req.body;
+    const { status, delivered_at, estimated_delivery_date } = req.body;
 
     if (!status) {
       return res.status(400).json({
@@ -7035,8 +8232,8 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
       ? (delivered_at ? new Date(delivered_at) : new Date())
       : null;
     const [result] = await connection.query(
-      'UPDATE orders SET status = ?, delivered_at = ?, updated_at = NOW() WHERE order_id = ?',
-      [status, deliveredValue, orderId]
+      'UPDATE orders SET status = ?, delivered_at = ?, estimated_delivery_date = ?, updated_at = NOW() WHERE order_id = ?',
+      [status, deliveredValue, estimated_delivery_date || null, orderId]
     );
 
     if (result.affectedRows === 0) {
@@ -7054,15 +8251,15 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
     );
 
     const order = orders[0];
-    
+
     // Parse JSON fields
     const parsedOrder = {
       ...order,
-      customer_info: typeof order.customer_info === 'string' ? 
+      customer_info: typeof order.customer_info === 'string' ?
         JSON.parse(order.customer_info) : order.customer_info,
-      items: typeof order.items === 'string' ? 
+      items: typeof order.items === 'string' ?
         JSON.parse(order.items) : order.items,
-      totals: typeof order.totals === 'string' ? 
+      totals: typeof order.totals === 'string' ?
         JSON.parse(order.totals) : order.totals
     };
 
@@ -7070,7 +8267,7 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
 
     // Send order status update email
     try {
-      await sendOrderStatusUpdateEmail(orderId, status, parsedOrder.customer_info, parsedOrder.tracking_number);
+      await sendOrderStatusUpdateEmail(orderId, status, parsedOrder.customer_info, parsedOrder.tracking_number, parsedOrder.estimated_delivery_date);
     } catch (e) {
       console.error('Status email error:', e.message || e);
     }
@@ -7087,6 +8284,72 @@ app.put('/api/orders/:orderId/status', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to update order status: ' + error.message
+    });
+  }
+});
+
+// Update estimated delivery date only
+app.put('/api/orders/:orderId/estimated-delivery', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { orderId } = req.params;
+    const { estimated_delivery_date } = req.body;
+
+    connection = await pool.getConnection();
+
+    const [result] = await connection.query(
+      'UPDATE orders SET estimated_delivery_date = ?, updated_at = NOW() WHERE order_id = ?',
+      [estimated_delivery_date || null, orderId]
+    );
+
+    if (result.affectedRows === 0) {
+      connection.release();
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    // Get updated order
+    const [orders] = await connection.query(
+      'SELECT * FROM orders WHERE order_id = ?',
+      [orderId]
+    );
+
+    const order = orders[0];
+
+    // Parse JSON fields
+    const parsedOrder = {
+      ...order,
+      customer_info: typeof order.customer_info === 'string' ?
+        JSON.parse(order.customer_info) : order.customer_info,
+      items: typeof order.items === 'string' ?
+        JSON.parse(order.items) : order.items,
+      totals: typeof order.totals === 'string' ?
+        JSON.parse(order.totals) : order.totals
+    };
+
+    connection.release();
+
+    // Send estimated delivery update email
+    try {
+      await sendEstimatedDeliveryUpdateEmail(orderId, parsedOrder.customer_info, parsedOrder.estimated_delivery_date);
+    } catch (e) {
+      console.error('Estimated delivery email error:', e.message || e);
+    }
+
+    res.json({
+      success: true,
+      message: 'Estimated delivery date updated successfully',
+      order: parsedOrder
+    });
+
+  } catch (error) {
+    console.error('Error updating estimated delivery date:', error);
+    if (connection) connection.release();
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update estimated delivery date: ' + error.message
     });
   }
 });
@@ -7126,7 +8389,7 @@ app.put('/api/orders/:orderId/tracking', async (req, res) => {
           console.error('Tracking email error:', e.message || e);
         }
       }
-    } catch {}
+    } catch { }
     connection.release();
     res.json({ success: true, order: parsed });
   } catch (error) {
@@ -7142,6 +8405,7 @@ app.put('/api/orders/:orderId/tracking', async (req, res) => {
 // Create product endpoint
 app.post('/api/products', requireAdminAuth, async (req, res) => {
   try {
+    console.log('POST /api/products request body:', JSON.stringify(req.body, null, 2));
     const {
       name,
       description,
@@ -7174,13 +8438,14 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       stock_status,
       customization_type,
       customization_images,
-      customization_dimensions
+      customization_dimensions,
+      discount_ranges
     } = req.body;
-    
+
     const validation = validateProductPayload(req.body);
     if (!validation.valid) {
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         message: validation.message
       });
     }
@@ -7190,15 +8455,15 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
 
     // Process sizes
     const processedSizes = processSizes(sizes);
-    
+
     const connection = await pool.getConnection();
-    
+
     // Check for duplicate SKU
     const [existingProducts] = await connection.query(
       'SELECT id FROM products WHERE sku = ?',
       [sku]
     );
-    
+
     if (existingProducts.length > 0) {
       connection.release();
       return res.status(400).json({ success: false, message: 'SKU already exists' });
@@ -7216,10 +8481,30 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
     const finalSeoKeywords = req.body.seo_keywords || seo.seo_keywords;
     const finalSchemaJson = req.body.schema_json ? JSON.stringify(req.body.schema_json) : JSON.stringify(seo.schema_json);
 
+    const metadataPayload = metadata && typeof metadata === 'object' ? metadata : {};
+    const freeShipping = isFreeShippingEnabled(metadataPayload.free_shipping ?? req.body.free_shipping);
+    const freeShippingMinAmount = freeShipping
+      ? parseFreeShippingMinAmount(metadataPayload.free_shipping_min_amount ?? req.body.free_shipping_min_amount)
+      : null;
+
+    if (freeShipping && freeShippingMinAmount === null) {
+      connection.release();
+      return res.status(400).json({ success: false, message: 'Please provide a valid free shipping minimum amount.' });
+    }
+
     // Insert product into database
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageArray);
-    const metadataJson = JSON.stringify({ tags, features, moq, shipping, warranty, bulk_discount });
+    const metadataJson = JSON.stringify({
+      tags: Array.isArray(tags) ? tags : (Array.isArray(metadataPayload.tags) ? metadataPayload.tags : []),
+      features: Array.isArray(features) ? features : (Array.isArray(metadataPayload.features) ? metadataPayload.features : []),
+      moq: moq ?? metadataPayload.moq ?? 1,
+      shipping: shipping ?? metadataPayload.shipping ?? '',
+      warranty: warranty ?? metadataPayload.warranty ?? '',
+      bulk_discount: bulk_discount ?? metadataPayload.bulk_discount ?? '',
+      free_shipping: freeShipping,
+      free_shipping_min_amount: freeShippingMinAmount
+    });
 
     // Debug: log customization_mode for incoming create
     console.log('CREATE product - customization_mode:', req.body.customization_mode);
@@ -7231,6 +8516,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         discounted_price,
         category,
         stock,
+        moq,
         material,
         care_instructions,
         sku,
@@ -7260,7 +8546,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_mode,
         customization_images,
         customization_dimensions
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
@@ -7268,6 +8554,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
+        parseInt(moq) || 1,
         material,
         care,
         sku,
@@ -7307,22 +8594,36 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         [result.insertId, v && v.color ? String(v.color) : null, v && v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
       );
     }
+    // Save discount ranges
+    const discountRanges = Array.isArray(discount_ranges) ? discount_ranges : [];
+    for (const range of discountRanges) {
+      const minQty = Number(range.min_quantity || range.min_qty || 2);
+      const maxQty = range.max_quantity !== undefined ? Number(range.max_quantity) : (range.max_qty !== undefined ? Number(range.max_qty) : null);
+      const discountPercent = Number(range.discount_percentage || range.discount_percent || 0);
+      const discPrice = range.discounted_price !== undefined ? Number(range.discounted_price) : null;
+      await connection.query(
+        `INSERT INTO quantity_discount_ranges 
+         (product_id, min_quantity, max_quantity, discount_percentage, discounted_price) 
+         VALUES (?, ?, ?, ?, ?)`,
+        [result.insertId, minQty, maxQty !== null ? maxQty : null, discountPercent, discPrice]
+      );
+    }
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Product created successfully',
-      productId: result.insertId 
+      productId: result.insertId
     });
 
     // Auto-regenerate sitemap when a new product is added
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product creation:', err));
   } catch (error) {
     console.error('Product creation error:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to create product',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -7332,6 +8633,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
   let connection;
   try {
     const productId = req.params.id;
+    console.log('PUT /api/products/' + productId + ' request body:', JSON.stringify(req.body, null, 2));
     const {
       name,
       description,
@@ -7358,8 +8660,22 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       stock_status,
       customization_type,
       customization_images,
-      customization_dimensions
+      customization_dimensions,
+      discount_ranges
     } = req.body;
+
+    const metadataPayload = req.body.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
+    const freeShipping = isFreeShippingEnabled(metadataPayload.free_shipping ?? req.body.free_shipping);
+    const freeShippingMinAmount = freeShipping
+      ? parseFreeShippingMinAmount(metadataPayload.free_shipping_min_amount ?? req.body.free_shipping_min_amount)
+      : null;
+
+    if (freeShipping && freeShippingMinAmount === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid free shipping minimum amount.'
+      });
+    }
 
     const validation = validateProductPayload({
       name,
@@ -7373,8 +8689,8 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       stock_status
     });
     if (!validation.valid) {
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         message: validation.message
       });
     }
@@ -7386,16 +8702,16 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const processedSizes = processSizes(sizes);
 
     connection = await pool.getConnection();
-    
+
     await connection.beginTransaction();
-    
-    
+
+
     // Get current product data
     const [products] = await connection.query(
       'SELECT sku FROM products WHERE id = ?',
       [productId]
     );
-    
+
     if (products.length === 0) {
       await connection.rollback();
       connection.release();
@@ -7403,14 +8719,14 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     }
 
     const currentSku = products[0].sku;
-    
+
     // Check if SKU is being changed to one that already exists
     if (sku !== currentSku) {
       const [skuCheck] = await connection.query(
         'SELECT id FROM products WHERE sku = ? AND id != ?',
         [sku, productId]
       );
-      
+
       if (skuCheck.length > 0) {
         await connection.rollback();
         connection.release();
@@ -7435,7 +8751,16 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
     const imagesJson = JSON.stringify(imageUrls);
-    const metadataJson = JSON.stringify({ tags, features, shipping, warranty, bulk_discount });
+    const metadataJson = JSON.stringify({
+      tags,
+      features,
+      moq: moq ?? metadataPayload.moq ?? 1,
+      shipping,
+      warranty,
+      bulk_discount,
+      free_shipping: freeShipping,
+      free_shipping_min_amount: freeShippingMinAmount
+    });
 
     // Auto-generate SEO fields if not provided
     const seo = generateProductSEO(name, description, finalPrice, imageUrls);
@@ -7452,6 +8777,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         discounted_price = ?,
         category = ?,
         stock = ?,
+        moq = ?,
         material = ?,
         care_instructions = ?,
         sku = ?,
@@ -7490,6 +8816,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         finalDiscountedPrice,
         JSON.stringify(categories),
         (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
+        parseInt(moq) || 1,
         material,
         care,
         sku,
@@ -7531,12 +8858,30 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         [productId, v && v.color ? String(v.color) : null, v && v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
       );
     }
-    
+    // Handle discount ranges
+    console.log('PUT product discount_ranges:', discount_ranges);
+    const discountRanges = Array.isArray(discount_ranges) ? discount_ranges : [];
+    await connection.query('DELETE FROM quantity_discount_ranges WHERE product_id = ?', [productId]);
+    console.log('Inserting discount ranges:', discountRanges);
+    for (const range of discountRanges) {
+      const minQty = Number(range.min_quantity || range.min_qty || 2);
+      const maxQty = range.max_quantity !== undefined ? Number(range.max_quantity) : (range.max_qty !== undefined ? Number(range.max_qty) : null);
+      const discountPercent = Number(range.discount_percentage || range.discount_percent || 0);
+      const discPrice = range.discounted_price !== undefined ? Number(range.discounted_price) : null;
+      console.log('Inserting range:', [productId, minQty, maxQty, discountPercent, discPrice]);
+      await connection.query(
+        `INSERT INTO quantity_discount_ranges 
+         (product_id, min_quantity, max_quantity, discount_percentage, discounted_price) 
+         VALUES (?, ?, ?, ?, ?)`,
+        [productId, minQty, maxQty !== null ? maxQty : null, discountPercent, discPrice]
+      );
+    }
+
     await connection.commit();
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Product updated successfully',
       productId: productId
     });
@@ -7544,12 +8889,68 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     // Auto-regenerate sitemap when a product is updated
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product update:', err));
   } catch (error) {
-    try { if (connection) await connection.rollback(); } catch {}
+    try { if (connection) await connection.rollback(); } catch { }
     console.error('Product update error:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to update product',
-      error: error.message 
+      error: error.message
+    });
+  }
+});
+
+app.put('/api/products/:id/status', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const productId = req.params.id;
+    const normalizedStatus = String(req.body?.status || '').trim().toLowerCase();
+
+    if (!['active', 'inactive'].includes(normalizedStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product status'
+      });
+    }
+
+    connection = await pool.getConnection();
+
+    const [existingProducts] = await connection.query(
+      'SELECT id, status FROM products WHERE id = ? LIMIT 1',
+      [productId]
+    );
+
+    if (existingProducts.length === 0) {
+      connection.release();
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    await connection.query(
+      'UPDATE products SET status = ?, updated_at = NOW() WHERE id = ?',
+      [normalizedStatus, productId]
+    );
+
+    connection.release();
+
+    res.json({
+      success: true,
+      message: `Product ${normalizedStatus === 'active' ? 'activated' : 'deactivated'} successfully`,
+      product: {
+        id: Number(productId),
+        status: normalizedStatus
+      }
+    });
+
+    regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product status update:', err));
+  } catch (error) {
+    try { if (connection) connection.release(); } catch { }
+    console.error('Product status update error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update product status',
+      error: error.message
     });
   }
 });
@@ -7558,7 +8959,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
 app.get('/api/products/:id', async (req, res) => {
   try {
     const productId = req.params.id;
-    
+
     const connection = await pool.getConnection();
     const [products] = await connection.query(
       'SELECT * FROM products WHERE id = ?',
@@ -7569,11 +8970,7 @@ app.get('/api/products/:id', async (req, res) => {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    const [sitemapPathRows] = await connection.query(
-      'SELECT path FROM sitemap_entries WHERE path LIKE ? AND type = "product" LIMIT 1',
-      [`/products/${productId}/%`]
-    );
-    const sitemapPath = sitemapPathRows.length > 0 ? sitemapPathRows[0].path : null;
+    const sitemapPath = await productSocialSeo.resolveProductSitemapPath(connection, productId);
 
     const product = products[0];
     const [sumRows] = await connection.query(
@@ -7582,7 +8979,7 @@ app.get('/api/products/:id', async (req, res) => {
     );
     const avgRating = sumRows[0] && sumRows[0].avg_rating != null ? Number(sumRows[0].avg_rating) : null;
     const reviewCount = sumRows[0] && sumRows[0].review_count != null ? Number(sumRows[0].review_count) : 0;
-    
+
     // Parse categories
     let categories;
     try {
@@ -7596,7 +8993,15 @@ app.get('/api/products/:id', async (req, res) => {
 
     // Format response with price range
     const meta = product.metadata ? JSON.parse(product.metadata) : null;
+    const freeShippingMinAmount = parseFreeShippingMinAmount(meta?.free_shipping_min_amount);
     const priceRange = meta && meta.price_range && typeof meta.price_range === 'object' ? meta.price_range : null;
+    // Fetch discount ranges
+    console.log('Fetching discount ranges for productId:', productId);
+    const [discountRanges] = await connection.query(
+      'SELECT * FROM quantity_discount_ranges WHERE product_id = ? ORDER BY min_quantity ASC',
+      [productId]
+    );
+    console.log('Discount ranges found:', discountRanges);
     const parsedProduct = {
       id: product.id,
       product_name: product.product_name,
@@ -7609,11 +9014,13 @@ app.get('/api/products/:id', async (req, res) => {
       categories: categories,
       category: categories[0],
       stock: product.stock,
-      moq: product.moq,
+      moq: product.moq ?? (meta && meta.moq) ?? 1,
       material: product.material,
       care_instructions: product.care_instructions,
       sku: product.sku,
       shipping_info: product.shipping_info,
+      free_shipping: isFreeShippingEnabled(meta?.free_shipping),
+      free_shipping_min_amount: freeShippingMinAmount,
       warranty: product.warranty,
       bulk_discount: product.bulk_discount,
       sizes: JSON.parse(product.sizes || '[]'),
@@ -7643,7 +9050,8 @@ app.get('/api/products/:id', async (req, res) => {
       created_at: product.created_at,
       updated_at: product.updated_at,
       rating: avgRating,
-      review_count: reviewCount
+      review_count: reviewCount,
+      discount_ranges: Array.isArray(discountRanges) ? discountRanges : []
     };
     const [variants] = await connection.query(
       'SELECT color, size, quantity FROM product_variants WHERE product_id = ? ORDER BY id ASC',
@@ -7662,8 +9070,15 @@ app.get('/api/products/:id', async (req, res) => {
 app.get('/api/products', async (req, res) => {
   try {
     const connection = await pool.getConnection();
+    const includeInactive = String(req.query.includeInactive || '').toLowerCase() === 'true';
+    const limitValue = Number.parseInt(req.query.limit, 10);
+    const hasLimit = Number.isInteger(limitValue) && limitValue > 0;
+    const productsQuery = includeInactive
+      ? `SELECT * FROM products ORDER BY created_at DESC${hasLimit ? ' LIMIT ?' : ''}`
+      : `SELECT * FROM products WHERE status = 'active' ORDER BY created_at DESC${hasLimit ? ' LIMIT ?' : ''}`;
     const [products] = await connection.query(
-      'SELECT * FROM products ORDER BY created_at DESC'
+      productsQuery,
+      hasLimit ? [limitValue] : []
     );
     const [summaries] = await connection.query(
       'SELECT product_id, ROUND(AVG(rating),1) AS avg_rating, COUNT(*) AS review_count FROM user_reviews WHERE is_approved = 1 GROUP BY product_id'
@@ -7683,9 +9098,9 @@ app.get('/api/products', async (req, res) => {
 
     const sitemapMap = new Map();
     for (const entry of sitemapEntries) {
-      const match = entry.path.match(/\/products\/(\d+)\//);
-      if (match) {
-        sitemapMap.set(Number(match[1]), entry.path);
+      const pid = productSocialSeo.getProductIdFromSitemapPath(entry.path);
+      if (pid) {
+        sitemapMap.set(Number(pid), entry.path);
       }
     }
 
@@ -7700,8 +9115,9 @@ app.get('/api/products', async (req, res) => {
       } catch (e) {
         categories = [product.category];
       }
-      
+
       const meta = product.metadata ? JSON.parse(product.metadata) : null;
+      const freeShippingMinAmount = parseFreeShippingMinAmount(meta?.free_shipping_min_amount);
       const priceRange = meta && meta.price_range && typeof meta.price_range === 'object' ? meta.price_range : null;
 
       const sum = summaryMap.get(Number(product.id)) || { rating: null, review_count: 0 };
@@ -7718,6 +9134,7 @@ app.get('/api/products', async (req, res) => {
         colors: JSON.parse(product.colors || '[]'),
         sizes: JSON.parse(product.sizes || '[]'),
         product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]'),
+        metadata: meta,
         tags: JSON.parse(product.tags || '[]'),
         features: JSON.parse(product.features || '[]'),
         min_price: priceRange && priceRange.min != null ? Number(priceRange.min) : (product.discounted_price || product.price),
@@ -7735,7 +9152,10 @@ app.get('/api/products', async (req, res) => {
         schema_json: product.schema_json ? (typeof product.schema_json === 'string' ? JSON.parse(product.schema_json) : product.schema_json) : null,
         thumbnail: product.thumbnail,
         stock: product.stock,
+        moq: product.moq ?? (meta && meta.moq) ?? 1,
         sku: product.sku,
+        free_shipping: isFreeShippingEnabled(meta?.free_shipping),
+        free_shipping_min_amount: freeShippingMinAmount,
         customization_mode: product.customization_mode || null,
         created_at: product.created_at,
         updated_at: product.updated_at,
@@ -7771,7 +9191,7 @@ app.get('/api/products/:id/reviews', async (req, res) => {
         const decoded = jwt.verify(token, JWT_SECRET);
         const [rows] = await connection.query('SELECT 1 FROM user_reviews WHERE product_id = ? AND user_id IN (SELECT id FROM user_profiles WHERE user_id = ?) AND is_first_review = 1 LIMIT 1', [productId, decoded.userId]);
         youHaveRated = rows.length > 0;
-      } catch {}
+      } catch { }
     } else if (googleUid) {
       const [rows] = await connection.query('SELECT 1 FROM user_reviews WHERE product_id = ? AND google_uid = ? AND is_first_review = 1 LIMIT 1', [productId, googleUid]);
       youHaveRated = rows.length > 0;
@@ -7808,7 +9228,7 @@ app.post('/api/products/:id/reviews', async (req, res) => {
             nameResolved = `${fn} ${ln}`.trim();
           }
         }
-      } catch {}
+      } catch { }
     }
     if (!profileId && !google_uid) {
       return res.status(400).json({ success: false, message: 'User identity required' });
@@ -7839,7 +9259,7 @@ app.post('/api/products/:id/reviews', async (req, res) => {
     let mediaUrls = [];
     const uploadBuffer = (buf) => new Promise((resolve, reject) => {
       try {
-        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud crafts/reviews', resource_type: 'auto' }, (err, result) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud craft/reviews', resource_type: 'auto' }, (err, result) => {
           if (err) return reject(err);
           resolve(result);
         });
@@ -7853,18 +9273,18 @@ app.post('/api/products/:id/reviews', async (req, res) => {
       for (const f of arr) {
         if (f.tempFilePath) {
           try {
-            const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud crafts/reviews', resource_type: 'auto' });
+            const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud craft/reviews', resource_type: 'auto' });
             results.push(r);
-          } catch {}
+          } catch { }
         } else if (f.data) {
           try {
             const r = await uploadBuffer(f.data);
             results.push(r);
-          } catch {}
+          } catch { }
         }
       }
       mediaUrls = results.map(r => r.secure_url);
-    } catch {}
+    } catch { }
 
     try {
       const hasContent = (review_text && review_text.trim().length > 0) || mediaUrls.length > 0 || title;
@@ -7909,7 +9329,7 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
         const decoded = jwt.verify(token, JWT_SECRET);
         ownerClause = 'user_id IN (SELECT id FROM user_profiles WHERE user_id = ?)';
         ownerParams.push(decoded.userId);
-      } catch {}
+      } catch { }
     } else if (google_uid) {
       ownerClause = 'google_uid = ?';
       ownerParams.push(google_uid);
@@ -7922,7 +9342,7 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
     let mediaUrls = [];
     const uploadBuffer = (buf) => new Promise((resolve, reject) => {
       try {
-        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud crafts/reviews', resource_type: 'auto' }, (err, result) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: 'yokebud craft/reviews', resource_type: 'auto' }, (err, result) => {
           if (err) return reject(err);
           resolve(result);
         });
@@ -7935,13 +9355,13 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
       const results = [];
       for (const f of arr) {
         if (f.tempFilePath) {
-          try { const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud crafts/reviews', resource_type: 'auto' }); results.push(r); } catch {}
+          try { const r = await cloudinary.uploader.upload(f.tempFilePath, { folder: 'yokebud craft/reviews', resource_type: 'auto' }); results.push(r); } catch { }
         } else if (f.data) {
-          try { const r = await uploadBuffer(f.data); results.push(r); } catch {}
+          try { const r = await uploadBuffer(f.data); results.push(r); } catch { }
         }
       }
       mediaUrls = results.map(r => r.secure_url);
-    } catch {}
+    } catch { }
 
     const text = (req.body && req.body.review_text) || null;
     const title = (req.body && req.body.title) || null;
@@ -7951,7 +9371,7 @@ app.put('/api/products/:id/reviews/:reviewId', async (req, res) => {
       if (incoming) {
         existingFromClient = Array.isArray(incoming) ? incoming : JSON.parse(incoming);
       }
-    } catch {}
+    } catch { }
     const merged = [...existingFromClient, ...mediaUrls].filter(Boolean);
 
     await connection.query(
@@ -7983,7 +9403,7 @@ app.delete('/api/products/:id/reviews/:reviewId', async (req, res) => {
         const decoded = jwt.verify(token, JWT_SECRET);
         ownerClause = 'user_id IN (SELECT id FROM user_profiles WHERE user_id = ?)';
         ownerParams.push(decoded.userId);
-      } catch {}
+      } catch { }
     } else if (google_uid) {
       ownerClause = 'google_uid = ?';
       ownerParams.push(google_uid);
@@ -8021,6 +9441,7 @@ app.get('/api/categories', async (req, res) => {
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         parent_id INT DEFAULT NULL,
+        collection_section VARCHAR(255) DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -8030,11 +9451,20 @@ app.get('/api/categories', async (req, res) => {
       await connection.query("SELECT parent_id FROM categories LIMIT 1");
     } catch (err) {
       if (err.code === 'ER_BAD_FIELD_ERROR') {
-         await connection.query("ALTER TABLE categories ADD COLUMN parent_id INT DEFAULT NULL");
+        await connection.query("ALTER TABLE categories ADD COLUMN parent_id INT DEFAULT NULL");
       }
     }
 
-    const [rows] = await connection.query('SELECT id, name, type, image_url, created_at, updated_at, parent_id, slug, seo_title, seo_description, seo_keywords, seo_content FROM categories ORDER BY id ASC');
+    // Ensure collection_section column exists (migration for existing tables)
+    try {
+      await connection.query("SELECT collection_section FROM categories LIMIT 1");
+    } catch (err) {
+      if (err.code === 'ER_BAD_FIELD_ERROR') {
+        await connection.query("ALTER TABLE categories ADD COLUMN collection_section VARCHAR(255) DEFAULT NULL");
+      }
+    }
+
+    const [rows] = await connection.query('SELECT id, name, type, image_url, created_at, updated_at, parent_id, collection_section, slug, seo_title, seo_description, seo_keywords, seo_content FROM categories ORDER BY id ASC');
     connection.release();
     res.json({ success: true, categories: rows });
   } catch (error) {
@@ -8047,19 +9477,19 @@ app.get('/api/categories', async (req, res) => {
 app.post('/api/categories', requireAdminAuth, async (req, res) => {
   let connection;
   try {
-    const { name, parent_id, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content } = req.body;
+    const { name, parent_id, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content, collection_section } = req.body;
     if (!name) return res.status(400).json({ success: false, message: 'Name is required' });
-    
+
     const finalSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
     connection = await pool.getConnection();
     const [result] = await connection.query(
-      'INSERT INTO categories (name, parent_id, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [name, parent_id || null, type || 'crafts', image_url || null, finalSlug, seo_title || null, seo_description || null, seo_keywords || null, seo_content || null]
+      'INSERT INTO categories (name, parent_id, collection_section, type, image_url, slug, seo_title, seo_description, seo_keywords, seo_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, parent_id || null, collection_section || null, type || 'craft', image_url || null, finalSlug, seo_title || null, seo_description || null, seo_keywords || null, seo_content || null]
     );
-    
+
     connection.release();
-    res.json({ success: true, message: 'Category created', category: { id: result.insertId, name, parent_id, type, image_url, slug: finalSlug } });
+    res.json({ success: true, message: 'Category created', category: { id: result.insertId, name, parent_id, collection_section: collection_section || null, type, image_url, slug: finalSlug } });
   } catch (error) {
     if (connection) connection.release();
     console.error('Create category error:', error);
@@ -8073,7 +9503,7 @@ app.delete('/api/categories/:id', requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     connection = await pool.getConnection();
-    
+
     // Check if category exists
     const [rows] = await connection.query('SELECT * FROM categories WHERE id = ?', [id]);
     if (rows.length === 0) {
@@ -8095,15 +9525,15 @@ app.delete('/api/categories/:id', requireAdminAuth, async (req, res) => {
 app.delete('/api/products/:id', requireAdminAuth, async (req, res) => {
   try {
     const productId = req.params.id;
-    
+
     const connection = await pool.getConnection();
-    
+
     // Get product details for image cleanup
     const [products] = await connection.query(
       'SELECT images FROM products WHERE id = ?',
       [productId]
     );
-    
+
     if (products.length === 0) {
       connection.release();
       return res.status(404).json({ error: 'Product not found' });
@@ -8111,13 +9541,13 @@ app.delete('/api/products/:id', requireAdminAuth, async (req, res) => {
 
     const { images } = products[0];
     const photos = JSON.parse(images || '[]');
-    
+
     // Delete the product from database
     await connection.query(
       'DELETE FROM products WHERE id = ?',
       [productId]
     );
-    
+
     connection.release();
 
     // Delete product images from Cloudinary
@@ -8135,7 +9565,7 @@ app.delete('/api/products/:id', requireAdminAuth, async (req, res) => {
     }
 
     res.json({ success: true, message: 'Product deleted successfully' });
-    
+
     // Auto-regenerate sitemap when a product is deleted
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product deletion:', err));
   } catch (error) {
@@ -8213,7 +9643,7 @@ app.delete('/api/products/:id/images', requireAdminAuth, async (req, res) => {
     }
     return res.json({ success: true });
   } catch (error) {
-    try { if (connection) await connection.rollback(); } catch {}
+    try { if (connection) await connection.rollback(); } catch { }
     if (connection) connection.release();
     return res.status(500).json({ success: false, message: 'Failed to delete image' });
   }
@@ -8224,15 +9654,15 @@ app.get('/api/products/:id/related', async (req, res) => {
   try {
     const productId = req.params.id;
     const limit = parseInt(req.query.limit) || 4;
-    
+
     const connection = await pool.getConnection();
-    
+
     // First get the product's categories
     const [products] = await connection.query(
       'SELECT category FROM products WHERE id = ?',
       [productId]
     );
-    
+
     if (products.length === 0) {
       connection.release();
       return res.status(404).json({ error: 'Product not found' });
@@ -8258,7 +9688,7 @@ app.get('/api/products/:id/related', async (req, res) => {
        LIMIT ?`,
       [productId, JSON.stringify(categories), limit]
     );
-    
+
     connection.release();
 
     const parsedProducts = relatedProducts.map(product => ({
@@ -8268,7 +9698,7 @@ app.get('/api/products/:id/related', async (req, res) => {
       min_price: product.discounted_price || product.price,
       max_price: product.price,
       discounted_price: product.discounted_price,
-      firstImage: product.images ? 
+      firstImage: product.images ?
         (JSON.parse(product.images) || [])[0] : null
     }));
 
@@ -8280,86 +9710,62 @@ app.get('/api/products/:id/related', async (req, res) => {
 });
 
 // Shareable product page with server-rendered Open Graph tags
+// Shareable product page with server-rendered Open Graph tags
+// Shareable product page with server-rendered Open Graph tags
 app.get('/share/products/:id/:slug?', async (req, res) => {
   let connection;
   try {
     const { id } = req.params;
+    const { img: imgParam } = req.query;
+
     connection = await pool.getConnection();
     const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [id]);
-    connection.release();
     if (!rows || rows.length === 0) {
+      connection.release();
       res.status(404).send('<!doctype html><html><head><meta charset="utf-8"><title>Product Not Found</title></head><body>Product not found</body></html>');
       return;
     }
 
     const p = rows[0];
-    const siteBase = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
-    const backendBase = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
+    const siteBase = productSocialSeo.PUBLIC_SITE_URL;
+    const sitemapPath = await productSocialSeo.resolveProductSitemapPath(connection, id);
+    connection.release();
+    connection = null;
 
-    function toSlug(str) {
-      try {
-        return String(str || '')
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9\s-]/g, '')
-          .replace(/\s+/g, '-')
-          .replace(/-+/g, '-')
-          .slice(0, 80);
-      } catch { return ''; }
-    }
+    const photos = productSocialSeo.parseProductPhotos(p);
 
-    function escapeAttr(s) {
-      return String(s || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-    }
-
-    function absoluteImageUrl(path) {
-      if (!path) return 'https://www.yokebud.fi/src/assades/LOGO.png';
-      const s = String(path);
-      if (s.startsWith('http')) return s;
-      const clean = s.startsWith('/') ? s : `/${s}`;
-      return `${backendBase}${clean}`;
-    }
-
-    let photos = [];
-    try { 
-      photos = p.images ? JSON.parse(p.images) : JSON.parse(p.product_photos || '[]'); 
-    } catch { 
-      photos = []; 
-    }
-    
-    // Allow selecting specific image via ?img=INDEX
+    // Better image selection for sharing
     let imgIdx = 0;
-    if (req.query.img) {
-      const parsed = parseInt(req.query.img);
-      if (!isNaN(parsed) && parsed >= 0 && parsed < photos.length) {
+    if (imgParam) {
+      const parsed = parseInt(imgParam, 10);
+      if (!Number.isNaN(parsed) && parsed >= 0 && parsed < photos.length) {
         imgIdx = parsed;
       }
     }
-    const firstImage = absoluteImageUrl(photos && photos[imgIdx]);
+
+    // Use the new image function
+    const firstImage = productSocialSeo.getImageUrlForSharing(photos[imgIdx], 1200, 630);
+
+    const canonicalPath = productSocialSeo.buildCanonicalProductPath(p, sitemapPath, id);
+    const canonicalUrl = `${siteBase}${canonicalPath}`;
+    const meta = productSocialSeo.buildProductSocialMetaTags(p, { canonicalUrl, imageUrl: firstImage });
+
+    // All product images for gallery sharing
+    const allImages = photos.map((photo) => productSocialSeo.getImageUrlForSharing(photo, 1200, 630)).filter(Boolean);
 
     const name = p.product_name || 'Product';
-    const desc = String(p.product_details || p.product_description || '').slice(0, 160);
-    const slug = toSlug(name);
-    const [sitemapRows] = await connection.query(
-      'SELECT path FROM sitemap_entries WHERE path LIKE ? AND type = "product" LIMIT 1',
-      [`/products/${p.id}/%`]
-    );
-    const sitemapPath = sitemapRows.length > 0 ? sitemapRows[0].path : `/products/${p.id}/${slug}`;
-    const canonicalUrl = `${siteBase}${sitemapPath}`;
+    const desc = productSocialSeo.stripHtml(
+      p.seo_description || p.product_details || p.product_description || ''
+    ).slice(0, 200);
 
     const jsonLd = {
       '@context': 'https://schema.org/',
       '@type': 'Product',
       name,
-      description: String(p.product_description || p.product_details || ''),
+      description: desc,
       sku: p.sku || String(p.id || ''),
-      image: photos.map(absoluteImageUrl).slice(0, 4),
-      brand: { '@type': 'Brand', name: 'Yokebud Crafts' },
+      image: allImages.slice(0, 5),
+      brand: { '@type': 'Brand', name: 'Yokebud craft' },
       offers: {
         '@type': 'Offer',
         priceCurrency: 'EUR',
@@ -8369,45 +9775,45 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
       }
     };
 
-    const tags = `
-      <title>${escapeAttr(name)} | Yokebud Crafts</title>
-      <meta name="description" content="${escapeAttr(desc)}">
-      <link rel="canonical" href="${canonicalUrl}">
-      <meta property="og:type" content="product">
-      <meta property="og:title" content="${escapeAttr(name)}">
-      <meta property="og:description" content="${escapeAttr(desc)}">
-      <meta property="og:url" content="${canonicalUrl}">
-      <meta property="og:site_name" content="Yokebud Crafts">
-      <meta property="og:image" content="${firstImage}">
-      <meta name="twitter:card" content="summary_large_image">
-      <meta name="twitter:title" content="${escapeAttr(name)}">
-      <meta name="twitter:description" content="${escapeAttr(desc)}">
-      <meta name="twitter:image" content="${firstImage}">
+    // Gallery images for Open Graph (Facebook supports multiple og:image tags)
+    let galleryMetaTags = '';
+    if (allImages.length > 1) {
+      for (let i = 1; i < Math.min(allImages.length, 5); i++) {
+        galleryMetaTags += `\n    <meta property="og:image" content="${productSocialSeo.escapeAttr(allImages[i])}" />`;
+        galleryMetaTags += `\n    <meta property="og:image:width" content="1200" />`;
+        galleryMetaTags += `\n    <meta property="og:image:height" content="630" />`;
+      }
+    }
+
+    const schemaScripts = `
       <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>
       <script type="application/ld+json">${JSON.stringify({
-        '@context': 'https://schema.org',
-        '@type': 'BreadcrumbList',
-        itemListElement: [
-          { '@type': 'ListItem', position: 1, name: 'Home', item: siteBase },
-          { '@type': 'ListItem', position: 2, name: String(p.category || 'Products') || 'Products', item: `${siteBase}/` },
-          { '@type': 'ListItem', position: 3, name: name, item: canonicalUrl }
-        ]
-      })}</script>
+      '@context': 'https://schema.org',
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Home', item: siteBase },
+        { '@type': 'ListItem', position: 2, name: String(p.category || 'Products') || 'Products', item: `${siteBase}/` },
+        { '@type': 'ListItem', position: 3, name: name, item: canonicalUrl }
+      ]
+    })}</script>
     `;
 
     const html = `<!doctype html><html lang="en"><head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      ${tags}
-      <meta http-equiv="refresh" content="0; url=${canonicalUrl}">
+      ${meta.tags}
+      ${galleryMetaTags}
+      ${schemaScripts}
+      <meta http-equiv="refresh" content="0; url=${productSocialSeo.escapeAttr(canonicalUrl)}">
     </head><body>
-      <a href="${canonicalUrl}" style="font-family: sans-serif; padding: 20px; display: inline-block;">Open product</a>
+      ${meta.noscriptBody}
+      <a href="${productSocialSeo.escapeAttr(canonicalUrl)}" style="font-family: sans-serif; padding: 20px; display: inline-block;">Open product</a>
     </body></html>`;
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.status(200).send(html);
   } catch (e) {
-    try { if (connection) connection.release(); } catch {}
+    try { if (connection) connection.release(); } catch { }
     res.status(500).send('<!doctype html><html><head><meta charset="utf-8"><title>Error</title></head><body>Unexpected error</body></html>');
   }
 });
@@ -8431,6 +9837,8 @@ app.get('/api/products/slug/:slug', async (req, res) => {
     } catch (e) {
       categories = [product.category];
     }
+    const meta = product.metadata ? JSON.parse(product.metadata) : null;
+    const freeShippingMinAmount = parseFreeShippingMinAmount(meta?.free_shipping_min_amount);
     res.json({
       id: product.id,
       product_name: product.product_name,
@@ -8443,11 +9851,13 @@ app.get('/api/products/slug/:slug', async (req, res) => {
       categories,
       category: categories[0],
       stock: product.stock,
-      moq: product.moq,
+      moq: product.moq ?? (meta && meta.moq) ?? 1,
       material: product.material,
       care_instructions: product.care_instructions,
       sku: product.sku,
       shipping_info: product.shipping_info,
+      free_shipping: isFreeShippingEnabled(meta?.free_shipping),
+      free_shipping_min_amount: freeShippingMinAmount,
       warranty: product.warranty,
       bulk_discount: product.bulk_discount,
       sizes: JSON.parse(product.sizes || '[]'),
@@ -8476,18 +9886,24 @@ app.get('/api/products/featured', async (req, res) => {
     const connection = await pool.getConnection();
     const [rows] = await connection.query('SELECT * FROM products WHERE status = ? AND featured = 1 ORDER BY updated_at DESC LIMIT ?', ['active', limit]);
     connection.release();
-    const products = rows.map(product => ({
-      id: product.id,
-      product_name: product.product_name,
-      product_description: product.product_details || product.product_description,
-      price: product.price,
-      discounted_price: product.discounted_price,
-      min_price: product.discounted_price || product.price,
-      max_price: product.price,
-      slug: product.slug,
-      thumbnail: product.thumbnail,
-      product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]')
-    }));
+    const products = rows.map(product => {
+      const meta = product.metadata ? JSON.parse(product.metadata) : null;
+      return {
+        id: product.id,
+        product_name: product.product_name,
+        product_description: product.product_details || product.product_description,
+        price: product.price,
+        discounted_price: product.discounted_price,
+        min_price: product.discounted_price || product.price,
+        max_price: product.price,
+        slug: product.slug,
+        thumbnail: product.thumbnail,
+        product_photos: product.images ? JSON.parse(product.images || '[]') : JSON.parse(product.product_photos || '[]'),
+        metadata: meta,
+        free_shipping: isFreeShippingEnabled(meta?.free_shipping),
+        free_shipping_min_amount: parseFreeShippingMinAmount(meta?.free_shipping_min_amount)
+      };
+    });
     res.json(products);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch featured products' });
@@ -8514,13 +9930,136 @@ app.put('/api/products/bulk', requireAdminAuth, async (req, res) => {
   }
 });
 
+
+// ==================== QUANTITY DISCOUNT RANGES API ====================
+
+// Get all discount ranges for a product
+app.get('/api/products/:productId/discount-ranges', async (req, res) => {
+  let connection;
+  try {
+    const { productId } = req.params;
+    connection = await pool.getConnection();
+
+    const [rows] = await connection.query(
+      'SELECT * FROM quantity_discount_ranges WHERE product_id = ? ORDER BY min_quantity ASC',
+      [productId]
+    );
+
+    connection.release();
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Error fetching discount ranges:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch discount ranges' });
+  }
+});
+
+// Add a new discount range
+app.post('/api/products/:productId/discount-ranges', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { productId } = req.params;
+    console.log('POST /discount-ranges req.body:', req.body);
+    const { min_quantity, max_quantity, discount_percentage, discounted_price } = req.body;
+
+    if (min_quantity === undefined || min_quantity === null || min_quantity < 1) {
+      return res.status(400).json({ success: false, message: 'Minimum quantity is required and must be at least 1' });
+    }
+
+    if ((discount_percentage === undefined || discount_percentage === null) && (discounted_price === undefined || discounted_price === null)) {
+      return res.status(400).json({ success: false, message: 'Either discount percentage or discounted price is required' });
+    }
+
+    connection = await pool.getConnection();
+
+    // Check if product exists
+    const [product] = await connection.query('SELECT id FROM products WHERE id = ?', [productId]);
+    if (product.length === 0) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
+    const [result] = await connection.query(
+      `INSERT INTO quantity_discount_ranges 
+       (product_id, min_quantity, max_quantity, discount_percentage, discounted_price) 
+       VALUES (?, ?, ?, ?, ?)`,
+      [productId, min_quantity, max_quantity || null, discount_percentage || 0, discounted_price || null]
+    );
+
+    connection.release();
+    res.json({ success: true, message: 'Discount range added successfully', id: result.insertId });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Error adding discount range:', error);
+    res.status(500).json({ success: false, message: 'Failed to add discount range' });
+  }
+});
+
+// Update a discount range
+app.put('/api/products/:productId/discount-ranges/:id', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { productId, id } = req.params;
+    const { min_quantity, max_quantity, discount_percentage, discounted_price } = req.body;
+
+    connection = await pool.getConnection();
+
+    const [result] = await connection.query(
+      `UPDATE quantity_discount_ranges 
+       SET min_quantity = ?, max_quantity = ?, discount_percentage = ?, discounted_price = ?, updated_at = NOW()
+       WHERE id = ? AND product_id = ?`,
+      [min_quantity, max_quantity || null, discount_percentage || 0, discounted_price || null, id, productId]
+    );
+
+    if (result.affectedRows === 0) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Discount range not found' });
+    }
+
+    connection.release();
+    res.json({ success: true, message: 'Discount range updated successfully' });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Error updating discount range:', error);
+    res.status(500).json({ success: false, message: 'Failed to update discount range' });
+  }
+});
+
+// Delete a discount range
+app.delete('/api/products/:productId/discount-ranges/:id', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    const { productId, id } = req.params;
+    connection = await pool.getConnection();
+
+    const [result] = await connection.query(
+      'DELETE FROM quantity_discount_ranges WHERE id = ? AND product_id = ?',
+      [id, productId]
+    );
+
+    if (result.affectedRows === 0) {
+      connection.release();
+      return res.status(404).json({ success: false, message: 'Discount range not found' });
+    }
+
+    connection.release();
+    res.json({ success: true, message: 'Discount range deleted successfully' });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Error deleting discount range:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete discount range' });
+  }
+});
+
+
+
 // ==================== IMAGE UPLOAD HANDLING WITH CLOUDINARY ====================
 app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
   try {
     if (!req.files || Object.keys(req.files).length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No files were uploaded.' 
+      return res.status(400).json({
+        success: false,
+        message: 'No files were uploaded.'
       });
     }
 
@@ -8532,16 +10071,16 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
       });
     }
 
-    const files = Array.isArray(fileField) 
-      ? fileField 
+    const files = Array.isArray(fileField)
+      ? fileField
       : [fileField];
-    
+
     const uploadResults = [];
     const productId = req.params.productId;
     const productSlugHint = req.body && (req.body.productSlug || req.body.slug);
     const productNameHint = req.body && (req.body.productName || req.body.name);
     const toSlug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    let targetFolder = 'yokebud crafts/products';
+    let targetFolder = 'yokebud craft/products';
     if (productId) {
       try {
         const conn = await pool.getConnection();
@@ -8566,9 +10105,9 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
     for (const file of files) {
       const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'];
       if (!allowedTypes.includes(file.mimetype)) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid file type. Only JPEG, PNG, WebP and MP4/WEBM/OGG/MOV videos are allowed.' 
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid file type. Only JPEG, PNG, WebP and MP4/WEBM/OGG/MOV videos are allowed.'
         });
       }
 
@@ -8576,16 +10115,16 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
         const result = await new Promise((resolve, reject) => {
           const isVideo = String(file.mimetype || '').toLowerCase().startsWith('video/');
           const rtype = isVideo ? 'video' : 'image';
-          
+
           // Generate SEO-friendly public_id for images
           let publicId;
           if (!isVideo) {
-            const cleanHint = (productNameHint || 'yokebud-crafts')
+            const cleanHint = (productNameHint || 'yokebud-craft')
               .toLowerCase()
               .replace(/[^a-z0-9]/g, '-')
               .replace(/-+/g, '-')
               .replace(/^-|-$/g, '');
-            
+
             // Add SEO keywords like "custom", "handmade", "finland" if not present
             let seoBase = cleanHint;
             if (!seoBase.includes('laser') && !seoBase.includes('engraved')) {
@@ -8594,7 +10133,7 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
             if (!seoBase.includes('finland')) {
               seoBase = `${seoBase}-finland`;
             }
-            
+
             publicId = `${seoBase}-${uuidv4().slice(0, 8)}`;
           } else {
             publicId = uuidv4();
@@ -8671,24 +10210,24 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
           await connection.rollback();
         }
       } catch (e) {
-        try { await connection.rollback(); } catch {}
+        try { await connection.rollback(); } catch { }
         throw e;
       } finally {
         connection.release();
       }
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Files uploaded successfully',
-      images: uploadResults 
+      images: uploadResults
     });
   } catch (error) {
     console.error('Upload endpoint error:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to upload files',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -8855,7 +10394,7 @@ app.post('/api/admin/send-otp-email', async (req, res) => {
     if (connection) {
       try {
         connection.release();
-      } catch (e) {}
+      } catch (e) { }
     }
     res.status(500).json({
       success: false,
@@ -8926,7 +10465,7 @@ app.post('/api/admin/verify-otp', async (req, res) => {
 
   } catch (error) {
     console.error('Verify Error:', error);
-    if (connection) try { connection.release() } catch(e) {};
+    if (connection) try { connection.release() } catch (e) { };
     res.status(500).json({ success: false, message: 'Verification Error' });
   }
 });
@@ -8940,30 +10479,30 @@ app.post('/api/admin/verify-otp', async (req, res) => {
 // Admin dashboard
 app.get('/api/admin/dashboard', requireAdminAuth, async (req, res) => {
   try {
-    
+
 
     const connection = await pool.getConnection();
-    
+
     const [unreadCount] = await connection.query(
       'SELECT COUNT(*) as count FROM messages WHERE is_read = 0'
     );
-    
+
     const [totalCount] = await connection.query(
       'SELECT COUNT(*) as count FROM messages'
     );
-    
+
     const [productCount] = await connection.query(
       'SELECT COUNT(*) as count FROM products'
     );
-    
+
     const [orderCount] = await connection.query(
       'SELECT COUNT(*) as count FROM checkout_data WHERE status IN ("Pending", "Processing")'
     );
-    
+
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       stats: {
         unreadMessages: unreadCount[0].count,
         totalMessages: totalCount[0].count,
@@ -8980,7 +10519,7 @@ app.get('/api/admin/dashboard', requireAdminAuth, async (req, res) => {
 // Admin: users summary (total users and recent activity)
 app.get('/api/admin/users/summary', requireAdminAuth, async (req, res) => {
   try {
-    
+
 
     const connection = await pool.getConnection();
 
@@ -9014,6 +10553,29 @@ app.get('/api/admin/users/summary', requireAdminAuth, async (req, res) => {
     });
   } catch (error) {
     console.error('Users summary error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: user profiles list for dashboard
+app.get('/api/admin/user-profiles', requireAdminAuth, async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [rows] = await connection.query(`
+      SELECT id, user_id, first_name, last_name, phone, address, house_number,
+             apartment, landmark, city, state, zip_code, country,
+             profile_picture, date_of_birth, created_at, updated_at
+      FROM user_profiles
+      WHERE 1
+      ORDER BY created_at DESC
+    `);
+
+    connection.release();
+    res.json({ success: true, users: rows });
+  } catch (error) {
+    if (connection) connection.release();
+    console.error('Admin user profiles error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -9053,7 +10615,7 @@ app.get('/api/user-profiles/count', async (req, res) => {
 app.post('/api/contact', async (req, res) => {
   try {
     const { name, email, whatsapp, message } = req.body;
-    
+
     if (!name || !email || !whatsapp || !message) {
       return res.status(400).json({ success: false, message: 'All fields are required' });
     }
@@ -9096,7 +10658,7 @@ app.get('/api/messages', async (req, res) => {
 app.put('/api/messages/:id/read', async (req, res) => {
   try {
     const messageId = req.params.id;
-    
+
     const connection = await pool.getConnection();
     await connection.query(
       'UPDATE messages SET is_read = 1 WHERE id = ?',
@@ -9137,11 +10699,11 @@ app.post('/api/subscribe', async (req, res) => {
   let emailSaved = false;
   try {
     const { email } = req.body;
-    
+
     if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
       });
     }
 
@@ -9165,13 +10727,13 @@ app.post('/api/subscribe', async (req, res) => {
 
     if (existingSubscribers.length > 0) {
       const subscriber = existingSubscribers[0];
-      
+
       if (subscriber.is_active) {
         console.log(`Email ${email} is already subscribed`);
         connection.release();
-        return res.json({ 
-          success: true, 
-          message: 'You are already subscribed to our newsletter!' 
+        return res.json({
+          success: true,
+          message: 'You are already subscribed to our newsletter!'
         });
       } else {
         // Reactivate subscription
@@ -9201,7 +10763,7 @@ app.post('/api/subscribe', async (req, res) => {
             setTimeout(async () => {
               try {
                 await sendWelcomeEmail(email, token);
-              } catch {}
+              } catch { }
             }, 3000);
           }
         } catch (emailError) {
@@ -9209,16 +10771,16 @@ app.post('/api/subscribe', async (req, res) => {
           // We'll still return success since the DB was updated
         }
 
-        return res.json({ 
-          success: true, 
-          message: 'Successfully resubscribed to our newsletter!' 
+        return res.json({
+          success: true,
+          message: 'Successfully resubscribed to our newsletter!'
         });
       }
     }
 
     // Create new subscription
     const subscriptionToken = generateSubscriptionToken();
-    
+
     await connection.query(
       'INSERT INTO subscribers (email, subscription_token, is_active) VALUES (?, ?, ?)',
       [email, subscriptionToken, true]
@@ -9252,7 +10814,7 @@ app.post('/api/subscribe', async (req, res) => {
         }
       }, 3000);
     }
-    
+
     // Send notification to admin with retry mechanism
     try {
       console.log(`Sending notification email to admin`);
@@ -9283,27 +10845,27 @@ app.post('/api/subscribe', async (req, res) => {
     }, 1500);
 
     // Always return success if the email was saved to the database
-    res.json({ 
-      success: true, 
-      message: emailSent 
-        ? 'Thank you for subscribing to our newsletter! Please check your email for confirmation.' 
+    res.json({
+      success: true,
+      message: emailSent
+        ? 'Thank you for subscribing to our newsletter! Please check your email for confirmation.'
         : 'Thank you for subscribing to our newsletter! You have been added to our mailing list.'
     });
   } catch (error) {
     console.error('❌ Subscription error:', error);
     if (connection) connection.release();
-    
+
     // If we already saved the email to the database but encountered other errors
     if (emailSaved) {
-      return res.json({ 
-        success: true, 
+      return res.json({
+        success: true,
         message: 'Thank you for subscribing to our newsletter! You have been added to our mailing list.'
       });
     }
-    
-    res.status(500).json({ 
-      success: false, 
-      message: 'Subscription failed. Please try again.' 
+
+    res.status(500).json({
+      success: false,
+      message: 'Subscription failed. Please try again.'
     });
   }
 });
@@ -9313,23 +10875,23 @@ app.post('/api/unsubscribe', async (req, res) => {
   let connection;
   try {
     const { token, email } = req.body;
-    
+
     if (!token && !email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Unsubscribe token or email is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Unsubscribe token or email is required'
       });
     }
 
     console.log(`🔄 Processing unsubscription request: ${token ? 'Using token' : `For email: ${email}`}`);
-    
+
     // Set a timeout for database operations
     const getConnectionWithTimeout = async (timeout = 15000) => {
       return new Promise(async (resolve, reject) => {
         const timer = setTimeout(() => {
           reject(new Error('Database connection timed out'));
         }, timeout);
-        
+
         try {
           const conn = await pool.getConnection();
           clearTimeout(timer);
@@ -9340,13 +10902,13 @@ app.post('/api/unsubscribe', async (req, res) => {
         }
       });
     };
-    
+
     // Get connection with timeout
     connection = await getConnectionWithTimeout();
     console.log('✅ Database connection established');
 
     let subscriber;
-    
+
     if (token) {
       // Unsubscribe by token (from email link)
       console.log(`🔍 Looking up subscriber by token: ${token.substring(0, 8)}...`);
@@ -9368,9 +10930,9 @@ app.post('/api/unsubscribe', async (req, res) => {
     if (!subscriber) {
       console.log(`⚠️ No active subscription found for ${token ? 'token' : email}`);
       connection.release();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Subscription not found or already unsubscribed' 
+      return res.status(404).json({
+        success: false,
+        message: 'Subscription not found or already unsubscribed'
       });
     }
 
@@ -9379,13 +10941,13 @@ app.post('/api/unsubscribe', async (req, res) => {
     // Deactivate subscription with transaction
     try {
       await connection.beginTransaction();
-      
+
       console.log(`🔄 Deactivating subscription for: ${subscriber.email}`);
       await connection.query(
         'UPDATE subscribers SET is_active = FALSE, updated_at = NOW() WHERE id = ?',
         [subscriber.id]
       );
-      
+
       await connection.commit();
       console.log(`✅ Successfully deactivated subscription for: ${subscriber.email}`);
     } catch (transactionError) {
@@ -9410,16 +10972,16 @@ app.post('/api/unsubscribe', async (req, res) => {
         console.error(`❌ Error sending unsubscribe confirmation to ${subscriber.email}:`, emailError);
       });
 
-    res.json({ 
-      success: true, 
-      message: 'You have been successfully unsubscribed from our newsletter.' 
+    res.json({
+      success: true,
+      message: 'You have been successfully unsubscribed from our newsletter.'
     });
   } catch (error) {
     console.error('❌ Unsubscribe error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Unsubscribe failed. Please try again later.' 
+    res.status(500).json({
+      success: false,
+      message: 'Unsubscribe failed. Please try again later.'
     });
   }
 });
@@ -9429,11 +10991,11 @@ app.get('/api/subscription-status', async (req, res) => {
   let connection;
   try {
     const { email } = req.query;
-    
+
     if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
       });
     }
 
@@ -9448,16 +11010,16 @@ app.get('/api/subscription-status', async (req, res) => {
 
     const isSubscribed = subscribers.length > 0 && subscribers[0].is_active;
 
-    res.json({ 
-      success: true, 
-      isSubscribed 
+    res.json({
+      success: true,
+      isSubscribed
     });
   } catch (error) {
     console.error('❌ Subscription status error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to check subscription status' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to check subscription status'
     });
   }
 });
@@ -9490,17 +11052,17 @@ app.get('/api/subscribers/count', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       total: totalResult[0].total,
       today: todayResult[0].today
     });
   } catch (error) {
     console.error('❌ Subscriber count error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get subscriber count' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get subscriber count'
     });
   }
 });
@@ -9558,7 +11120,7 @@ async function ensureBlogsSchema() {
         {
           title: 'Best Laser Engraving Gift Ideas in Finland',
           excerpt: 'Discover the most unique and thoughtful personalized gift ideas using professional laser engraving technology in Finland.',
-          content: '<p>Looking for the perfect gift? <strong>Laser engraving Finland</strong> offers a unique way to personalize gifts for your loved ones. From <strong>custom engraved wood</strong> frames to <strong>personalized leather wallets</strong>, the possibilities are endless. At Yokebud Crafts, we specialize in creating one-of-a-kind treasures that are both beautiful and durable. Learn more about our <a href="/?category=laser-engraving">laser engraving services</a> today.</p>',
+          content: '<p>Looking for the perfect gift? <strong>Laser engraving Finland</strong> offers a unique way to personalize gifts for your loved ones. From <strong>custom engraved wood</strong> frames to <strong>personalized leather wallets</strong>, the possibilities are endless. At Yokebud craft, we specialize in creating one-of-a-kind treasures that are both beautiful and durable. Learn more about our <a href="/?category=laser-engraving">laser engraving services</a> today.</p>',
           category: 'Gift Ideas',
           slug: 'best-laser-engraving-gift-ideas-finland'
         },
@@ -9572,14 +11134,14 @@ async function ensureBlogsSchema() {
         {
           title: 'Laser Cutting vs Traditional Crafting',
           excerpt: 'Comparing modern laser cutting technology with traditional handcrafted methods for creating custom wood and leather products.',
-          content: '<p>While traditional crafting methods have their charm, <strong>laser cutting Helsinki</strong> brings a level of precision and consistency that is hard to match. By combining <strong>handmade in Finland</strong> quality with modern laser technology, Yokebud Crafts delivers the best of both worlds. Our <strong>laser-cut wooden crafts</strong> showcase intricate designs that are durable and perfectly finished. Check out our <a href="/?category=laser-cutting-products">laser cutting products</a>.</p>',
-          category: 'Craftsmanship',
+          content: '<p>While traditional crafting methods have their charm, <strong>laser cutting Helsinki</strong> brings a level of precision and consistency that is hard to match. By combining <strong>handmade in Finland</strong> quality with modern laser technology, Yokebud craft delivers the best of both worlds. Our <strong>laser-cut wooden craft</strong> showcase intricate designs that are durable and perfectly finished. Check out our <a href="/?category=laser-cutting-products">laser cutting products</a>.</p>',
+          category: 'craftmanship',
           slug: 'laser-cutting-vs-traditional-crafting'
         },
         {
           title: 'Personalized Engraved Gift Trends Finland',
           excerpt: 'Stay up to date with the latest trends in personalized and engraved gifts in the Finnish market for 2026.',
-          content: '<p>Personalization is more popular than ever in Finland. The latest trends show a high demand for <strong>custom engraved gifts</strong> that focus on sustainability and local craftsmanship. From <strong>engraved stone decor</strong> to <strong>personalized apparel</strong>, Finnish consumers value quality and uniqueness. Stay ahead of the curve with Yokebud Crafts, your hub for <strong>laser engraving Finland</strong>. Discover our <a href="/?category=laser-engraving">latest arrivals</a>.</p>',
+          content: '<p>Personalization is more popular than ever in Finland. The latest trends show a high demand for <strong>custom engraved gifts</strong> that focus on sustainability and local craftmanship. From <strong>engraved stone decor</strong> to <strong>personalized apparel</strong>, Finnish consumers value quality and uniqueness. Stay ahead of the curve with Yokebud craft, your hub for <strong>laser engraving Finland</strong>. Discover our <a href="/?category=laser-engraving">latest arrivals</a>.</p>',
           category: 'Trends',
           slug: 'personalized-engraved-gift-trends-finland'
         }
@@ -9628,19 +11190,19 @@ app.get('/api/blogs/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
     connection = await pool.getConnection();
-    
+
     // Increment view count
     await connection.query('UPDATE blogs SET view_count = view_count + 1 WHERE slug = ?', [slug]);
-    
+
     const [blogs] = await connection.query(
       'SELECT * FROM blogs WHERE slug = ?',
       [slug]
     );
-    
+
     if (blogs.length === 0) {
       return res.status(404).json({ error: 'Blog not found' });
     }
-    
+
     res.status(200).json(blogs[0]);
   } catch (error) {
     console.error('Error fetching blog:', error);
@@ -9655,17 +11217,17 @@ app.post('/api/blogs', requireAdminAuth, async (req, res) => {
   let connection;
   try {
     const { title, excerpt, content, category, author, image_url } = req.body;
-    
+
     if (!title || !content) {
       return res.status(400).json({ message: 'Title and content are required' });
     }
-    
+
     let imageUrl = image_url || null;
-    
+
     // Handle image upload to Cloudinary if a file is sent
     if (req.files && req.files.image) {
       const imageFile = req.files.image;
-      
+
       try {
         const uploadResult = await cloudinary.uploader.upload(imageFile.tempFilePath, {
           folder: 'yokebud_blogs',
@@ -9673,9 +11235,9 @@ app.post('/api/blogs', requireAdminAuth, async (req, res) => {
             { width: 1200, height: 675, crop: 'fill', quality: 'auto:good' }
           ]
         });
-        
+
         imageUrl = uploadResult.secure_url;
-        
+
         if (fs.existsSync(imageFile.tempFilePath)) {
           fs.unlinkSync(imageFile.tempFilePath);
         }
@@ -9683,19 +11245,19 @@ app.post('/api/blogs', requireAdminAuth, async (req, res) => {
         console.error('Error uploading blog image:', uploadError);
       }
     }
-    
+
     connection = await pool.getConnection();
     const slug = await ensureUniqueSlug(connection, slugify(title), 'blogs');
-    
+
     const [result] = await connection.query(
       'INSERT INTO blogs (title, slug, excerpt, content, category, author, image_url, is_published) VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)',
       [title, slug, excerpt || '', content, category || null, author || 'Admin', imageUrl]
     );
-    
-    res.status(201).json({ 
-      success: true, 
-      message: 'Blog created successfully', 
-      blogId: result.insertId 
+
+    res.status(201).json({
+      success: true,
+      message: 'Blog created successfully',
+      blogId: result.insertId
     });
   } catch (error) {
     console.error('Error creating blog:', error);
@@ -9711,44 +11273,44 @@ app.put('/api/blogs/:id', requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { title, excerpt, content, category, author, image_url } = req.body;
-    
+
     if (!title || !content) {
       return res.status(400).json({ message: 'Title and content are required' });
     }
-    
+
     connection = await pool.getConnection();
-    
+
     // Get current blog data to check for existing image
     const [currentBlog] = await connection.query('SELECT image_url FROM blogs WHERE id = ?', [id]);
-    
+
     if (currentBlog.length === 0) {
       return res.status(404).json({ message: 'Blog not found' });
     }
-    
-    let imageUrl = (typeof image_url === 'string' && image_url.trim()) 
-      ? image_url 
+
+    let imageUrl = (typeof image_url === 'string' && image_url.trim())
+      ? image_url
       : currentBlog[0].image_url;
-    
+
     // Handle new image upload
     if (req.files && req.files.image) {
       const imageFile = req.files.image;
-      
+
       try {
         if (imageUrl && imageUrl.includes('cloudinary')) {
           const parts = imageUrl.split('/');
           const filename = parts.pop();
           const publicId = filename.split('.')[0];
         }
-        
+
         const uploadResult = await cloudinary.uploader.upload(imageFile.tempFilePath, {
           folder: 'yokebud_blogs',
           transformation: [
             { width: 1200, height: 675, crop: 'fill', quality: 'auto:good' }
           ]
         });
-        
+
         imageUrl = uploadResult.secure_url;
-        
+
         if (fs.existsSync(imageFile.tempFilePath)) {
           fs.unlinkSync(imageFile.tempFilePath);
         }
@@ -9756,17 +11318,17 @@ app.put('/api/blogs/:id', requireAdminAuth, async (req, res) => {
         console.error('Error uploading blog image:', uploadError);
       }
     }
-    
+
     const slug = await ensureUniqueSlug(connection, slugify(title), 'blogs');
-    
+
     await connection.query(
       'UPDATE blogs SET title = ?, slug = ?, excerpt = ?, content = ?, category = ?, author = ?, image_url = ?, updated_at = NOW() WHERE id = ?',
       [title, slug, excerpt || '', content, category || null, author || 'Admin', imageUrl, id]
     );
-    
-    res.status(200).json({ 
-      success: true, 
-      message: 'Blog updated successfully' 
+
+    res.status(200).json({
+      success: true,
+      message: 'Blog updated successfully'
     });
   } catch (error) {
     console.error('Error updating blog:', error);
@@ -9782,22 +11344,22 @@ app.delete('/api/blogs/:id', requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     connection = await pool.getConnection();
-    
+
     // Get blog data to delete image
     const [blog] = await connection.query('SELECT image_url FROM blogs WHERE id = ?', [id]);
-    
+
     if (blog.length === 0) {
       return res.status(404).json({ message: 'Blog not found' });
     }
-    
+
     // Optional: Delete image from Cloudinary logic here if needed
-    
+
     // Delete blog from database
     await connection.query('DELETE FROM blogs WHERE id = ?', [id]);
-    
-    res.status(200).json({ 
-      success: true, 
-      message: 'Blog deleted successfully' 
+
+    res.status(200).json({
+      success: true,
+      message: 'Blog deleted successfully'
     });
   } catch (error) {
     console.error('Error deleting blog:', error);
@@ -9813,15 +11375,15 @@ const normalizeNewsletterProducts = (productList) => {
   return (productList || []).map(product => {
     let photos = [];
     try {
-      photos = typeof product.images === 'string' 
-        ? JSON.parse(product.images) 
+      photos = typeof product.images === 'string'
+        ? JSON.parse(product.images)
         : product.images || typeof product.product_photos === 'string'
-        ? JSON.parse(product.product_photos)
-        : product.product_photos || [];
+          ? JSON.parse(product.product_photos)
+          : product.product_photos || [];
     } catch (e) {
       photos = [];
     }
-    
+
     return {
       ...product,
       firstImage: photos.length > 0 ? photos[0] : null,
@@ -9832,39 +11394,52 @@ const normalizeNewsletterProducts = (productList) => {
 };
 
 const getWeeklyNewsletterCollections = async (connection) => {
-  let [newArrivals] = await connection.query(`
-      SELECT p.*, 
+  const [discountedProducts] = await connection.query(`
+      SELECT p.*,
              JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
-      FROM products p 
-      WHERE p.stock > 0 AND p.status = 'active'
-      AND p.created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
-      ORDER BY p.created_at DESC 
+      FROM products p
+      WHERE p.stock > 0
+        AND p.status = 'active'
+        AND p.discounted_price IS NOT NULL
+        AND p.discounted_price < p.price
+      ORDER BY p.updated_at DESC, p.created_at DESC
       LIMIT 4
     `);
 
-  if (!newArrivals || newArrivals.length === 0) {
-    [newArrivals] = await connection.query(`
-      SELECT p.*, 
-             JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
-      FROM products p 
-      WHERE p.stock > 0 AND p.status = 'active'
-      ORDER BY p.created_at DESC 
-      LIMIT 4
-    `);
+  const discountedIds = discountedProducts.map(product => Number(product.id)).filter(Boolean);
+  let latestProducts = [];
+
+  if (discountedIds.length > 0) {
+    const placeholders = discountedIds.map(() => '?').join(', ');
+    const [latestWithoutDiscounts] = await connection.query(
+      `
+        SELECT p.*,
+               JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
+        FROM products p
+        WHERE p.stock > 0
+          AND p.status = 'active'
+          AND p.id NOT IN (${placeholders})
+        ORDER BY p.created_at DESC
+        LIMIT 4
+      `,
+      discountedIds
+    );
+    latestProducts = latestWithoutDiscounts;
+  } else {
+    const [latestOnly] = await connection.query(`
+        SELECT p.*,
+               JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
+        FROM products p
+        WHERE p.stock > 0
+          AND p.status = 'active'
+        ORDER BY p.created_at DESC
+        LIMIT 4
+      `);
+    latestProducts = latestOnly;
   }
 
-  const [discountedProducts] = await connection.query(`
-      SELECT p.*, 
-             JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
-      FROM products p 
-      WHERE p.stock > 0 AND p.status = 'active'
-      AND p.discounted_price IS NOT NULL AND p.discounted_price < p.price
-      ORDER BY (p.price - p.discounted_price) DESC 
-      LIMIT 4
-    `);
-
   return {
-    newArrivals: normalizeNewsletterProducts(newArrivals),
+    newArrivals: normalizeNewsletterProducts(latestProducts),
     discounted: normalizeNewsletterProducts(discountedProducts)
   };
 };
@@ -9883,7 +11458,7 @@ const sendWeeklyNewsletters = async () => {
   let connection;
   try {
     console.log('🚀 Starting weekly newsletter distribution...');
-    
+
     connection = await pool.getConnection();
 
     // Get all active subscribers
@@ -9917,7 +11492,7 @@ const sendWeeklyNewsletters = async () => {
         } else {
           errorCount++;
         }
-        
+
         // Add delay between emails to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
@@ -9927,9 +11502,9 @@ const sendWeeklyNewsletters = async () => {
     }
 
     connection.release();
-    
+
     console.log(`✅ Weekly newsletter distribution completed. Success: ${successCount}, Errors: ${errorCount}`);
-    
+
   } catch (error) {
     console.error('❌ Weekly newsletter distribution error:', error);
     if (connection) connection.release();
@@ -9968,7 +11543,7 @@ app.post('/api/send-test-newsletter', async (req, res) => {
   if (process.env.NODE_ENV === 'production') {
     return res.status(403).json({ success: false, message: 'Not allowed in production' });
   }
-  
+
   try {
     await sendWeeklyNewsletters();
     res.json({ success: true, message: 'Test newsletter sent' });
@@ -9990,16 +11565,16 @@ app.get('/api/admin/subscribers', async (req, res) => {
 
     connection.release();
 
-    res.json({ 
-      success: true, 
-      subscribers 
+    res.json({
+      success: true,
+      subscribers
     });
   } catch (error) {
     console.error('❌ Get subscribers error:', error);
     if (connection) connection.release();
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get subscribers' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get subscribers'
     });
   }
 });
@@ -10007,10 +11582,10 @@ app.get('/api/admin/subscribers', async (req, res) => {
 // This will help keep the Render instance awake by pinging itself
 const keepAlive = () => {
   const https = require('https');
-  
+
   if (process.env.RENDER_EXTERNAL_URL) {
     console.log('Setting up keep-alive ping for:', process.env.RENDER_EXTERNAL_URL);
-    
+
     setInterval(() => {
       https.get(`${process.env.RENDER_EXTERNAL_URL}/health`, (res) => {
         console.log(`Keep-alive ping successful - Status: ${res.statusCode}`);
@@ -10024,8 +11599,8 @@ const keepAlive = () => {
 // ==================== ERROR HANDLING MIDDLEWARE ====================
 app.use((error, req, res, next) => {
   console.error('Unhandled error:', error);
-  res.status(500).json({ 
-    success: false, 
+  res.status(500).json({
+    success: false,
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
   });
@@ -10042,22 +11617,12 @@ app.get('/api/geo', async (req, res) => {
 });
 
 // ==================== FRONTEND STATIC (PRODUCTION) ====================
-// Public dynamic sitemap endpoints so Hostinger frontend can delegate XML to this API.
-// These always regenerate from DB and then stream fresh XML, so sitemap URLs
-// stay in sync with AdminSitemap changes without redeploying the dist.
-app.get(['/sitemap.xml', '/product-sitemap.xml', '/category-sitemap.xml', '/page-sitemap.xml', '/blog-sitemap.xml'], async (req, res) => {
+// Public dynamic sitemap endpoint so Hostinger frontend can delegate XML to this API.
+// This always regenerates from DB and streams the canonical sitemap.xml.
+app.get('/sitemap.xml', async (req, res) => {
   try {
     const result = await regenerateSitemap();
-
-    const mapPath = (() => {
-      if (req.path === '/product-sitemap.xml') return result.productPath;
-      if (req.path === '/category-sitemap.xml') return result.categoryPath;
-      if (req.path === '/page-sitemap.xml') return result.pagePath;
-      if (req.path === '/blog-sitemap.xml') return result.blogPath;
-      return result.path;
-    })();
-
-    const xml = fs.readFileSync(mapPath, 'utf8');
+    const xml = fs.readFileSync(result.path, 'utf8');
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.status(200).send(xml);
   } catch (error) {
@@ -10069,6 +11634,7 @@ app.get(['/sitemap.xml', '/product-sitemap.xml', '/category-sitemap.xml', '/page
 // If the React production build exists, serve it with strict cache headers:
 // - HTML (index.html): no-cache, no-store, must-revalidate
 // - Hashed assets under /assets: public, max-age=31536000, immutable
+// If the React production build exists, serve it with strict cache headers
 try {
   const distDir = path.resolve(__dirname, '..', 'client', 'dist');
   if (fs.existsSync(path.join(distDir, 'index.html'))) {
@@ -10083,18 +11649,15 @@ try {
           res.setHeader('Expires', '0');
           return;
         }
-        // Long-term cache for hashed assets Vite places in /assets/
         if (filePath.includes(path.sep + 'assets' + path.sep)) {
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
           return;
         }
-        // Default: rely on ETag/Last-Modified
         res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
       }
     }));
 
-    // Explicitly serve robots.txt (sitemaps are served dynamically from DB above)
-
+    // robots.txt
     app.get('/robots.txt', (req, res) => {
       res.type('text/plain');
       const robotsTxt = `User-agent: *
@@ -10120,16 +11683,13 @@ Disallow: /forgot-password
 Disallow: /signup
 Disallow: /*?*
 
-# Sitemaps
+# Sitemap
 Sitemap: https://www.yokebud.fi/sitemap.xml
-Sitemap: https://www.yokebud.fi/product-sitemap.xml
-Sitemap: https://www.yokebud.fi/category-sitemap.xml
-Sitemap: https://www.yokebud.fi/blog-sitemap.xml
-Sitemap: https://www.yokebud.fi/page-sitemap.xml
 `;
       res.send(robotsTxt);
     });
 
+    // SPA fallback with Dynamic SEO for product pages
     // SPA fallback with Dynamic SEO for product pages
     app.get([
       '/',
@@ -10140,65 +11700,17 @@ Sitemap: https://www.yokebud.fi/page-sitemap.xml
       res.setHeader('Expires', '0');
 
       const indexPath = path.join(distDir, 'index.html');
-      
-      // If the request is for a product page, inject dynamic meta tags
-      const productMatch = req.path.match(/\/products\/(\d+)/);
-      if (productMatch) {
-        const productId = productMatch[1];
-        let connection;
+
+      // Product pages: inject server-rendered Open Graph / Twitter Card meta for social crawlers
+      if (productSocialSeo.extractProductIdFromRequestPath(req.path)) {
         try {
-          connection = await pool.getConnection();
-          const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
-          connection.release();
-
-          if (rows.length > 0) {
-            const product = rows[0];
-            let html = fs.readFileSync(indexPath, 'utf8');
-
-            const name = product.product_name || 'Product';
-            const desc = (product.product_description || '').replace(/<[^>]*>?/gm, '').slice(0, 160);
-            
-            let imageUrl = 'https://www.yokebud.fi/logo.jpg';
-            try {
-              const images = JSON.parse(product.images || product.product_photos || '[]');
-              if (images.length > 0) {
-                const firstImg = images[0];
-                imageUrl = firstImg.startsWith('http') ? firstImg : `https://api.yokebud.fi${firstImg.startsWith('/') ? '' : '/'}${firstImg}`;
-              }
-            } catch (e) {}
-
-            const url = `https://www.yokebud.fi${req.originalUrl}`;
-
-            // Inject Meta Tags
-            const metaTags = `
-    <!-- Dynamic Meta Tags for ${name} -->
-    <title>${name} | Yokebud Crafts</title>
-    <meta name="description" content="${desc}" />
-    <meta property="og:title" content="${name}" />
-    <meta property="og:description" content="${desc}" />
-    <meta property="og:image" content="${imageUrl}" />
-    <meta property="og:url" content="${url}" />
-    <meta property="og:type" content="product" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="${name}" />
-    <meta name="twitter:description" content="${desc}" />
-    <meta name="twitter:image" content="${imageUrl}" />
-            `;
-
-            // Replace existing meta tags or inject into head
-            // Simple approach: remove common meta tags and inject our own
-            html = html.replace(/<title>.*?<\/title>/, '');
-            html = html.replace(/<meta name="description" content=".*?" \/>/, '');
-            html = html.replace(/<meta property="og:.*?" content=".*?" \/>/g, '');
-            html = html.replace(/<meta name="twitter:.*?" content=".*?" \/>/g, '');
-            
-            html = html.replace('<head>', `<head>${metaTags}`);
-
+          const baseHtml = fs.readFileSync(indexPath, 'utf8');
+          const html = await productSocialSeo.buildProductSocialHtml(pool, req.path, baseHtml);
+          if (html) {
             return res.send(html);
           }
         } catch (err) {
-          console.error('Error injecting dynamic meta tags:', err);
-          if (connection) connection.release();
+          console.error('Error injecting product social meta tags:', err);
         }
       }
 
@@ -10319,7 +11831,7 @@ app.post('/api/admin/sitemap', requireAdminAuth, async (req, res) => {
   try {
     const { path, priority, changefreq, type } = req.body;
     connection = await pool.getConnection();
-    
+
     await connection.beginTransaction();
 
     const [result] = await connection.query(
@@ -10436,7 +11948,7 @@ app.put('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
     const { id } = req.params;
     const { path: newPath, priority, changefreq, type, is_active } = req.body;
     connection = await pool.getConnection();
-    
+
     await connection.beginTransaction();
 
     // Get old data
@@ -10472,15 +11984,15 @@ app.put('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
     // If it's a product URL, update the slug in the products table
     const oldProductId = getProductIdFromPath(oldEntry.path);
     const newProductId = getProductIdFromPath(newPath);
-    
+
     if (oldProductId && newProductId && oldProductId === newProductId && oldEntry.path !== newPath) {
-        const newSlug = newPath.split('/').pop();
-        if (newSlug) {
-            await connection.query(
-                'UPDATE products SET slug = ? WHERE id = ?',
-                [newSlug, newProductId]
-            );
-        }
+      const newSlug = newPath.split('/').pop();
+      if (newSlug) {
+        await connection.query(
+          'UPDATE products SET slug = ? WHERE id = ?',
+          [newSlug, newProductId]
+        );
+      }
     }
 
     // Record revision
@@ -10512,7 +12024,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
     const { id } = req.params;
     const { path, priority, changefreq, type, is_active, syncRelated = true } = req.body;
     connection = await pool.getConnection();
-    
+
     await connection.beginTransaction();
 
     // Get old data
@@ -10546,7 +12058,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
       const generateNewPath = (oldPath, newPath, id) => {
         const oldParts = oldPath.split('/');
         const newParts = newPath.split('/');
-        
+
         // Keep the ID and any trailing slug parts
         const idIndex = oldParts.findIndex(part => part === id.toString());
         if (idIndex !== -1) {
@@ -10564,7 +12076,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
             'SELECT * FROM sitemap_entries WHERE path LIKE ? AND id != ?',
             [`/products/${productId}/%`, id]
           );
-          
+
           for (const entry of relatedEntries) {
             const newRelatedPath = generateNewPath(entry.path, newPath, productId);
             await connection.query(
@@ -10589,7 +12101,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
             'SELECT * FROM sitemap_entries WHERE path LIKE ? AND id != ? AND type = ?',
             [`/blogs/${blogId}/%`, id, 'blog']
           );
-          
+
           for (const entry of relatedEntries) {
             const newRelatedPath = generateNewPath(entry.path, newPath, blogId);
             await connection.query(
@@ -10614,7 +12126,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
             'SELECT * FROM sitemap_entries WHERE path LIKE ? AND id != ?',
             [`/category/${categoryId}%`, id]
           );
-          
+
           for (const entry of relatedEntries) {
             const newRelatedPath = generateNewPath(entry.path, newPath, categoryId);
             await connection.query(
@@ -10635,7 +12147,7 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
     // Record revision
     await connection.query(
       'INSERT INTO sitemap_revisions (action, entry_id, old_data, new_data, admin_id) VALUES (?, ?, ?, ?, ?)',
-      ['UPDATE_SYNC', id, JSON.stringify(oldEntry), JSON.stringify({...req.body, syncResults}), ADMIN_ID]
+      ['UPDATE_SYNC', id, JSON.stringify(oldEntry), JSON.stringify({ ...req.body, syncResults }), ADMIN_ID]
     );
 
     await connection.commit();
@@ -10654,8 +12166,8 @@ app.put('/api/admin/sitemap/:id/sync', requireAdminAuth, async (req, res) => {
     // Trigger regeneration
     regenerateSitemap().catch(err => console.error('Regeneration error after UPDATE_SYNC:', err));
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Sitemap entry updated successfully with URL synchronization',
       syncResults: syncResults,
       syncedCount: syncResults.length
@@ -10675,7 +12187,7 @@ app.delete('/api/admin/sitemap/:id', requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     connection = await pool.getConnection();
-    
+
     await connection.beginTransaction();
 
     // Get old data
@@ -10838,20 +12350,20 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Get all XML files in client/public directory
     const fs = require('fs');
     const path = require('path');
     const publicDir = path.join(__dirname, '..', 'client', 'public');
     const xmlFiles = fs.readdirSync(publicDir).filter(file => file.endsWith('-sitemap.xml') && file !== 'sitemap.xml');
-    
+
     let totalSynced = 0;
     const baseUrl = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
-    
+
     for (const xmlFile of xmlFiles) {
       const xmlPath = path.join(publicDir, xmlFile);
       const xmlContent = fs.readFileSync(xmlPath, 'utf8');
-      
+
       // Extract URLs from XML
       const urlRegex = /<loc>(.*?)<\/loc>/g;
       const urls = [];
@@ -10859,16 +12371,16 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
       while ((match = urlRegex.exec(xmlContent)) !== null) {
         urls.push(match[1]);
       }
-      
+
       // Extract other metadata
       const lastmodRegex = /<lastmod>(.*?)<\/lastmod>/g;
       const changefreqRegex = /<changefreq>(.*?)<\/changefreq>/g;
       const priorityRegex = /<priority>(.*?)<\/priority>/g;
-      
+
       const lastmods = [];
       const changefreqs = [];
       const priorities = [];
-      
+
       while ((match = lastmodRegex.exec(xmlContent)) !== null) {
         lastmods.push(match[1]);
       }
@@ -10878,31 +12390,31 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
       while ((match = priorityRegex.exec(xmlContent)) !== null) {
         priorities.push(match[1]);
       }
-      
+
       // Determine type from filename
       let type = 'static';
       if (xmlFile.includes('category')) type = 'category';
       else if (xmlFile.includes('product')) type = 'product';
       else if (xmlFile.includes('blog')) type = 'blog';
       else if (xmlFile.includes('page')) type = 'static';
-      
+
       // Insert or update each URL in database
       for (let i = 0; i < urls.length; i++) {
         const url = urls[i];
         let path = url.startsWith(baseUrl) ? url.substring(baseUrl.length) : url;
         // Decode HTML entities
         path = path.replace(/&amp;/g, '&');
-        
+
         const lastmod = lastmods[i] || new Date().toISOString().slice(0, 10);
         const changefreq = changefreqs[i] || 'weekly';
         const priority = priorities[i] || '0.6';
-        
+
         // Check if entry already exists
         const [existing] = await connection.query(
           'SELECT id FROM sitemap_entries WHERE path = ?',
           [path]
         );
-        
+
         if (existing.length === 0) {
           // Insert new entry
           const [result] = await connection.query(
@@ -10910,14 +12422,14 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
              VALUES (?, ?, ?, ?, TRUE, ?, ?)`,
             [path, priority, changefreq, type, lastmod, lastmod]
           );
-          
+
           // Log the action in revisions
           await connection.query(
             `INSERT INTO sitemap_revisions (entry_id, action, new_data, admin_id)
              VALUES (?, 'ADD', ?, 1)`,
             [result.insertId, JSON.stringify({ path, priority, changefreq, type })]
           );
-          
+
           totalSynced++;
         } else {
           // Update existing entry
@@ -10930,11 +12442,11 @@ app.post('/api/admin/sitemap/sync-xml', requireAdminAuth, async (req, res) => {
         }
       }
     }
-    
-    res.json({ 
-      success: true, 
-      message: `XML files synced successfully. ${totalSynced} new entries added.`, 
-      synced: totalSynced 
+
+    res.json({
+      success: true,
+      message: `XML files synced successfully. ${totalSynced} new entries added.`,
+      synced: totalSynced
     });
   } catch (error) {
     if (connection) connection.release();
@@ -10964,7 +12476,7 @@ app.post('/api/admin/sitemap/revert/:id', requireAdminAuth, async (req, res) => 
   try {
     const { id } = req.params;
     connection = await pool.getConnection();
-    
+
     const [revisions] = await connection.query('SELECT * FROM sitemap_revisions WHERE id = ?', [id]);
     if (revisions.length === 0) {
       connection.release();
@@ -11020,24 +12532,779 @@ app.post('/api/admin/sitemap/revert/:id', requireAdminAuth, async (req, res) => 
 });
 
 // Redirect sitemap-indexed product paths
-  app.get(['/products/:id/:slug', '/p/:id/:slug', '/p/:id'], async (req, res, next) => {
-    // This handles the standard SEO paths from sitemap
-    // But we need to check if this is actually a valid product or needs to be served by React
-    next(); 
-  });
+app.get(['/products/:id/:slug', '/p/:id/:slug', '/p/:id'], async (req, res, next) => {
+  // This handles the standard SEO paths from sitemap
+  // But we need to check if this is actually a valid product or needs to be served by React
+  next();
+});
 
-app.use('*', (req, res) => {
-  res.status(404).json({ 
-    success: false, 
-    message: 'Endpoint not found' 
+// ==================== PROMO CODE SYSTEM ====================
+
+// Ensure promo_codes and promo_code_usage tables exist
+(async () => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS promo_codes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(50) NOT NULL UNIQUE,
+        type ENUM('percentage','fixed') NOT NULL DEFAULT 'percentage',
+        value DECIMAL(10,2) NOT NULL,
+        usage_limit INT NULL,
+        used_count INT NOT NULL DEFAULT 0,
+        user_specific TINYINT(1) NOT NULL DEFAULT 0,
+        user_id VARCHAR(100) NULL,
+        valid_from DATETIME NULL,
+        valid_until DATETIME NULL,
+        product_id INT NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS promo_code_usage (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        promo_code_id INT NOT NULL,
+        user_id VARCHAR(100) NULL,
+        order_id VARCHAR(100) NULL,
+        used_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (promo_code_id) REFERENCES promo_codes(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Check if is_active column exists in promo_codes table, if not add it
+    const [cols] = await conn.query("SHOW COLUMNS FROM promo_codes LIKE 'is_active'");
+    if (cols.length === 0) {
+      await conn.query("ALTER TABLE promo_codes ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1");
+      console.log('Added is_active column to promo_codes table.');
+    }
+
+    conn.release();
+    console.log('Promo code tables ready.');
+  } catch (err) {
+    if (conn) conn.release();
+    console.error('Promo code table setup error:', err.message);
+  }
+})();
+
+// GET /api/admin/users — list all users
+app.get('/api/admin/users', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(`
+      SELECT uc.user_id, up.first_name, up.last_name, uc.email
+      FROM user_credentials uc
+      LEFT JOIN user_profiles up ON up.user_id = uc.user_id
+      ORDER BY up.first_name ASC, up.last_name ASC
+    `);
+    conn.release();
+    res.json({ success: true, users: rows });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/admin/promo-codes — list all promo codes
+app.get('/api/admin/promo-codes', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(`
+      SELECT pc.*, p.product_name
+      FROM promo_codes pc
+      LEFT JOIN products p ON p.id = pc.product_id
+      ORDER BY pc.created_at DESC
+    `);
+    conn.release();
+    res.json({ success: true, promoCodes: rows });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/admin/promo-codes — create a new promo code
+app.post('/api/admin/promo-codes', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const { code, type, value, usage_limit, user_specific, user_id, valid_from, valid_until, product_id } = req.body;
+    if (!code || !value) return res.status(400).json({ success: false, message: 'Code and value are required' });
+
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT INTO promo_codes (code, type, value, usage_limit, user_specific, user_id, valid_from, valid_until, product_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        String(code).toUpperCase().trim(),
+        type || 'percentage',
+        parseFloat(value),
+        usage_limit ? parseInt(usage_limit) : null,
+        user_specific ? 1 : 0,
+        user_id || null,
+        valid_from || null,
+        valid_until || null,
+        product_id ? parseInt(product_id) : null
+      ]
+    );
+    conn.release();
+    res.json({ success: true, message: 'Promo code created' });
+  } catch (err) {
+    if (conn) conn.release();
+    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ success: false, message: 'Promo code already exists' });
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// PUT /api/admin/promo-codes/:id — update a promo code
+app.put('/api/admin/promo-codes/:id', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const { id } = req.params;
+    const { code, type, value, usage_limit, user_specific, user_id, valid_from, valid_until, product_id } = req.body;
+
+    conn = await pool.getConnection();
+    await conn.query(
+      `UPDATE promo_codes SET code=?, type=?, value=?, usage_limit=?, user_specific=?, user_id=?, valid_from=?, valid_until=?, product_id=?, updated_at=NOW()
+       WHERE id=?`,
+      [
+        String(code).toUpperCase().trim(),
+        type || 'percentage',
+        parseFloat(value),
+        usage_limit ? parseInt(usage_limit) : null,
+        user_specific ? 1 : 0,
+        user_id || null,
+        valid_from || null,
+        valid_until || null,
+        product_id ? parseInt(product_id) : null,
+        id
+      ]
+    );
+    conn.release();
+    res.json({ success: true, message: 'Promo code updated' });
+  } catch (err) {
+    if (conn) conn.release();
+    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ success: false, message: 'Promo code already exists' });
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// DELETE /api/admin/promo-codes/:id — delete a promo code
+app.delete('/api/admin/promo-codes/:id', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const { id } = req.params;
+    conn = await pool.getConnection();
+    await conn.query('DELETE FROM promo_codes WHERE id = ?', [id]);
+    conn.release();
+    res.json({ success: true, message: 'Promo code deleted' });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/promo-codes/validate — validate a promo code at checkout
+app.post('/api/promo-codes/validate', async (req, res) => {
+  let conn;
+  try {
+    const { code, productIds, userId } = req.body;
+    if (!code) return res.status(400).json({ success: false, message: 'Promo code is required' });
+
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(
+      'SELECT * FROM promo_codes WHERE code = ? AND is_active = 1 LIMIT 1',
+      [String(code).toUpperCase().trim()]
+    );
+
+    if (rows.length === 0) {
+      conn.release();
+      return res.status(404).json({ success: false, message: 'Invalid promo code' });
+    }
+
+    const promo = rows[0];
+    const now = new Date();
+
+    // Check validity dates
+    if (promo.valid_from && new Date(promo.valid_from) > now) {
+      conn.release();
+      return res.status(400).json({ success: false, message: 'Promo code is not yet active' });
+    }
+    if (promo.valid_until && new Date(promo.valid_until) < now) {
+      conn.release();
+      return res.status(400).json({ success: false, message: 'Promo code has expired' });
+    }
+
+    // Check usage limit
+    if (promo.usage_limit !== null && promo.used_count >= promo.usage_limit) {
+      conn.release();
+      return res.status(400).json({ success: false, message: 'Promo code usage limit reached' });
+    }
+
+    // Check user-specific restriction
+    if (promo.user_specific && promo.user_id) {
+      if (!userId || String(userId) !== String(promo.user_id)) {
+        conn.release();
+        return res.status(403).json({ success: false, message: 'This promo code is not valid for your account' });
+      }
+    }
+
+    // Check product-specific restriction
+    if (promo.product_id) {
+      const ids = Array.isArray(productIds) ? productIds.map(String) : [];
+      const promoProductIdStr = String(promo.product_id);
+      const matches = ids.some((pid) => {
+        // Handle custom product IDs like "custom-123-0"
+        const customMatch = pid.match(/^custom-(\d+)/);
+        const resolvedId = customMatch ? customMatch[1] : pid;
+        return resolvedId === promoProductIdStr;
+      });
+      if (!matches) {
+        conn.release();
+        return res.status(400).json({ success: false, message: 'This promo code is not valid for the products in your cart' });
+      }
+    }
+
+    conn.release();
+
+    // Return the valid promo code data
+    res.json({
+      success: true,
+      promoCode: {
+        id: promo.id,
+        code: promo.code,
+        type: promo.type,
+        value: parseFloat(promo.value),
+        product_id: promo.product_id || null
+      }
+    });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/promo-codes/use — mark a promo code as used after successful order
+app.post('/api/promo-codes/use', async (req, res) => {
+  let conn;
+  try {
+    const { code, userId, orderId } = req.body;
+    if (!code) return res.status(400).json({ success: false, message: 'Code is required' });
+
+    conn = await pool.getConnection();
+    const [rows] = await conn.query('SELECT * FROM promo_codes WHERE code = ? AND is_active = 1 LIMIT 1', [String(code).toUpperCase().trim()]);
+    if (rows.length === 0) { conn.release(); return res.status(404).json({ success: false, message: 'Promo code not found' }); }
+
+    const promo = rows[0];
+    await conn.query('UPDATE promo_codes SET used_count = used_count + 1 WHERE id = ?', [promo.id]);
+    await conn.query(
+      'INSERT INTO promo_code_usage (promo_code_id, user_id, order_id) VALUES (?, ?, ?)',
+      [promo.id, userId || null, orderId || null]
+    );
+    conn.release();
+    res.json({ success: true, message: 'Promo code usage recorded' });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ==================== END PROMO CODE SYSTEM ====================
+
+// ==================== CUSTOM LASER ORDERS SYSTEM ====================
+
+// Helper function to upload base64 images to Cloudinary
+async function uploadToCloudinaryIfBase64(imageUrlOrBase64) {
+  if (!imageUrlOrBase64 || typeof imageUrlOrBase64 !== 'string') return null;
+  if (imageUrlOrBase64.startsWith('data:')) {
+    try {
+      const res = await cloudinary.uploader.upload(imageUrlOrBase64, {
+        folder: 'yokebud craft/custom_orders',
+        resource_type: 'auto'
+      });
+      return res.secure_url;
+    } catch (e) {
+      console.error('Cloudinary upload error in custom order:', e.message || e);
+      throw new Error('Failed to upload image: ' + (e.message || String(e)));
+    }
+  }
+  return imageUrlOrBase64;
+}
+
+// User: Submit a custom laser order
+app.post('/api/custom-laser-orders', async (req, res) => {
+  let conn;
+  try {
+    const { title, description, image_url, image_urls, width, height, depth, material, category } = req.body;
+    if (!title || !description) {
+      return res.status(400).json({ success: false, message: 'Title and description are required' });
+    }
+
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.replace('Bearer ', '') : null;
+    let profileId = null;
+
+    conn = await pool.getConnection();
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const userId = decoded.userId;
+        const [profileRows] = await conn.query('SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1', [userId]);
+        if (profileRows.length > 0) {
+          profileId = profileRows[0].id;
+        }
+      } catch (err) {
+        console.warn('Token verification failed for custom laser order:', err.message);
+      }
+    }
+
+    // Handle Cloudinary upload if images are base64
+    let uploadedUrls = [];
+    if (Array.isArray(image_urls) && image_urls.length > 0) {
+      for (const img of image_urls) {
+        const uploaded = await uploadToCloudinaryIfBase64(img);
+        if (uploaded) uploadedUrls.push(uploaded);
+      }
+    } else if (image_url) {
+      const uploaded = await uploadToCloudinaryIfBase64(image_url);
+      if (uploaded) uploadedUrls.push(uploaded);
+    }
+
+    const [result] = await conn.query(
+      `INSERT INTO custom_laser_orders (user_id, title, description, image_url, width, height, depth, material, status, category)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      [
+        profileId,
+        title,
+        description,
+        uploadedUrls.length > 0 ? JSON.stringify(uploadedUrls) : null,
+        width ? parseFloat(width) : null,
+        height ? parseFloat(height) : null,
+        depth ? parseFloat(depth) : null,
+        material || null,
+        category || null
+      ]
+    );
+
+    conn.release();
+    res.json({ success: true, message: 'Custom laser order submitted successfully', orderId: result.insertId });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Helper function to format order images
+function formatOrderImages(rows) {
+  return rows.map(order => {
+    let images = [];
+    if (order.image_url) {
+      const trimmed = order.image_url.trim();
+      if (trimmed.startsWith('[')) {
+        try {
+          images = JSON.parse(trimmed);
+        } catch (_) {
+          images = [trimmed];
+        }
+      } else {
+        images = [trimmed];
+      }
+    }
+    return {
+      ...order,
+      image_url: images[0] || null,
+      image_urls: images
+    };
   });
+}
+
+// User: Get own custom laser orders
+app.get('/api/custom-laser-orders', async (req, res) => {
+  let conn;
+  try {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.replace('Bearer ', '') : null;
+    if (!token) return res.status(401).json({ success: false, message: 'Authentication required' });
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const userId = decoded.userId;
+
+    conn = await pool.getConnection();
+
+    // Find profile integer ID
+    const [profileRows] = await conn.query('SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1', [userId]);
+    if (profileRows.length === 0) {
+      conn.release();
+      return res.json({ success: true, orders: [] });
+    }
+    const profileId = profileRows[0].id;
+
+    const [rows] = await conn.query(`
+      SELECT clo.*, 
+             up.first_name, up.last_name, up.phone,
+             up.house_number, up.apartment, up.landmark,
+             up.address, up.city, up.state, up.zip_code, up.country,
+             uc.email
+      FROM custom_laser_orders clo
+      LEFT JOIN user_profiles up ON up.id = clo.user_id
+      LEFT JOIN user_credentials uc ON uc.user_id = up.user_id
+      WHERE clo.user_id = ?
+      ORDER BY clo.created_at DESC
+    `, [profileId]);
+
+    conn.release();
+    res.json({ success: true, orders: formatOrderImages(rows) });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Admin: Get all custom laser orders
+app.get('/api/admin/custom-laser-orders', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(`
+      SELECT clo.*, 
+             up.first_name, up.last_name, up.phone,
+             up.house_number, up.apartment, up.landmark,
+             up.address, up.city, up.state, up.zip_code, up.country,
+             uc.email
+      FROM custom_laser_orders clo
+      LEFT JOIN user_profiles up ON up.id = clo.user_id
+      LEFT JOIN user_credentials uc ON uc.user_id = up.user_id
+      ORDER BY clo.created_at DESC
+    `);
+    conn.release();
+    res.json({ success: true, orders: formatOrderImages(rows) });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Admin: Update a custom laser order (status, price, and/or notes)
+app.put('/api/admin/custom-laser-orders/:id', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const { id } = req.params;
+    const { status, price, notes } = req.body;
+
+    conn = await pool.getConnection();
+
+    // Build update query dynamically
+    const updates = [];
+    const values = [];
+
+    if (status !== undefined) {
+      updates.push('status = ?');
+      values.push(status);
+    }
+    if (price !== undefined) {
+      updates.push('price = ?');
+      values.push(price ? parseFloat(price) : 0.00);
+    }
+    if (notes !== undefined) {
+      updates.push('notes = ?');
+      values.push(notes);
+    }
+
+    if (updates.length === 0) {
+      conn.release();
+      return res.status(400).json({ success: false, message: 'No fields to update' });
+    }
+
+    values.push(id);
+    await conn.query(
+      `UPDATE custom_laser_orders SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
+      values
+    );
+
+    // If checkout was activated, update inquiry checkout state if linked
+    if (status === 'quote_ready' || status === 'approved') {
+      const [orders] = await conn.query('SELECT inquiry_id, price FROM custom_laser_orders WHERE id = ?', [id]);
+      if (orders.length > 0 && orders[0].inquiry_id) {
+        const order = orders[0];
+        const priceVal = order.price || 0.00;
+        await conn.query(
+          'UPDATE inquiry_conversations SET is_checkout_active = TRUE, price_data = ?, status = ?, updated_at = NOW() WHERE id = ?',
+          [JSON.stringify({ price: priceVal }), 'quote_ready', order.inquiry_id]
+        );
+      }
+    }
+
+    conn.release();
+    res.json({ success: true, message: 'Custom laser order updated successfully' });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Helper function to ensure inquiry exists for a custom laser order
+const ensureInquiryForCustomOrder = async (orderId, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const [orders] = await conn.query('SELECT * FROM custom_laser_orders WHERE id = ?', [orderId]);
+    if (orders.length === 0) {
+      conn.release();
+      return res.status(404).json({ success: false, message: 'Custom order not found' });
+    }
+    const order = orders[0];
+
+    if (order.inquiry_id) {
+      conn.release();
+      return res.json({ success: true, inquiryId: order.inquiry_id });
+    }
+
+    const [userRows] = await conn.query(`
+      SELECT uc.user_id as uuid, uc.email, up.first_name, up.last_name, up.phone, up.country
+      FROM user_profiles up
+      JOIN user_credentials uc ON uc.user_id = up.user_id
+      WHERE up.id = ?
+    `, [order.user_id]);
+
+    if (userRows.length === 0) {
+      conn.release();
+      return res.status(404).json({ success: false, message: 'User profile not found for this order' });
+    }
+    const userData = userRows[0];
+
+    const inquiryId = `INQ-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+    const inquiryNumber = `INQ-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    const initialMessages = [{
+      sender: 'user',
+      message: `I have submitted a custom order request: "${order.title}". Description: ${order.description}`,
+      files: [],
+      timestamp: new Date().toISOString(),
+      is_read: true,
+      status: 'sent'
+    }];
+
+    const productData = {
+      id: 0,
+      product_name: `Custom Order: ${order.title}`,
+      isCustomOrder: true,
+      customOrderId: order.id,
+      description: order.description,
+      width: order.width,
+      height: order.height,
+      depth: order.depth,
+      material: order.material,
+      category: order.category,
+      price: order.price || 0
+    };
+
+    await conn.query(
+      `INSERT INTO inquiry_conversations (
+        id, user_id, product_id, inquiry_number, 
+        customer_name, customer_email, customer_phone, customer_country,
+        product_data, messages, status, created_at, updated_at, last_activity, unread_count, admin_unread_count
+      ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'new', NOW(), NOW(), NOW(), 0, 1)`,
+      [
+        inquiryId,
+        userData.uuid,
+        inquiryNumber,
+        `${userData.first_name} ${userData.last_name}`,
+        userData.email,
+        userData.phone || '',
+        userData.country || '',
+        JSON.stringify(productData),
+        JSON.stringify(initialMessages)
+      ]
+    );
+
+    await conn.query('UPDATE custom_laser_orders SET inquiry_id = ? WHERE id = ?', [inquiryId, order.id]);
+
+    conn.release();
+    res.json({ success: true, inquiryId });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Admin: Ensure inquiry exists for a custom laser order
+app.post('/api/admin/custom-laser-orders/:id/ensure-inquiry', requireAdminAuth, async (req, res) => {
+  await ensureInquiryForCustomOrder(req.params.id, res);
+});
+
+// User: Ensure inquiry exists for a custom laser order
+app.post('/api/custom-laser-orders/:id/ensure-inquiry', async (req, res) => {
+  await ensureInquiryForCustomOrder(req.params.id, res);
+});
+
+// ==================== END CUSTOM LASER ORDERS SYSTEM ====================
+
+// ==================== VIDEO SYSTEM ====================
+
+// Public: Get active videos (sorted)
+app.get('/api/videos', async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(
+      'SELECT * FROM videos WHERE is_active = TRUE ORDER BY sort_order ASC, created_at DESC'
+    );
+    conn.release();
+    res.json({ success: true, videos: rows });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Admin: Get all videos
+app.get('/api/admin/videos', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(
+      'SELECT * FROM videos ORDER BY sort_order ASC, created_at DESC'
+    );
+    conn.release();
+    res.json({ success: true, videos: rows });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Admin: Create new video
+app.post('/api/admin/videos', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const { title, embed_url, description, sort_order, is_active } = req.body;
+    if (!embed_url) {
+      return res.status(400).json({ success: false, message: 'Embed URL is required' });
+    }
+
+    conn = await pool.getConnection();
+    const [result] = await conn.query(
+      'INSERT INTO videos (title, embed_url, description, sort_order, is_active) VALUES (?, ?, ?, ?, ?)',
+      [
+        title || null,
+        embed_url,
+        description || null,
+        Math.max(1, sort_order !== undefined ? parseInt(sort_order) : 1),
+        is_active !== undefined ? (is_active ? 1 : 0) : 1
+      ]
+    );
+    conn.release();
+    res.json({ success: true, message: 'Video created successfully', videoId: result.insertId });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Admin: Update a video
+app.put('/api/admin/videos/:id', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const { id } = req.params;
+    const { title, embed_url, description, sort_order, is_active } = req.body;
+
+    conn = await pool.getConnection();
+    await conn.query(
+      'UPDATE videos SET title = ?, embed_url = ?, description = ?, sort_order = ?, is_active = ? WHERE id = ?',
+      [
+        title || null,
+        embed_url,
+        description || null,
+        Math.max(1, sort_order !== undefined ? parseInt(sort_order) : 1),
+        is_active !== undefined ? (is_active ? 1 : 0) : 1,
+        id
+      ]
+    );
+    conn.release();
+    res.json({ success: true, message: 'Video updated successfully' });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Admin: Delete a video
+app.delete('/api/admin/videos/:id', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const { id } = req.params;
+    conn = await pool.getConnection();
+    await conn.query('DELETE FROM videos WHERE id = ?', [id]);
+    conn.release();
+    res.json({ success: true, message: 'Video deleted successfully' });
+  } catch (err) {
+    if (conn) conn.release();
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ==================== END VIDEO SYSTEM ====================
+
+
+
+// Serve static files from client's build folder
+const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
+app.use(express.static(CLIENT_BUILD_PATH));
+
+// Share endpoint for social crawlers
+app.get('/share*', async (req, res) => {
+  try {
+    const originalPath = req.path.replace(/^\/share/, '') || '/';
+    const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
+
+    // Check if index.html exists
+    if (!fs.existsSync(indexPath)) {
+      console.warn('Client index.html not found, falling back to default');
+      return res.sendFile(path.join(__dirname, '../client/index.html'));
+    }
+
+    // Read index.html
+    let html = fs.readFileSync(indexPath, 'utf8');
+
+    // Try to build social HTML
+    const socialHtml = await productSocialSeo.buildProductSocialHtml(pool, originalPath, html);
+    if (socialHtml) {
+      return res.send(socialHtml);
+    }
+
+    // Fallback to original index.html
+    res.sendFile(indexPath);
+  } catch (err) {
+    console.error('Share endpoint error:', err);
+    const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      res.sendFile(path.join(__dirname, '../client/index.html'));
+    }
+  }
+});
+
+// Fallback to client-side routing for all other routes
+app.get('*', (req, res) => {
+  const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    // Fallback to source index.html if build doesn't exist
+    res.sendFile(path.join(__dirname, '../client/index.html'));
+  }
 });
 
 // ==================== SERVER STARTUP ====================
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
-  
+
   // Initial sitemap generation on startup
   try {
     await regenerateSitemap();
@@ -11047,7 +13314,7 @@ server.listen(PORT, async () => {
 
   console.log(`Enhanced Socket.IO server with persistent unread count initialized`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  
+
   // Initialize schemas
   try {
     await ensureSeoContentSchema();
