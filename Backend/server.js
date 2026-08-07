@@ -747,6 +747,12 @@ async function ensureCustomizationSchema() {
     if (!productColNames.has('customization_dimensions')) {
       await connection.query('ALTER TABLE products ADD COLUMN customization_dimensions JSON NULL');
     }
+    if (!productColNames.has('personalization_input_type')) {
+      await connection.query("ALTER TABLE products ADD COLUMN personalization_input_type VARCHAR(20) DEFAULT 'design'");
+    }
+    if (!productColNames.has('allow_customer_size_adjustment')) {
+      await connection.query('ALTER TABLE products ADD COLUMN allow_customer_size_adjustment TINYINT(1) DEFAULT 0');
+    }
 
     console.log('✅ Customization schema updated successfully.');
   } catch (e) {
@@ -8439,7 +8445,9 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
       customization_type,
       customization_images,
       customization_dimensions,
-      discount_ranges
+      discount_ranges,
+      personalization_input_type,
+      allow_customer_size_adjustment
     } = req.body;
 
     const validation = validateProductPayload(req.body);
@@ -8545,8 +8553,10 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_type,
         customization_mode,
         customization_images,
-        customization_dimensions
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        customization_dimensions,
+        personalization_input_type,
+        allow_customer_size_adjustment
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description,
@@ -8583,7 +8593,9 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
         customization_type || 'Apparels',
         req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
-        customization_dimensions ? JSON.stringify(customization_dimensions) : null
+        customization_dimensions ? JSON.stringify(customization_dimensions) : null,
+        personalization_input_type || 'design',
+        allow_customer_size_adjustment ? 1 : 0
       ]
     );
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
@@ -8661,7 +8673,9 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       customization_type,
       customization_images,
       customization_dimensions,
-      discount_ranges
+      discount_ranges,
+      personalization_input_type,
+      allow_customer_size_adjustment
     } = req.body;
 
     const metadataPayload = req.body.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
@@ -8807,6 +8821,8 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         customization_mode = ?,
         customization_images = ?,
         customization_dimensions = ?,
+        personalization_input_type = ?,
+        allow_customer_size_adjustment = ?,
         updated_at = NOW()
       WHERE id = ?`,
       [
@@ -8846,6 +8862,8 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
         customization_dimensions ? JSON.stringify(customization_dimensions) : null,
+        personalization_input_type || 'design',
+        allow_customer_size_adjustment ? 1 : 0,
         productId
       ]
     );
@@ -9043,6 +9061,8 @@ app.get('/api/products/:id', async (req, res) => {
       customization_images: product.customization_images ? (typeof product.customization_images === 'string' ? JSON.parse(product.customization_images) : product.customization_images) : null,
       customization_dimensions: product.customization_dimensions ? (typeof product.customization_dimensions === 'string' ? JSON.parse(product.customization_dimensions) : product.customization_dimensions) : null,
       customization_mode: product.customization_mode || null,
+      personalization_input_type: product.personalization_input_type || 'design',
+      allow_customer_size_adjustment: product.allow_customer_size_adjustment ? 1 : 0,
       seo_title: product.seo_title,
       seo_description: product.seo_description,
       seo_keywords: product.seo_keywords,
@@ -9157,6 +9177,9 @@ app.get('/api/products', async (req, res) => {
         free_shipping: isFreeShippingEnabled(meta?.free_shipping),
         free_shipping_min_amount: freeShippingMinAmount,
         customization_mode: product.customization_mode || null,
+        customization_type: product.customization_type,
+        personalization_input_type: product.personalization_input_type || 'design',
+        allow_customer_size_adjustment: product.allow_customer_size_adjustment ? 1 : 0,
         created_at: product.created_at,
         updated_at: product.updated_at,
         rating: sum.rating,
@@ -9872,6 +9895,14 @@ app.get('/api/products/slug/:slug', async (req, res) => {
       attributes: product.attributes ? JSON.parse(product.attributes) : null,
       images: product.images ? JSON.parse(product.images) : null,
       metadata: product.metadata ? JSON.parse(product.metadata) : null,
+      is_customizable: product.is_customizable ? 1 : 0,
+      is_preorder: product.is_preorder ? 1 : 0,
+      stock_status: product.stock_status || (product.is_preorder ? 'Pre-order' : 'In Stock'),
+      customization_type: product.customization_type,
+      customization_images: product.customization_images ? (typeof product.customization_images === 'string' ? JSON.parse(product.customization_images) : product.customization_images) : null,
+      customization_dimensions: product.customization_dimensions ? (typeof product.customization_dimensions === 'string' ? JSON.parse(product.customization_dimensions) : product.customization_dimensions) : null,
+      personalization_input_type: product.personalization_input_type || 'design',
+      allow_customer_size_adjustment: product.allow_customer_size_adjustment ? 1 : 0,
       created_at: product.created_at,
       updated_at: product.updated_at
     });
