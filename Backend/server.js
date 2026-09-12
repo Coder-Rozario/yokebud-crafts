@@ -242,34 +242,34 @@ function getFreeShippingStatus(items = [], merchandiseTotal = null) {
 app.use(async (req, res, next) => {
   // Only handle GET requests for HTML pages
   if (req.method !== 'GET') return next();
-
+  
   // Skip API, static files, and sitemap XMLs
   if (req.path.startsWith('/api') ||
-    req.path.startsWith('/share') ||
-    req.path.includes('.') ||
-    req.path.endsWith('sitemap.xml') ||
-    req.path.endsWith('.xsl') ||
-    req.path === '/robots.txt' ||
-    req.path === '/health' ||
-    req.path === '/version.json') {
+      req.path.startsWith('/share') ||
+      req.path.includes('.') ||
+      req.path.endsWith('sitemap.xml') ||
+      req.path.endsWith('.xsl') ||
+      req.path === '/robots.txt' ||
+      req.path === '/health' ||
+      req.path === '/version.json') {
     return next();
   }
 
   // Check if this is a product page
   const productId = productSocialSeo.extractProductIdFromRequestPath(req.path);
-
+  
   // Debug log
   console.log(`[SSR Middleware] Path: ${req.path}, Extracted Product ID: ${productId}`);
   console.log(`[SSR Middleware] User-Agent: ${req.headers['user-agent']}`);
-
+  
   if (!productId) return next();
 
   try {
     // For social media crawlers, serve the social HTML directly without redirecting
     const userAgent = (req.headers['user-agent'] || '').toLowerCase();
-    const isSocialCrawler =
+    const isSocialCrawler = 
       // Facebook
-      userAgent.includes('facebookexternalhit') ||
+      userAgent.includes('facebookexternalhit') || 
       userAgent.includes('facebot') ||
       userAgent.includes('facebookbot') ||
       // Twitter/X
@@ -313,7 +313,7 @@ app.use(async (req, res, next) => {
     if (isSocialCrawler) {
       const CLIENT_BUILD_PATH = path.join(__dirname, '../client/dist');
       const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
-
+      
       let html;
       if (fs.existsSync(indexPath)) {
         console.log(`[SSR Middleware] Using dist index.html at ${indexPath}`);
@@ -322,7 +322,7 @@ app.use(async (req, res, next) => {
         console.log(`[SSR Middleware] Using source index.html`);
         html = fs.readFileSync(path.join(__dirname, '../client/index.html'), 'utf8');
       }
-
+      
       const socialHtml = await productSocialSeo.buildProductSocialHtml(pool, req.path, html);
       if (socialHtml) {
         console.log(`[SSR Middleware] Sending social HTML for product ${productId}`);
@@ -341,8 +341,32 @@ app.use(async (req, res, next) => {
 const ADMIN_ID = parseInt(process.env.ADMIN_ID || '1', 10);
 const adminFailedAttempts = new Map();
 
+const hasAdminSession = (req) => {
+  // Check cookie-based auth first
+  if (req.cookies && req.cookies.adminAuth === 'authenticated') {
+    return true;
+  }
+  
+  // Check JWT token in Authorization header
+  const authHeader = req.headers.authorization || req.headers.Authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      // Verify it's an admin token
+      if (decoded.type === 'admin') {
+        return true;
+      }
+    } catch (err) {
+      // Token verification failed, continue to check other auth methods
+    }
+  }
+  
+  return false;
+};
+
 const requireAdminAuth = (req, res, next) => {
-  const isAdmin = req.cookies && req.cookies.adminAuth === 'authenticated';
+  const isAdmin = hasAdminSession(req);
   if (!isAdmin) {
     return res.status(401).json({ success: false, message: 'Unauthorized: admin access required' });
   }
@@ -640,16 +664,16 @@ async function ensureSeoSchema() {
       await connection.query('ALTER TABLE categories ADD COLUMN canonical_url TEXT NULL');
     }
     if (!categoryColNames.has('hreflang_tags')) {
-      try { await connection.query('ALTER TABLE categories ADD COLUMN hreflang_tags JSON NULL'); } catch { }
+      try { await connection.query('ALTER TABLE categories ADD COLUMN hreflang_tags JSON NULL'); } catch {}
     }
     if (!categoryColNames.has('parent_category_id')) {
-      try { await connection.query('ALTER TABLE categories ADD COLUMN parent_category_id INT NULL DEFAULT NULL'); } catch { }
+      try { await connection.query('ALTER TABLE categories ADD COLUMN parent_category_id INT NULL DEFAULT NULL'); } catch {}
     }
     if (!categoryColNames.has('slug')) {
-      try { await connection.query('ALTER TABLE categories ADD COLUMN slug VARCHAR(255) NULL'); } catch { }
+      try { await connection.query('ALTER TABLE categories ADD COLUMN slug VARCHAR(255) NULL'); } catch {}
     }
     if (!categoryColNames.has('description')) {
-      try { await connection.query('ALTER TABLE categories ADD COLUMN description TEXT NULL'); } catch { }
+      try { await connection.query('ALTER TABLE categories ADD COLUMN description TEXT NULL'); } catch {}
     }
 
     // Add default home page SEO content if it doesn't exist
@@ -746,12 +770,6 @@ async function ensureCustomizationSchema() {
     }
     if (!productColNames.has('customization_dimensions')) {
       await connection.query('ALTER TABLE products ADD COLUMN customization_dimensions JSON NULL');
-    }
-    if (!productColNames.has('personalization_input_type')) {
-      await connection.query("ALTER TABLE products ADD COLUMN personalization_input_type VARCHAR(20) DEFAULT 'design'");
-    }
-    if (!productColNames.has('allow_customer_size_adjustment')) {
-      await connection.query('ALTER TABLE products ADD COLUMN allow_customer_size_adjustment TINYINT(1) DEFAULT 0');
     }
 
     console.log('✅ Customization schema updated successfully.');
@@ -870,6 +888,40 @@ async function ensureProductStockStatusSchema() {
 }
 
 ensureProductStockStatusSchema();
+
+async function ensureEngravingTypeSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [cols] = await connection.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products'`,
+      [process.env.DB_NAME]
+    );
+
+    const columnNames = new Set((cols || []).map(c => c.COLUMN_NAME));
+
+    if (!columnNames.has('engraving_type')) {
+      await connection.query(
+        "ALTER TABLE products ADD COLUMN engraving_type VARCHAR(20) DEFAULT 'both'"
+      );
+      console.log('Added engraving_type column to products table');
+    }
+
+    if (!columnNames.has('allow_customer_size_adjustment')) {
+      await connection.query(
+        'ALTER TABLE products ADD COLUMN allow_customer_size_adjustment BOOLEAN DEFAULT FALSE'
+      );
+      console.log('Added allow_customer_size_adjustment column to products table');
+    }
+  } catch (e) {
+    console.warn('Engraving type schema check failed:', e.message || e);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureEngravingTypeSchema();
 
 async function ensureVideosSchema() {
   let connection;
@@ -1017,7 +1069,7 @@ const { exec } = require('child_process');
 
 // Public site URL for SEO
 const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://www.yokebud.fi';
-const PUBLIC_API_BASE = process.env.PUBLIC_API_BASE || 'https://api.yokebud.fi';
+const PUBLIC_API_BASE = process.env.PUBLIC_API_BASE || 'http://localhost:5000';
 
 const productSocialSeo = (() => {
   const DEFAULT_OG_IMAGE = `${PUBLIC_SITE_URL}/LOGO.png`;
@@ -1090,38 +1142,38 @@ const productSocialSeo = (() => {
   }
 
   // ========== NEW: Social sharing optimized image URL ==========
-  function getImageUrlForSharing(imgPath, width = 1200, height = 630) {
-    console.log(`[getImageUrlForSharing] imgPath: ${imgPath}`);
-    if (!imgPath) {
-      console.log(`[getImageUrlForSharing] No image path, returning default: ${DEFAULT_OG_IMAGE}`);
-      return DEFAULT_OG_IMAGE;
-    }
-    const s = String(imgPath);
-    console.log(`[getImageUrlForSharing] s: ${s}`);
-    if (s.startsWith('http://') || s.startsWith('https://')) {
-      // Cloudinary optimization for social sharing
-      if (s.includes('cloudinary.com')) {
-        const parts = s.split('/upload/');
-        if (parts.length === 2) {
-          const optimizedUrl = `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
-          console.log(`[getImageUrlForSharing] Optimized Cloudinary URL: ${optimizedUrl}`);
-          return optimizedUrl;
-        }
-      }
-      console.log(`[getImageUrlForSharing] Returning as-is: ${s}`);
-      return s;
-    }
-    const clean = s.startsWith('/') ? s : `/${s}`;
-    const result = `${PUBLIC_API_BASE}${clean}`;
-    console.log(`[getImageUrlForSharing] Returning local image: ${result}`);
-    return result;
+function getImageUrlForSharing(imgPath, width = 1200, height = 630) {
+  console.log(`[getImageUrlForSharing] imgPath: ${imgPath}`);
+  if (!imgPath) {
+    console.log(`[getImageUrlForSharing] No image path, returning default: ${DEFAULT_OG_IMAGE}`);
+    return DEFAULT_OG_IMAGE;
   }
+  const s = String(imgPath);
+  console.log(`[getImageUrlForSharing] s: ${s}`);
+  if (s.startsWith('http://') || s.startsWith('https://')) {
+    // Cloudinary optimization for social sharing
+    if (s.includes('cloudinary.com')) {
+      const parts = s.split('/upload/');
+      if (parts.length === 2) {
+        const optimizedUrl = `${parts[0]}/upload/f_auto,q_auto:good,w_${width},h_${height},c_fill/${parts[1]}`;
+        console.log(`[getImageUrlForSharing] Optimized Cloudinary URL: ${optimizedUrl}`);
+        return optimizedUrl;
+      }
+    }
+    console.log(`[getImageUrlForSharing] Returning as-is: ${s}`);
+    return s;
+  }
+  const clean = s.startsWith('/') ? s : `/${s}`;
+  const result = `${PUBLIC_API_BASE}${clean}`;
+  console.log(`[getImageUrlForSharing] Returning local image: ${result}`);
+  return result;
+}
 
   // ========== UPDATED: absoluteImageUrl uses the new function ==========
-  function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
-    if (!imgPath) return DEFAULT_OG_IMAGE;
-    return getImageUrlForSharing(imgPath, 1200, 630);
-  }
+function absoluteImageUrl(imgPath, backendBase = PUBLIC_API_BASE) {
+  if (!imgPath) return DEFAULT_OG_IMAGE;
+  return getImageUrlForSharing(imgPath, 1200, 630);
+}
 
   function parseProductPhotos(product) {
     try {
@@ -1235,43 +1287,43 @@ const productSocialSeo = (() => {
     return result;
   }
 
-  // ========== UPDATED: buildProductSocialHtml with proper image ==========
-  async function buildProductSocialHtml(pool, reqPath, html) {
-    const productId = extractProductIdFromRequestPath(reqPath);
-    console.log(`[buildProductSocialHtml] Product ID: ${productId}`);
-    if (!productId) return null;
+// ========== UPDATED: buildProductSocialHtml with proper image ==========
+async function buildProductSocialHtml(pool, reqPath, html) {
+  const productId = extractProductIdFromRequestPath(reqPath);
+  console.log(`[buildProductSocialHtml] Product ID: ${productId}`);
+  if (!productId) return null;
 
-    let connection;
-    try {
-      connection = await pool.getConnection();
-      const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
-      console.log(`[buildProductSocialHtml] Product rows found: ${rows.length}`);
-      if (!rows.length) {
-        connection.release();
-        return null;
-      }
-
-      const product = rows[0];
-      const sitemapPath = await resolveProductSitemapPath(connection, productId);
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [productId]);
+    console.log(`[buildProductSocialHtml] Product rows found: ${rows.length}`);
+    if (!rows.length) {
       connection.release();
-      connection = null;
-
-      const canonicalPath = buildCanonicalProductPath(product, sitemapPath, productId);
-      const canonicalUrl = `${PUBLIC_SITE_URL}${canonicalPath}`;
-      const photos = parseProductPhotos(product);
-      const imageUrl = photos[0] ? getImageUrlForSharing(photos[0], 1200, 630) : DEFAULT_OG_IMAGE;
-      console.log(`[buildProductSocialHtml] Image URL: ${imageUrl}`);
-      const meta = buildProductSocialMetaTags(product, { canonicalUrl, imageUrl });
-
-      const result = injectSocialMetaIntoHtml(html, meta);
-      console.log(`[buildProductSocialHtml] Generated social HTML successfully`);
-      return result;
-    } catch (err) {
-      if (connection) connection.release();
-      console.error(`[buildProductSocialHtml] Error: ${err}`);
-      throw err;
+      return null;
     }
+
+    const product = rows[0];
+    const sitemapPath = await resolveProductSitemapPath(connection, productId);
+    connection.release();
+    connection = null;
+
+    const canonicalPath = buildCanonicalProductPath(product, sitemapPath, productId);
+    const canonicalUrl = `${PUBLIC_SITE_URL}${canonicalPath}`;
+    const photos = parseProductPhotos(product);
+    const imageUrl = photos[0] ? getImageUrlForSharing(photos[0], 1200, 630) : DEFAULT_OG_IMAGE;
+    console.log(`[buildProductSocialHtml] Image URL: ${imageUrl}`);
+    const meta = buildProductSocialMetaTags(product, { canonicalUrl, imageUrl });
+
+    const result = injectSocialMetaIntoHtml(html, meta);
+    console.log(`[buildProductSocialHtml] Generated social HTML successfully`);
+    return result;
+  } catch (err) {
+    if (connection) connection.release();
+    console.error(`[buildProductSocialHtml] Error: ${err}`);
+    throw err;
   }
+}
 
   // ========== EXPORT all functions ==========
   return {
@@ -1284,7 +1336,7 @@ const productSocialSeo = (() => {
     extractProductIdFromRequestPath,
     getProductIdFromSitemapPath,
     absoluteImageUrl,
-    getImageUrlForSharing,   // <-- NEW: export this
+   getImageUrlForSharing,   // <-- NEW: export this
     parseProductPhotos,
     resolveProductSitemapPath,
     buildCanonicalProductPath,
@@ -1636,7 +1688,7 @@ async function regenerateSitemap() {
     try {
       // Fire-and-forget (non-blocking) so regeneration latency stays low
       setImmediate(() => {
-        pingSitemapToSearchEngines(`${PUBLIC_SITE_URL}/sitemap.xml`).catch(() => { });
+        pingSitemapToSearchEngines(`${PUBLIC_SITE_URL}/sitemap.xml`).catch(() => {});
       });
     } catch (_pingErr) {
       // ignore ping errors; regeneration itself succeeded
@@ -2807,8 +2859,8 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
         </p>
         <p class="content-text" style="text-align: center; max-width: 520px; margin: 0 auto;">
           ${totalHighlights > 0
-      ? `We prepared ${escapeEmailHtml(highlightsSummary)} for this week's edition, with newly uploaded products and clearly separated offer items for faster browsing.`
-      : 'We prepared a curated weekly look at what is new on Yokebud craft.'}
+            ? `We prepared ${escapeEmailHtml(highlightsSummary)} for this week's edition, with newly uploaded products and clearly separated offer items for faster browsing.`
+            : 'We prepared a curated weekly look at what is new on Yokebud craft.'}
         </p>
       </div>
 
@@ -3887,14 +3939,25 @@ const generateProductSEO = (name, description, price, imageUrls) => {
 
 const ensureUniqueSlug = async (connection, baseSlug, table = 'products') => {
   let slug = baseSlug;
-  let suffix = 1;
-  while (true) {
-    const [rows] = await connection.query(`SELECT id FROM ${table} WHERE slug = ? LIMIT 1`, [slug]);
-    if (!rows || rows.length === 0) return slug;
-    slug = `${baseSlug}-${suffix++}`;
-  }
-};
-
+    let suffix = 1;
+      while (true) {
+          const [rows] = await connection.query(`SELECT id FROM ${table} WHERE slug = ? LIMIT 1`, [slug]);
+              if (!rows || rows.length === 0) return slug;
+                  slug = `${baseSlug}-${suffix++}`;
+                    }
+                    };
+                    
+const ensureUniqueSKU = async (connection, baseSKU) => {
+  let sku = String(baseSKU || 'SKU').trim();
+    if (!sku) sku = 'SKU';
+      let suffix = 1;
+        while (true) {
+            const [rows] = await connection.query('SELECT id FROM products WHERE sku = ? LIMIT 1', [sku]);
+                if (!rows || rows.length === 0) return sku;
+                    sku = `${baseSKU}-${suffix++}`;
+                      }
+                      };
+                      
 const validateProductPayload = (payload) => {
   const {
     name,
@@ -4080,7 +4143,7 @@ async function generateSitemapXmlFromDb({ type = 'all' } = {}) {
             parts.push('      <image:geo_location>Helsinki, Finland</image:geo_location>');
             parts.push('    </image:image>');
           }
-        } catch { }
+        } catch {}
       }
       parts.push('  </url>');
       return parts.join('\n');
@@ -4412,6 +4475,14 @@ const generateToken = (userId) => {
   );
 };
 
+const generateAdminToken = () => {
+  return jwt.sign(
+    { type: 'admin', issuedAt: Date.now() },
+    JWT_SECRET,
+    { expiresIn: '365d' }
+  );
+};
+
 // Generate unique inquiry ID
 const generateInquiryId = (userId, productId) => {
   return `inq_${userId}_${productId}_${Date.now()}`;
@@ -4430,4216 +4501,231 @@ const notificationTimers = new Map();
 
 const checkUnreadMessageReminders = async () => {
   try {
-    const connection = await pool.getConnection();
-    const [inquiries] = await connection.query('SELECT id, customer_email, customer_name, product_data, messages FROM inquiry_conversations');
-    connection.release();
-    for (const inquiry of inquiries) {
-      const product = (() => { try { return JSON.parse(inquiry.product_data || '{}'); } catch { return {}; } })();
-      const messages = (() => { try { return JSON.parse(inquiry.messages || '[]'); } catch { return []; } })();
-      let changed = false;
-      for (let i = 0; i < messages.length; i++) {
-        const msg = messages[i];
-        const ts = msg && msg.timestamp ? new Date(msg.timestamp).getTime() : 0;
-        if (!msg || msg.is_read) continue;
-        if (!ts || isNaN(ts)) continue;
-        if ((Date.now() - ts) < 60 * 60 * 1000) continue;
-        if (msg.reminder_sent) continue;
-        const subject = 'Reminder: Unviewed message in your conversation';
-        const preview = String(msg.message || '').trim().slice(0, 140);
-        const content = `<p style="margin:0 0 12px 0;color:${EMAIL_THEME.textLight};">A new message has remained unviewed for over 1 hour in your conversation about <span style="color:${EMAIL_THEME.text};font-weight:700;">${product.product_name || 'your product'}</span>.</p><div style="background:#0D0D0D;border:1px solid #1a1a1a;border-radius:12px;padding:16px;margin-top:8px;"><div style="color:${EMAIL_THEME.textLight};font-size:12px;margin-bottom:6px;">Message preview</div><div style="color:${EMAIL_THEME.text};line-height:1.6;">${preview || 'No text'}</div></div>`;
-        const clientUrl = `${process.env.CLIENT_URL || 'https://www.yokebud.fi'}/messages`;
-        const adminUrl = `${process.env.ADMIN_URL || 'https://www.yokebud.fi/admin/inquiries'}`;
-        const userHtml = renderThemedEmail({ title: 'Yokebud craft', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Open Conversation', ctaUrl: clientUrl });
-        const adminHtml = renderThemedEmail({ title: 'Yokebud craft', subtitle: 'Message Reminder', contentHtml: content, ctaText: 'Review Inquiry', ctaUrl: adminUrl });
-        const mailUser = { from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>', to: inquiry.customer_email, subject, html: userHtml };
-        const mailAdmin = { from: process.env.EMAIL_FROM || 'Yokebud craft <yokebud@gmail.com>', to: 'yokebud@gmail.com', subject: `${subject} - ${inquiry.customer_name || ''}`, html: adminHtml };
-        try { await sendMail(mailUser); } catch { }
-        try { await sendMail(mailAdmin); } catch { }
-        messages[i] = { ...msg, reminder_sent: true };
-        changed = true;
-      }
-      if (changed) {
-        const conn2 = await pool.getConnection();
-        await conn2.query('UPDATE inquiry_conversations SET messages = ?, updated_at = NOW() WHERE id = ?', [JSON.stringify(messages), inquiry.id]);
-        conn2.release();
-      }
-    }
-  } catch { }
-};
-
-setInterval(() => { checkUnreadMessageReminders(); }, 5 * 60 * 1000);
-
-// Create PaymentIntent endpoint for Stripe Checkout (simple, server-side)
-app.post('/api/create-payment-intent', async (req, res) => {
-  if (!stripe) {
-    return res.status(500).json({ success: false, message: 'Stripe not configured on server' });
-  }
-
-  try {
-    const { amount, currency = 'usd' } = req.body;
-
-    if (!amount || isNaN(Number(amount))) {
-      return res.status(400).json({ success: false, message: 'Invalid amount' });
-    }
-
-    // Stripe expects amount in cents
-    const amountInCents = Math.round(Number(amount) * 100);
-
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: amountInCents,
-      currency,
-      automatic_payment_methods: { enabled: true },
-      automatic_tax: { enabled: true },
-    });
-
-    return res.json({ success: true, clientSecret: paymentIntent.client_secret, id: paymentIntent.id });
-  } catch (err) {
-    console.error('Error creating payment intent:', err);
-    return res.status(500).json({ success: false, message: err.message || 'Stripe error' });
-  }
-});
-
-// Create Stripe Checkout Session for redirect-to-checkout flow
-app.post('/api/create-checkout-session', async (req, res) => {
-  if (!stripe) {
-    return res.status(500).json({ success: false, message: 'Stripe not configured on server' });
-  }
-
-  try {
-    const {
-      items = [],
-      currency = 'eur',
-      customer = {},
-      totals = null,
-      shippingMethod = 'automatic',
-      successUrl,
-      cancelUrl,
-      shipping = 0
-    } = req.body || {};
-
-    // Normalize items and compute server-side shipping from server-trusted rules
-    const normalizedItems = (Array.isArray(items) ? items : []).map(it => ({
-      ...it,
-      free_shipping: getNormalizedFreeShippingConfig(it).enabled,
-      free_shipping_min_amount: getNormalizedFreeShippingConfig(it).minimumAmount
-    }));
-
-    const computeServerShippingSimple = (itemsArr, country, city) => {
-      if (!itemsArr || itemsArr.length === 0) return 0;
-      const countryRates = {
-        "Finland": { base: 3.0, zones: { "Helsinki": 2.5, "Espoo": 2.5, "Tampere": 2.8, "Vantaa": 2.5, "Oulu": 3.2, "Turku": 2.8 } },
-        "Sweden": { base: 8.0 },
-        "Norway": { base: 10.0 },
-        "Denmark": { base: 8.0 },
-        "Germany": { base: 12.0 },
-        "France": { base: 12.0 },
-        "United Kingdom": { base: 15.0 },
-        "United States": { base: 30.0, zones: { "New York": 28, "California": 32, "Texas": 31, "Florida": 30 } },
-        "Canada": { base: 35.0 },
-        "Australia": { base: 40.0 },
-        "Japan": { base: 35.0 },
-        "China": { base: 38.0 },
-        "India": { base: 42.0 }
-      };
-      const weightBrackets = [
-        { max: 0.5, rate: 0 }, { max: 1, rate: 0 }, { max: 2, rate: 3 }, { max: 5, rate: 8 }, { max: 10, rate: 15 }, { max: 20, rate: 25 }, { max: Infinity, rate: 40 }
-      ];
-      const defaultCountryConfig = { base: 15.0 };
-      const totalActualWeight = itemsArr.reduce((sum, item) => {
-        let itemWeight = 0.2;
-        const category = (item.category || (item.product && item.product.category) || '').toString().toLowerCase();
-        if (item.shipping) itemWeight = Number(item.shipping) || itemWeight;
-        else if (item.weight) itemWeight = Number(item.weight) || itemWeight;
-        else if (item.product && item.product.shipping) itemWeight = Number(item.product.shipping) || itemWeight;
-        else if (item.product && item.product.weight) itemWeight = Number(item.product.weight) || itemWeight;
-        else {
-          if (category.includes('hoodie') || category.includes('hoody')) itemWeight = 0.6;
-          else if (category.includes('apparel') || category.includes('tshirt') || category.includes('t-shirt') || category.includes('clothing')) itemWeight = 0.25;
-          else if (category.includes('jewelry') || category.includes('accessory')) itemWeight = 0.1;
-          else if (category.includes('mug') || category.includes('ceramic')) itemWeight = 0.5;
-        }
-        return sum + (itemWeight * (Number(item.quantity) || 1));
-      }, 0);
-      const totalVolumetricWeight = itemsArr.reduce((sum, item) => {
-        let dimensions = null;
-        if (item.customization_dimensions || (item.product && item.product.customization_dimensions)) {
-          dimensions = item.customization_dimensions || (item.product && item.product.customization_dimensions);
-          if (typeof dimensions === 'string') {
-            try { dimensions = JSON.parse(dimensions); } catch (e) { dimensions = null; }
-          }
-        }
-        if (!dimensions) return sum;
-        const h = Number(dimensions.height?.value || 0);
-        const w = Number(dimensions.width?.value || 0);
-        const t = Number(dimensions.thickness?.value || 0);
-        const itemVol = (h * w * t) / 5000;
-        return sum + (itemVol * (Number(item.quantity) || 1));
-      }, 0);
-      const billableWeight = Math.max(totalActualWeight, totalVolumetricWeight, 0.1);
-      const countryConfig = (countryRates[country] || defaultCountryConfig);
-      let baseRate = countryConfig.base;
-      if (countryConfig.zones && city && countryConfig.zones[city]) baseRate = countryConfig.zones[city];
-      let weightSurcharge = 0;
-      for (const bracket of weightBrackets) { if (billableWeight <= bracket.max) { weightSurcharge = bracket.rate; break; } }
-      const packagingCost = Math.min(billableWeight * 0.5, 5.0);
-      const totalShipping = baseRate + weightSurcharge + packagingCost;
-      return Math.round(totalShipping * 100) / 100;
-    };
-
-    const promoDiscount = Number(totals?.promoDiscount || totals?.promo || 0) || 0;
-    const subtotal = Number(totals?.subtotal);
-    const merchandiseTotal = Math.max(
-      (Number.isFinite(subtotal) ? subtotal : calculateItemsMerchandiseTotal(normalizedItems)) - promoDiscount,
-      0
-    );
-    const freeShippingStatus = getFreeShippingStatus(normalizedItems, merchandiseTotal);
-    const requestedShippingMethod = String(totals?.shippingMethod || shippingMethod || 'automatic');
-    const effectiveShippingMethod = requestedShippingMethod === 'pickup'
-      ? 'pickup'
-      : (freeShippingStatus.qualifies ? 'free' : 'automatic');
-    const serverShippingForSession = effectiveShippingMethod === 'automatic'
-      ? computeServerShippingSimple(normalizedItems, (customer && customer.country) || '', (customer && customer.city) || '')
-      : 0;
-    const shippingToUse = effectiveShippingMethod === 'automatic'
-      ? Number(serverShippingForSession ?? shipping ?? 0)
-      : 0;
-
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ success: false, message: 'No items provided' });
-    }
-
-    const origin = (req.headers.origin || process.env.CLIENT_URL || 'http://localhost:5173');
-
-    const line_items = items.map((item) => {
-      const unit = Number(item.discounted_price || item.price || 0);
-      const qty = Number(item.quantity || 1);
-      const name = item.product_name || item.name || `Product ${item.id || ''}`;
-      const images = Array.isArray(item.product_photos) ? item.product_photos.filter(Boolean) : [];
-      return {
-        price_data: {
-          currency,
-          product_data: {
-            name,
-            images: images.slice(0, 1)
-          },
-          unit_amount: Math.round(unit * 100)
-        },
-        quantity: qty
-      };
-    });
-
-    if (shippingToUse && Number(shippingToUse) > 0) {
-      line_items.push({
-        price_data: {
-          currency,
-          product_data: { name: 'Shipping' },
-          unit_amount: Math.round(Number(shippingToUse) * 100)
-        },
-        quantity: 1
-      });
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      line_items,
-      payment_method_types: ['card'],
-      customer_email: customer.email || undefined,
-      success_url: successUrl || `${origin}/Checkout?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: cancelUrl || `${origin}/cart`,
-      billing_address_collection: 'auto',
-      phone_number_collection: { enabled: false }
-    });
-
-    return res.json({ success: true, url: session.url, id: session.id });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message || 'Stripe error' });
-  }
-});
-
-
-// Update admin_unread_count endpoint
-app.put('/api/inquiries/:inquiryId/admin-unread', async (req, res) => {
-  let connection;
-  try {
-    const { inquiryId } = req.params;
-    const { admin_unread_count } = req.body;
-
-    connection = await pool.getConnection();
-
-    await connection.query(
-      'UPDATE inquiry_conversations SET admin_unread_count = ?, updated_at = NOW() WHERE id = ?',
-      [admin_unread_count, inquiryId]
-    );
-
-    connection.release();
-
-    res.json({
-      success: true,
-      message: 'Admin unread count updated successfully'
-    });
-  } catch (error) {
-    console.error('Error updating admin unread count:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update admin unread count'
-    });
-  }
-});
-
-
-// ==================== ENHANCED MESSAGE HANDLING WITH UNREAD COUNTS ====================
-
-// Enhanced Socket.IO for real-time messaging with unread counts
-io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
-
-  // Handle new message with optimized unread counts
-  socket.on('send_message', async (data) => {
-    try {
-      const { inquiryId, message, senderType, files = [], temporaryId } = data;
-
-      console.log('Received message via socket:', { inquiryId, message, senderType, temporaryId });
-
       const connection = await pool.getConnection();
-
-      // Get current inquiry
-      const [inquiries] = await connection.query(
-        'SELECT * FROM inquiry_conversations WHERE id = ?',
-        [inquiryId]
-      );
-
-      if (inquiries.length === 0) {
-        connection.release();
-        socket.emit('message_error', { error: 'Inquiry not found', temporaryId });
-        return;
-      }
-
-      const inquiry = inquiries[0];
-      const currentMessages = JSON.parse(inquiry.messages || '[]');
-
-      // Create new message
-      const newMessage = {
-        id: uuidv4(),
-        sender_type: senderType,
-        message: message,
-        files: files,
-        timestamp: new Date().toISOString(),
-        is_read: false
-      };
-
-      // Add to messages array
-      currentMessages.push(newMessage);
-
-      // Calculate unread counts based on sender
-      let newUnreadCount = inquiry.unread_count || 0;
-      let newAdminUnreadCount = inquiry.admin_unread_count || 0;
-      let hasNewMessage = inquiry.has_new_message || false;
-
-      if (senderType === 'admin') {
-        // Admin sent message - increment user's unread count
-        newUnreadCount += 1;
-        hasNewMessage = true;
-      } else {
-        // User sent message - increment admin's unread count
-        newAdminUnreadCount += 1;
-        hasNewMessage = true;
-      }
-
-      console.log(`Unread counts - User: ${newUnreadCount}, Admin: ${newAdminUnreadCount}, Sender: ${senderType}`);
-
-      // Update inquiry in database
-      await connection.query(
-        `UPDATE inquiry_conversations SET 
-          messages = ?, 
-          last_activity = NOW(),
-          updated_at = NOW(),
-          unread_count = ?,
-          admin_unread_count = ?,
-          has_new_message = ?,
-          status = CASE 
-            WHEN status = 'new' AND ? = 'admin' THEN 'processing'
-            WHEN status = 'new' AND ? = 'user' THEN 'pending'
-            ELSE status
-          END
-         WHERE id = ?`,
-        [JSON.stringify(currentMessages), newUnreadCount, newAdminUnreadCount, hasNewMessage, senderType, senderType, inquiryId]
-      );
-
-      connection.release();
-
-      // Emit message to all clients in the room
-      io.to(inquiryId).emit('new_message', {
-        ...newMessage,
-        inquiryId: inquiryId,
-        temporaryId: temporaryId
-      });
-
-      // Send confirmation back to sender
-      socket.emit('message_sent', {
-        success: true,
-        message: newMessage,
-        temporaryId: temporaryId
-      });
-
-      // REAL-TIME NOTIFICATION: Only show toast for relevant users
-      if (senderType === 'admin') {
-        // Notify user about new admin message
-        io.to(`user_${inquiry.user_id}`).emit('new_admin_message', {
-          type: 'new_message',
-          inquiryId: inquiryId,
-          message: message,
-          inquiryNumber: inquiry.inquiry_number,
-          productName: JSON.parse(inquiry.product_data).product_name,
-          unreadCount: newUnreadCount,
-          timestamp: new Date().toISOString()
-        });
-
-        // Update navbar notification for user
-        io.to(`user_${inquiry.user_id}`).emit('unread_count_update', {
-          userId: inquiry.user_id,
-          totalUnread: newUnreadCount
-        });
-        try { await sendInquiryNotification(inquiry, message, 'admin'); } catch (e) { console.error('Inquiry email error:', e); }
-      } else {
-        // Notify admin about new user message
-        io.emit('admin_new_message', {
-          type: 'new_user_message',
-          inquiryId: inquiryId,
-          customerName: inquiry.customer_name,
-          productName: JSON.parse(inquiry.product_data).product_name,
-          message: message,
-          adminUnreadCount: newAdminUnreadCount,
-          hasNewMessage: hasNewMessage,
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      console.log('Message saved and broadcasted:', newMessage.id);
-
-    } catch (error) {
-      console.error('Socket message error:', error);
-      socket.emit('message_error', {
-        error: 'Failed to send message',
-        temporaryId: data.temporaryId
-      });
-    }
-  });
-
-  // Mark messages as read with unread count updates
-  socket.on('mark_messages_read', async (data) => {
-    try {
-      const { inquiryId, userId, userType } = data;
-      const connection = await pool.getConnection();
-
-      // Get current inquiry
-      const [inquiries] = await connection.query(
-        'SELECT * FROM inquiry_conversations WHERE id = ?',
-        [inquiryId]
-      );
-
-      if (inquiries.length > 0) {
-        const inquiry = inquiries[0];
-        const currentMessages = JSON.parse(inquiry.messages || '[]');
-
-        // Mark messages as read based on user type and set status
-        const updatedMessages = currentMessages.map(msg => {
-          if (userType === 'user' && msg.sender_type === 'admin') {
-            return { ...msg, is_read: true, status: 'read' };
-          } else if (userType === 'admin' && msg.sender_type === 'user') {
-            return { ...msg, is_read: true, status: 'read' };
-          }
-          return msg;
-        });
-
-        // Calculate new unread counts
-        let newUnreadCount = inquiry.unread_count || 0;
-        let newAdminUnreadCount = inquiry.admin_unread_count || 0;
-        let hasNewMessage = inquiry.has_new_message;
-
-        if (userType === 'user') {
-          // User is reading - reset user's unread count
-          newUnreadCount = 0;
-        } else if (userType === 'admin') {
-          // Admin is reading - reset admin's unread count
-          newAdminUnreadCount = 0;
-        }
-
-        // Check if there are still any unread messages
-        hasNewMessage = newUnreadCount > 0 || newAdminUnreadCount > 0;
-
-        console.log(`Marking messages read - User: ${newUnreadCount}, Admin: ${newAdminUnreadCount}, UserType: ${userType}`);
-
-        // Update in database
-        await connection.query(
-          'UPDATE inquiry_conversations SET messages = ?, unread_count = ?, admin_unread_count = ?, has_new_message = ?, updated_at = NOW() WHERE id = ?',
-          [JSON.stringify(updatedMessages), newUnreadCount, newAdminUnreadCount, hasNewMessage, inquiryId]
-        );
-
-        connection.release();
-
-        // Notify all clients in the room
-        io.to(inquiryId).emit('messages_read', {
-          inquiryId: inquiryId,
-          userType: userType,
-          newUnreadCount: newUnreadCount,
-          newAdminUnreadCount: newAdminUnreadCount,
-          hasNewMessage: hasNewMessage
-        });
-
-        // Update navbar notifications
-        if (userType === 'user' && userId) {
-          // Get total unread count for user
-          const [userInquiries] = await connection.query(
-            'SELECT SUM(unread_count) as total_unread FROM inquiry_conversations WHERE user_id = ?',
-            [userId]
-          );
-          const totalUnread = userInquiries[0].total_unread || 0;
-
-          io.to(`user_${userId}`).emit('unread_count_update', {
-            userId: userId,
-            totalUnread: totalUnread
-          });
-        } else if (userType === 'admin') {
-          // Get total admin unread count
-          const [adminInquiries] = await connection.query(
-            'SELECT SUM(admin_unread_count) as total_admin_unread FROM inquiry_conversations'
-          );
-          const totalAdminUnread = adminInquiries[0].total_admin_unread || 0;
-
-          io.emit('admin_unread_count_update', {
-            totalAdminUnread: totalAdminUnread
-          });
-        }
-      }
-    } catch (error) {
-      console.error('Error marking messages as read:', error);
-    }
-  });
-
-  // Get unread counts
-  socket.on('get_unread_counts', async (data) => {
-    try {
-      const { userId, userType } = data;
-      const connection = await pool.getConnection();
-
-      if (userType === 'user') {
-        const [result] = await connection.query(
-          'SELECT SUM(unread_count) as total_unread FROM inquiry_conversations WHERE user_id = ?',
-          [userId]
-        );
-        const totalUnread = result[0].total_unread || 0;
-
-        socket.emit('unread_count_update', {
-          userId: userId,
-          totalUnread: totalUnread
-        });
-      } else if (userType === 'admin') {
-        const [result] = await connection.query(
-          'SELECT SUM(admin_unread_count) as total_admin_unread FROM inquiry_conversations'
-        );
-        const totalAdminUnread = result[0].total_admin_unread || 0;
-
-        socket.emit('admin_unread_count_update', {
-          totalAdminUnread: totalAdminUnread
-        });
-      }
-
-      connection.release();
-    } catch (error) {
-      console.error('Error getting unread counts:', error);
-    }
-  });
-
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-  });
-});
-
-// ==================== ENHANCED API ENDPOINTS ====================
-
-// Mark messages as read with user type support
-app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
-  let connection;
-  try {
-    const { inquiryId } = req.params;
-    const { userId, userType } = req.body;
-
-    connection = await pool.getConnection();
-
-    // Get current inquiry
-    const [inquiries] = await connection.query(
-      'SELECT * FROM inquiry_conversations WHERE id = ?',
-      [inquiryId]
-    );
-
-    if (inquiries.length === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Inquiry not found'
-      });
-    }
-
-    const inquiry = inquiries[0];
-    const currentMessages = JSON.parse(inquiry.messages || '[]');
-
-    // Mark messages as read based on user type
-    const updatedMessages = currentMessages.map(msg => {
-      if (userType === 'user' && msg.sender_type === 'admin') {
-        return { ...msg, is_read: true };
-      } else if (userType === 'admin' && msg.sender_type === 'user') {
-        return { ...msg, is_read: true };
-      }
-      return msg;
-    });
-
-    // Calculate new unread counts
-    let newUnreadCount = inquiry.unread_count || 0;
-    let newAdminUnreadCount = inquiry.admin_unread_count || 0;
-    let hasNewMessage = inquiry.has_new_message;
-
-    if (userType === 'user') {
-      newUnreadCount = 0;
-    } else if (userType === 'admin') {
-      newAdminUnreadCount = 0;
-    }
-
-    hasNewMessage = newUnreadCount > 0 || newAdminUnreadCount > 0;
-
-    // Update inquiry in database
-    await connection.query(
-      'UPDATE inquiry_conversations SET messages = ?, unread_count = ?, admin_unread_count = ?, has_new_message = ?, updated_at = NOW() WHERE id = ?',
-      [JSON.stringify(updatedMessages), newUnreadCount, newAdminUnreadCount, hasNewMessage, inquiryId]
-    );
-
-    connection.release();
-
-    // Emit real-time update
-    io.to(inquiryId).emit('messages_read', {
-      inquiryId: inquiryId,
-      userType: userType,
-      newUnreadCount: newUnreadCount,
-      newAdminUnreadCount: newAdminUnreadCount,
-      hasNewMessage: hasNewMessage
-    });
-
-    res.json({
-      success: true,
-      message: 'Messages marked as read',
-      newUnreadCount: newUnreadCount,
-      newAdminUnreadCount: newAdminUnreadCount,
-      hasNewMessage: hasNewMessage
-    });
-  } catch (error) {
-    console.error('Error marking messages as read:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to mark messages as read: ' + error.message
-    });
-  }
-});
-
-// Removed duplicate '/api/user/unread-count' (kept a single implementation later)
-// Removed unused '/api/admin/unread-count'
-
-// ==================== ENHANCED SOCKET.IO WITH PERSISTENT UNREAD COUNT ====================
-
-const connectedUsers = new Map();
-
-io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
-
-  // User joins with their user ID
-  socket.on('user_join', (userId) => {
-    connectedUsers.set(socket.id, { userId, type: 'user' });
-    console.log(`User ${userId} connected with socket ${socket.id}`);
-  });
-
-  // Admin joins inquiry room
-  socket.on('join_inquiry', (inquiryId) => {
-    socket.join(inquiryId);
-    connectedUsers.set(socket.id, { inquiryId, type: 'admin' });
-    console.log(`Admin ${socket.id} joined room: ${inquiryId}`);
-  });
-
-  // User joins their personal room for notifications
-  socket.on('join_user_room', (userId) => {
-    socket.join(`user_${userId}`);
-    console.log(`User ${userId} joined personal notification room`);
-  });
-
-  // Handle new message with PERSISTENT UNREAD COUNT
-  socket.on('send_message', async (data) => {
-    try {
-      const { inquiryId, message, senderType, files = [], temporaryId } = data;
-
-      console.log('Received message via socket:', { inquiryId, message, senderType, temporaryId });
-
-      const connection = await pool.getConnection();
-
-      // Get current inquiry with unread_count
-      const [inquiries] = await connection.query(
-        'SELECT * FROM inquiry_conversations WHERE id = ?',
-        [inquiryId]
-      );
-
-      if (inquiries.length === 0) {
-        connection.release();
-        socket.emit('message_error', { error: 'Inquiry not found', temporaryId });
-        return;
-      }
-
-      const inquiry = inquiries[0];
-      const currentMessages = JSON.parse(inquiry.messages || '[]');
-
-      // Duplicate check: block identical content from same sender within 60s
-      const lastMsg = currentMessages[currentMessages.length - 1];
-      const isDup = lastMsg && lastMsg.sender_type === senderType &&
-        (String(lastMsg.message || '').trim() === String(message || '').trim()) &&
-        (Math.abs(new Date(lastMsg.timestamp).getTime() - Date.now()) < 60000);
-      if (isDup) {
-        connection.release();
-        socket.emit('message_error', { error: 'Duplicate message detected', temporaryId, duplicate: true });
-        return;
-      }
-
-      // Create new message
-      const newMessage = {
-        id: uuidv4(),
-        sender_type: senderType,
-        message: message,
-        files: files,
-        timestamp: new Date().toISOString(),
-        is_read: senderType === 'admin',
-        status: 'delivered'
-      };
-
-      // Add to messages array
-      currentMessages.push(newMessage);
-
-      // Calculate new unread count - CRITICAL: Only increment for admin messages
-      let newUnreadCount = inquiry.unread_count || 0;
-      if (senderType === 'admin') {
-        newUnreadCount += 1; // Increment unread count for new admin messages
-      }
-
-      console.log(`Unread count update - Before: ${inquiry.unread_count}, After: ${newUnreadCount}, Sender: ${senderType}`);
-
-      // Update inquiry in database with new unread count
-      await connection.query(
-        `UPDATE inquiry_conversations SET 
-          messages = ?, 
-          last_activity = NOW(),
-          updated_at = NOW(),
-          unread_count = ?,
-          status = CASE 
-            WHEN status = 'new' AND ? = 'admin' THEN 'processing'
-            WHEN status = 'new' AND ? = 'user' THEN 'pending'
-            ELSE status
-          END
-         WHERE id = ?`,
-        [JSON.stringify(currentMessages), newUnreadCount, senderType, senderType, inquiryId]
-      );
-
-      connection.release();
-
-      // Emit message to all clients in the room
-      io.to(inquiryId).emit('new_message', {
-        ...newMessage,
-        inquiryId: inquiryId,
-        temporaryId: temporaryId
-      });
-
-      // Send confirmation back to sender
-      socket.emit('message_sent', {
-        success: true,
-        message: newMessage,
-        temporaryId: temporaryId
-      });
-
-      // REAL-TIME NOTIFICATION: Notify user about new admin message
-      if (senderType === 'admin') {
-        // Emit to user's personal room
-        io.to(`user_${inquiry.user_id}`).emit('new_admin_message', {
-          type: 'new_message',
-          inquiryId: inquiryId,
-          message: message,
-          inquiryNumber: inquiry.inquiry_number,
-          productName: JSON.parse(inquiry.product_data).product_name,
-          unreadCount: newUnreadCount,
-          timestamp: new Date().toISOString()
-        });
-
-        // Also emit global notification for navbar with PERSISTENT count
-        io.to(`user_${inquiry.user_id}`).emit('unread_count_update', {
-          userId: inquiry.user_id,
-          totalUnread: newUnreadCount
-        });
-
-        console.log(`Notification sent to user ${inquiry.user_id} for new admin message, unread count: ${newUnreadCount}`);
-        try { await sendInquiryNotification(inquiry, message, 'admin'); } catch (e) { console.error('Inquiry email error:', e); }
-      }
-
-      console.log('Message saved and broadcasted:', newMessage.id);
-
-    } catch (error) {
-      console.error('Socket message error:', error);
-      socket.emit('message_error', {
-        error: 'Failed to send message',
-        temporaryId: data.temporaryId
-      });
-    }
-  });
-
-  // Handle message read status with PERSISTENT unread count update
-  socket.on('mark_messages_read', async (data) => {
-    try {
-      const { inquiryId, messageIds, userId } = data;
-      const connection = await pool.getConnection();
-
-      // Get current inquiry
-      const [inquiries] = await connection.query(
-        'SELECT messages, user_id, unread_count FROM inquiry_conversations WHERE id = ?',
-        [inquiryId]
-      );
-
-      if (inquiries.length > 0) {
-        const inquiry = inquiries[0];
-        const currentMessages = JSON.parse(inquiry.messages || '[]');
-
-        // Mark messages as read and update status
-        const updatedMessages = currentMessages.map(msg => {
-          if (messageIds.includes(msg.id) || (messageIds.length === 0 && msg.sender_type === 'admin')) {
-            return { ...msg, is_read: true, status: 'read' };
-          }
-          return msg;
-        });
-
-        // Calculate EXACT unread count - only unread admin messages
-        const newUnreadCount = updatedMessages.filter(msg =>
-          msg.sender_type === 'admin' && !msg.is_read
-        ).length;
-
-        console.log(`Marking messages read - Before: ${inquiry.unread_count}, After: ${newUnreadCount}`);
-
-        // Update in database with exact count
-        await connection.query(
-          'UPDATE inquiry_conversations SET messages = ?, unread_count = ?, updated_at = NOW() WHERE id = ?',
-          [JSON.stringify(updatedMessages), newUnreadCount, inquiryId]
-        );
-
-        connection.release();
-
-        // Notify all clients in the room
-        io.to(inquiryId).emit('messages_read', {
-          inquiryId: inquiryId,
-          messageIds: messageIds.length === 0 ?
-            currentMessages.filter(msg => msg.sender_type === 'admin').map(msg => msg.id) :
-            messageIds,
-          newUnreadCount: newUnreadCount
-        });
-
-        // Update navbar notification for user with PERSISTENT count
-        if (userId) {
-          // Get total unread count for user from database
-          const [userInquiries] = await connection.query(
-            'SELECT SUM(unread_count) as total_unread FROM inquiry_conversations WHERE user_id = ?',
-            [userId]
-          );
-
-          const totalUnread = userInquiries[0].total_unread || 0;
-
-          io.to(`user_${userId}`).emit('unread_count_update', {
-            userId: userId,
-            totalUnread: totalUnread
-          });
-
-          console.log(`Total unread count for user ${userId}: ${totalUnread}`);
-        }
-      }
-    } catch (error) {
-      console.error('Error marking messages as read:', error);
-    }
-  });
-
-  // Mark all messages as read for a user - PERSISTENT VERSION
-  socket.on('mark_all_messages_read', async (data) => {
-    try {
-      const { userId } = data;
-      const connection = await pool.getConnection();
-
-      // Get all user inquiries
-      const [inquiries] = await connection.query(
-        'SELECT * FROM inquiry_conversations WHERE user_id = ?',
-        [userId]
-      );
-
-      for (const inquiry of inquiries) {
-        const currentMessages = JSON.parse(inquiry.messages || '[]');
-        const updatedMessages = currentMessages.map(msg => ({
-          ...msg,
-          is_read: msg.sender_type === 'admin' ? true : msg.is_read
-        }));
-
-        // Set unread_count to 0 for this inquiry
-        await connection.query(
-          'UPDATE inquiry_conversations SET messages = ?, unread_count = 0, updated_at = NOW() WHERE id = ?',
-          [JSON.stringify(updatedMessages), inquiry.id]
-        );
-
-        // Emit to inquiry room that messages are read
-        io.to(inquiry.id).emit('messages_read', {
-          inquiryId: inquiry.id,
-          messageIds: currentMessages.filter(msg => msg.sender_type === 'admin').map(msg => msg.id),
-          newUnreadCount: 0
-        });
-      }
-
-      // Emit notification update for navbar
-      io.to(`user_${userId}`).emit('unread_count_update', {
-        userId: userId,
-        totalUnread: 0
-      });
-
-      connection.release();
-
-      console.log(`All messages marked as read for user ${userId}`);
-    } catch (error) {
-      console.error('Socket error marking all messages read:', error);
-    }
-  });
-
-  // Get real-time unread count when user connects - FROM DATABASE
-  socket.on('get_unread_count', async (data) => {
-    try {
-      const { userId } = data;
-      const connection = await pool.getConnection();
-
-      const [result] = await connection.query(
-        'SELECT SUM(unread_count) as total_unread FROM inquiry_conversations WHERE user_id = ?',
-        [userId]
-      );
-
-      const totalUnread = result[0].total_unread || 0;
-
-      connection.release();
-
-      // Send current unread count from database to user
-      socket.emit('unread_count_update', {
-        userId: userId,
-        totalUnread: totalUnread
-      });
-
-      console.log(`Initial unread count for user ${userId}: ${totalUnread}`);
-
-    } catch (error) {
-      console.error('Error getting unread count:', error);
-    }
-  });
-
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-    const userData = connectedUsers.get(socket.id);
-    if (userData) {
-      connectedUsers.delete(socket.id);
-    }
-  });
-});
-// ==================== ENHANCED TIME FORMATTING ====================
-const formatTimeForDisplay = (timestamp) => {
-  if (!timestamp) return 'Unknown';
-
-  try {
-    const now = new Date();
-    const time = new Date(timestamp);
-
-    // Validate the date
-    if (isNaN(time.getTime())) {
-      return 'Invalid date';
-    }
-
-    const diffMs = now - time;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-
-    // For older dates, show actual date and time
-    return time.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  } catch (error) {
-    console.error('Error formatting time:', error);
-    return 'Time error';
-  }
-};
-
-// ==================== ENHANCED SOCKET.IO WITH PROPER TIMESTAMPS ====================
-io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
-
-  // Handle new message with PROPER TIMESTAMP
-  socket.on('send_message', async (data) => {
-    try {
-      const { inquiryId, message, senderType, files = [], temporaryId } = data;
-
-      console.log('Received message via socket:', { inquiryId, message, senderType, temporaryId });
-
-      const connection = await pool.getConnection();
-
-      // Get current inquiry
-      const [inquiries] = await connection.query(
-        'SELECT * FROM inquiry_conversations WHERE id = ?',
-        [inquiryId]
-      );
-
-      if (inquiries.length === 0) {
-        connection.release();
-        socket.emit('message_error', { error: 'Inquiry not found', temporaryId });
-        return;
-      }
-
-      const inquiry = inquiries[0];
-      const currentMessages = JSON.parse(inquiry.messages || '[]');
-
-      // Duplicate check: block identical content from same sender within 60s
-      const lastMsg = currentMessages[currentMessages.length - 1];
-      const isDup = lastMsg && lastMsg.sender_type === senderType &&
-        (String(lastMsg.message || '').trim() === String(message || '').trim()) &&
-        (Math.abs(new Date(lastMsg.timestamp).getTime() - Date.now()) < 60000);
-      if (isDup) {
-        connection.release();
-        socket.emit('message_error', { error: 'Duplicate message detected', temporaryId, duplicate: true });
-        return;
-      }
-
-      // Create new message with PROPER TIMESTAMP
-      const newMessage = {
-        id: uuidv4(),
-        sender_type: senderType,
-        message: message,
-        files: files,
-        timestamp: new Date().toISOString(),
-        is_read: false,
-        status: 'delivered'
-      };
-
-      // Add to messages array
-      currentMessages.push(newMessage);
-
-      // Calculate new unread count
-      let newUnreadCount = inquiry.unread_count || 0;
-      if (senderType === 'admin') {
-        newUnreadCount += 1;
-      }
-
-      console.log(`Unread count update - Before: ${inquiry.unread_count}, After: ${newUnreadCount}, Sender: ${senderType}`);
-
-      // Update inquiry in database
-      await connection.query(
-        `UPDATE inquiry_conversations SET 
-          messages = ?, 
-          last_activity = NOW(),
-          updated_at = NOW(),
-          unread_count = ?,
-          status = CASE 
-            WHEN status = 'new' AND ? = 'admin' THEN 'processing'
-            WHEN status = 'new' AND ? = 'user' THEN 'pending'
-            ELSE status
-          END
-         WHERE id = ?`,
-        [JSON.stringify(currentMessages), newUnreadCount, senderType, senderType, inquiryId]
-      );
-
-      connection.release();
-
-      // Emit message to all clients in the room WITH PROPER TIMESTAMP
-      io.to(inquiryId).emit('new_message', {
-        ...newMessage,
-        inquiryId: inquiryId,
-        temporaryId: temporaryId,
-        formattedTime: formatTimeForDisplay(newMessage.timestamp) // ADD FORMATTED TIME
-      });
-
-      // Send confirmation back to sender
-      socket.emit('message_sent', {
-        success: true,
-        message: newMessage,
-        temporaryId: temporaryId
-      });
-
-      // REAL-TIME NOTIFICATION: Only show toast for admin messages
-      if (senderType === 'admin') {
-        // Emit to user's personal room
-        io.to(`user_${inquiry.user_id}`).emit('new_admin_message', {
-          type: 'new_message',
-          inquiryId: inquiryId,
-          message: message,
-          inquiryNumber: inquiry.inquiry_number,
-          productName: JSON.parse(inquiry.product_data).product_name,
-          unreadCount: newUnreadCount,
-          timestamp: new Date().toISOString(),
-          formattedTime: formatTimeForDisplay(new Date().toISOString())
-        });
-
-        // Also emit global notification for navbar
-        io.to(`user_${inquiry.user_id}`).emit('unread_count_update', {
-          userId: inquiry.user_id,
-          totalUnread: newUnreadCount
-        });
-
-        console.log(`Notification sent to user ${inquiry.user_id} for new admin message`);
-        try { await sendInquiryNotification(inquiry, message, 'admin'); } catch (e) { console.error('Inquiry email error:', e); }
-      }
-
-      console.log('Message saved and broadcasted:', newMessage.id);
-
-    } catch (error) {
-      console.error('Socket message error:', error);
-      socket.emit('message_error', {
-        error: 'Failed to send message',
-        temporaryId: data.temporaryId
-      });
-    }
-  });
-
-  // ... rest of your existing socket code
-});
-
-// ==================== MARK ALL MESSAGES READ ENDPOINT - PERSISTENT ====================
-app.put('/api/inquiries/mark-all-read', async (req, res) => {
-  let connection;
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const userId = decoded.userId;
-
-    connection = await pool.getConnection();
-
-    // Get all user inquiries
-    const [inquiries] = await connection.query(
-      'SELECT * FROM inquiry_conversations WHERE user_id = ?',
-      [userId]
-    );
-
-    // Mark all admin messages as read in each inquiry and set unread_count to 0
-    for (const inquiry of inquiries) {
-      const currentMessages = JSON.parse(inquiry.messages || '[]');
-      const updatedMessages = currentMessages.map(msg => ({
-        ...msg,
-        is_read: msg.sender_type === 'admin' ? true : msg.is_read
-      }));
-
-      await connection.query(
-        'UPDATE inquiry_conversations SET messages = ?, unread_count = 0, updated_at = NOW() WHERE id = ?',
-        [JSON.stringify(updatedMessages), inquiry.id]
-      );
-    }
-
-    connection.release();
-
-    // Emit socket event for real-time update
-    io.to(`user_${userId}`).emit('unread_count_update', {
-      userId: userId,
-      totalUnread: 0
-    });
-
-    res.json({
-      success: true,
-      message: 'All messages marked as read'
-    });
-  } catch (error) {
-    console.error('Error marking all messages as read:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to mark messages as read'
-    });
-  }
-});
-
-// ==================== GET USER'S UNREAD COUNT ENDPOINT - FROM DATABASE ====================
-app.get('/api/user/unread-count', async (req, res) => {
-  let connection;
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const userId = decoded.userId;
-
-    connection = await pool.getConnection();
-
-    const [result] = await connection.query(
-      'SELECT SUM(unread_count) as total_unread FROM inquiry_conversations WHERE user_id = ?',
-      [userId]
-    );
-
-    connection.release();
-
-    const totalUnread = result[0].total_unread || 0;
-
-    res.json({
-      success: true,
-      totalUnread: totalUnread
-    });
-  } catch (error) {
-    console.error('Error getting unread count:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get unread count'
-    });
-  }
-});
-
-// ==================== ENHANCED INQUIRY SYSTEM WITH PERSISTENT UNREAD COUNT ====================
-
-// Create or get inquiry - INITIALIZE unread_count to 0
-app.post('/api/inquiries', async (req, res) => {
-  let connection;
-  try {
-    const { userId, product, customerInfo } = req.body;
-
-    if (!userId || !product || !customerInfo) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields'
-      });
-    }
-
-    // NEW: Check for initial message to prevent empty inquiry creation
-    const { initialMessage } = req.body;
-
-    connection = await pool.getConnection();
-
-    // Check if inquiry already exists for this user-product combination
-    const [existingInquiries] = await connection.query(
-      'SELECT * FROM inquiry_conversations WHERE user_id = ? AND product_id = ?',
-      [userId, product.id]
-    );
-
-    let inquiry;
-
-    if (existingInquiries.length > 0) {
-      // Existing inquiry found - use the existing one
-      inquiry = existingInquiries[0];
-
-      // Update inquiry timestamp but keep unread_count
-      await connection.query(
-        'UPDATE inquiry_conversations SET last_activity = NOW(), updated_at = NOW() WHERE id = ?',
-        [inquiry.id]
-      );
-
-      console.log('Existing inquiry found:', inquiry.id, 'unread_count:', inquiry.unread_count);
-    } else {
-      // If creating NEW inquiry, REQUIRE an initial message
-      if (!initialMessage || !initialMessage.trim()) {
-        connection.release();
-        // If no message, we return success: false but with a specific code or just don't create it.
-        // However, the frontend expects a success if it wants to just "check".
-        // But "check" should be done via GET /api/inquiries/user/... or similar.
-        // This POST is for CREATION/RETRIEVAL.
-        // If we strictly want to prevent empty creation, we fail here.
-        return res.status(400).json({
-          success: false,
-          message: 'Initial message required for new inquiry'
-        });
-      }
-
-      const inquiryId = generateInquiryId(userId, product.id);
-      const inquiryNumber = generateInquiryNumber();
-
-      // Prepare initial messages array
-      const initialMessages = [{
-        id: uuidv4(),
-        sender_type: 'user',
-        message: initialMessage,
-        files: [],
-        timestamp: new Date().toISOString(),
-        is_read: true, // User's own message is read
-        status: 'sent'
-      }];
-
-      // Create new inquiry with unread_count = 0 (or 1? No, user sent it, admin hasn't read it? 
-      // The schema says unread_count. Is it for User or Admin?
-      // Usually unread_count in this app seems to be for User (based on GET /api/user/unread-count).
-      // So if User sends message, unread_count for User is 0.
-      // Admin unread count is tracked differently or derived?
-      // Wait, line 2610: "if (senderType === 'admin') newUnreadCount += 1".
-      // So unread_count is "Unread by User".
-      // So creating new inquiry (by User), unread_count = 0.
-
-      await connection.query(
-        `INSERT INTO inquiry_conversations (
-          id, user_id, product_id, inquiry_number, 
-          customer_name, customer_email, customer_phone, customer_country,
-          product_data, messages, status, created_at, updated_at, last_activity, unread_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW(), ?)`,
-        [
-          inquiryId,
-          userId,
-          product.id,
-          inquiryNumber,
-          customerInfo.name,
-          customerInfo.email,
-          customerInfo.phone,
-          customerInfo.country,
-          JSON.stringify({
-            ...product,
-            selectedSize: product.selectedSize || 'Customizable',
-            quantity: product.quantity || 1
-          }),
-          JSON.stringify(initialMessages), // Initialize with first message
-          'new',
-          0 // Initial unread_count = 0
-        ]
-      );
-
-      const [newInquiries] = await connection.query(
-        'SELECT * FROM inquiry_conversations WHERE id = ?',
-        [inquiryId]
-      );
-
-      inquiry = newInquiries[0];
-      console.log('New inquiry created:', inquiryId, 'unread_count: 0');
-
-      // Notify admin about new inquiry via Socket.IO
-      io.emit('admin_notification', {
-        type: 'new_inquiry',
-        inquiryId: inquiryId,
-        message: 'New inquiry received',
-        customerName: customerInfo.name,
-        productName: product.name
-      });
-
-      // ALSO Emit specific event that AdminInquiry.jsx listens for
-      io.emit('admin_new_inquiry', {
-        inquiryId: inquiryId,
-        customerName: customerInfo.name,
-        productName: product.name,
-        timestamp: new Date().toISOString()
-      });
-
-      // Send email notification for new inquiry
-      try {
-        await sendInquiryNotification(inquiry, initialMessage, 'user');
-      } catch (emailError) {
-        console.error('Failed to send new inquiry email:', emailError);
-      }
-    }
-
-    // Parse the messages
-    const messages = JSON.parse(inquiry.messages || '[]');
-
-    connection.release();
-
-    res.json({
-      success: true,
-      inquiry: {
-        ...inquiry,
-        product_data: JSON.parse(inquiry.product_data),
-        messages: messages,
-        price_data: inquiry.price_data ? JSON.parse(inquiry.price_data) : null
-      },
-      isNewInquiry: existingInquiries.length === 0
-    });
-  } catch (error) {
-    console.error('Error managing inquiry:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to manage inquiry: ' + error.message
-    });
-  }
-});
-
-// Get user's inquiries - RETURN PERSISTENT unread_count
-app.get('/api/inquiries/user/:userId', async (req, res) => {
-  let connection;
-  try {
-    const { userId } = req.params;
-
-    connection = await pool.getConnection();
-
-    const [inquiries] = await connection.query(
-      'SELECT * FROM inquiry_conversations WHERE user_id = ? ORDER BY last_activity DESC',
-      [userId]
-    );
-
-    const parsedInquiries = inquiries.map(inquiry => ({
-      ...inquiry,
-      product_data: JSON.parse(inquiry.product_data),
-      messages: JSON.parse(inquiry.messages || '[]'),
-      price_data: inquiry.price_data ? JSON.parse(inquiry.price_data) : null
-    }));
-
-    connection.release();
-
-    res.json({
-      success: true,
-      inquiries: parsedInquiries
-    });
-  } catch (error) {
-    console.error('Error fetching user inquiries:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch user inquiries: ' + error.message
-    });
-  }
-});
-
-// Get specific inquiry with real-time support
-app.get('/api/inquiries/:inquiryId', async (req, res) => {
-  let connection;
-  try {
-    const { inquiryId } = req.params;
-
-    connection = await pool.getConnection();
-
-    const [inquiries] = await connection.query(
-      'SELECT * FROM inquiry_conversations WHERE id = ?',
-      [inquiryId]
-    );
-
-    if (inquiries.length === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Inquiry not found'
-      });
-    }
-
-    const inquiry = inquiries[0];
-    const parsedInquiry = {
-      ...inquiry,
-      product_data: JSON.parse(inquiry.product_data),
-      messages: JSON.parse(inquiry.messages || '[]'),
-      price_data: inquiry.price_data ? JSON.parse(inquiry.price_data) : null
-    };
-
-    connection.release();
-
-    res.json({
-      success: true,
-      inquiry: parsedInquiry
-    });
-  } catch (error) {
-    console.error('Error fetching inquiry details:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch inquiry details: ' + error.message
-    });
-  }
-});
-
-// Get all inquiries for admin - IMPROVED WITH REAL-TIME SUPPORT
-app.get('/api/inquiries', async (req, res) => {
-  let connection;
-  try {
-    connection = await pool.getConnection();
-
-    const [inquiries] = await connection.query(
-      'SELECT * FROM inquiry_conversations ORDER BY last_activity DESC'
-    );
-
-    const parsedInquiries = inquiries.map(inquiry => {
-      const messages = JSON.parse(inquiry.messages || '[]');
-      return {
-        ...inquiry,
-        product_data: JSON.parse(inquiry.product_data),
-        messages: messages,
-        price_data: inquiry.price_data ? JSON.parse(inquiry.price_data) : null
-      };
-    });
-
-    connection.release();
-
-    res.json(parsedInquiries);
-  } catch (error) {
-    console.error('Error fetching inquiries:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch inquiries: ' + error.message
-    });
-  }
-});
-
-// Send message to inquiry - WITH PERSISTENT UNREAD COUNT
-app.post('/api/inquiries/:inquiryId/messages', async (req, res) => {
-  let connection;
-  try {
-    const { inquiryId } = req.params;
-    const { message, senderType, files = [] } = req.body;
-
-    if ((!message || !message.trim()) && files.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Message or files are required'
-      });
-    }
-
-    connection = await pool.getConnection();
-
-    // Get current inquiry with unread_count
-    const [inquiries] = await connection.query(
-      'SELECT * FROM inquiry_conversations WHERE id = ?',
-      [inquiryId]
-    );
-
-    if (inquiries.length === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Inquiry not found'
-      });
-    }
-
-    const inquiry = inquiries[0];
-    const currentMessages = JSON.parse(inquiry.messages || '[]');
-
-    // Create new message
-    const newMessage = {
-      id: uuidv4(),
-      sender_type: senderType,
-      message: (message || '').trim(),
-      files: files,
-      timestamp: new Date().toISOString(),
-      is_read: senderType === 'admin'
-    };
-
-    // Add to messages array
-    currentMessages.push(newMessage);
-
-    // Calculate new unread count - ONLY increment for admin messages
-    let newUnreadCount = inquiry.unread_count || 0;
-    if (senderType === 'admin') {
-      newUnreadCount += 1;
-    }
-
-    console.log(`API Message - Before: ${inquiry.unread_count}, After: ${newUnreadCount}, Sender: ${senderType}`);
-
-    // Determine new status
-    let newStatus = inquiry.status;
-    if (senderType === 'admin' && inquiry.status === 'new') {
-      newStatus = 'processing';
-    } else if (senderType === 'user' && inquiry.status === 'new') {
-      newStatus = 'pending';
-    }
-
-    // Update inquiry in database with PERSISTENT unread_count
-    await connection.query(
-      `UPDATE inquiry_conversations SET 
-        messages = ?, 
-        status = ?,
-        last_activity = NOW(),
-        updated_at = NOW(),
-        unread_count = ?
-       WHERE id = ?`,
-      [JSON.stringify(currentMessages), newStatus, newUnreadCount, inquiryId]
-    );
-
-    connection.release();
-
-    // Emit real-time message to all connected clients
-    io.to(inquiryId).emit('new_message', {
-      ...newMessage,
-      inquiryId: inquiryId
-    });
-
-    // REAL-TIME NOTIFICATION: Notify user about new admin message
-    if (senderType === 'admin') {
-      // Emit to user's personal room
-      io.to(`user_${inquiry.user_id}`).emit('new_admin_message', {
-        type: 'new_message',
-        inquiryId: inquiryId,
-        message: message,
-        inquiryNumber: inquiry.inquiry_number,
-        productName: JSON.parse(inquiry.product_data).product_name,
-        unreadCount: newUnreadCount,
-        timestamp: new Date().toISOString()
-      });
-
-      // Also emit global notification for navbar with PERSISTENT count
-      io.to(`user_${inquiry.user_id}`).emit('unread_count_update', {
-        userId: inquiry.user_id,
-        totalUnread: newUnreadCount
-      });
-    }
-
-    // Notify admin about new user message
-    if (senderType === 'user') {
-      io.emit('admin_notification', {
-        type: 'new_message',
-        inquiryId: inquiryId,
-        message: 'New message from customer',
-        customerName: inquiry.customer_name
-      });
-    }
-
-    // Send email notification
-    try {
-      await sendInquiryNotification(inquiry, message, senderType);
-    } catch (emailError) {
-      console.error('Failed to send inquiry notification email:', emailError);
-    }
-
-    res.json({
-      success: true,
-      message: 'Message sent successfully',
-      messageData: newMessage,
-      status: newStatus,
-      unreadCount: newUnreadCount
-    });
-  } catch (error) {
-    console.error('Error sending message:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to send message: ' + error.message
-    });
-  }
-});
-
-// Mark messages as read - WITH PERSISTENT UNREAD COUNT
-app.put('/api/inquiries/:inquiryId/messages/read', async (req, res) => {
-  let connection;
-  try {
-    const { inquiryId } = req.params;
-    const { messageIds, userId } = req.body;
-
-    connection = await pool.getConnection();
-
-    // Get current inquiry
-    const [inquiries] = await connection.query(
-      'SELECT * FROM inquiry_conversations WHERE id = ?',
-      [inquiryId]
-    );
-
-    if (inquiries.length === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Inquiry not found'
-      });
-    }
-
-    const inquiry = inquiries[0];
-    const currentMessages = JSON.parse(inquiry.messages || '[]');
-
-    // Mark messages as read
-    const updatedMessages = currentMessages.map(msg => {
-      if (messageIds && messageIds.includes(msg.id)) {
-        return { ...msg, is_read: true };
-      } else if (!messageIds && msg.sender_type === 'admin') {
-        return { ...msg, is_read: true };
-      }
-      return msg;
-    });
-
-    // Calculate EXACT new unread count - only unread admin messages
-    const newUnreadCount = updatedMessages.filter(msg =>
-      msg.sender_type === 'admin' && !msg.is_read
-    ).length;
-
-    console.log(`API Mark Read - Before: ${inquiry.unread_count}, After: ${newUnreadCount}`);
-
-    // Update inquiry in database with exact count
-    await connection.query(
-      'UPDATE inquiry_conversations SET messages = ?, unread_count = ?, updated_at = NOW() WHERE id = ?',
-      [JSON.stringify(updatedMessages), newUnreadCount, inquiryId]
-    );
-
-    connection.release();
-
-    // Emit real-time update
-    io.to(inquiryId).emit('messages_read', {
-      inquiryId: inquiryId,
-      messageIds: messageIds || currentMessages.filter(msg => msg.sender_type === 'admin').map(msg => msg.id),
-      newUnreadCount: newUnreadCount
-    });
-
-    // Update navbar notification for user if userId provided
-    if (userId) {
-      // Get total unread count for user from database
-      const [userInquiries] = await connection.query(
-        'SELECT SUM(unread_count) as total_unread FROM inquiry_conversations WHERE user_id = ?',
-        [userId]
-      );
-
-      const totalUnread = userInquiries[0].total_unread || 0;
-
-      io.to(`user_${userId}`).emit('unread_count_update', {
-        userId: userId,
-        totalUnread: totalUnread
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Messages marked as read',
-      newUnreadCount: newUnreadCount
-    });
-  } catch (error) {
-    console.error('Error marking messages as read:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to mark messages as read: ' + error.message
-    });
-  }
-});
-
-// Update inquiry status
-app.put('/api/inquiries/:inquiryId/status', async (req, res) => {
-  let connection;
-  try {
-    const { inquiryId } = req.params;
-    const { status } = req.body;
-
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: 'Status is required'
-      });
-    }
-
-    connection = await pool.getConnection();
-
-    // Debug: log customization_mode for incoming update
-    console.log('UPDATE product - customization_mode:', req.body.customization_mode);
-    const [result] = await connection.query(
-      'UPDATE inquiry_conversations SET status = ?, updated_at = NOW() WHERE id = ?',
-      [status, inquiryId]
-    );
-
-    // Emit status update via Socket.IO
-    io.to(inquiryId).emit('inquiry_status_updated', {
-      inquiryId: inquiryId,
-      status: status,
-      updated_at: new Date().toISOString()
-    });
-
-    connection.release();
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Inquiry not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Status updated successfully'
-    });
-  } catch (error) {
-    console.error('Error updating inquiry status:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update status: ' + error.message
-    });
-  }
-});
-
-// Activate checkout for inquiry
-app.put('/api/inquiries/:inquiryId/activate-checkout', async (req, res) => {
-  let connection;
-  try {
-    const { inquiryId } = req.params;
-    const { prices, status = 'completed' } = req.body;
-
-    if (!prices || Object.keys(prices).length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Price data is required'
-      });
-    }
-
-    connection = await pool.getConnection();
-
-    const [result] = await connection.query(
-      'UPDATE inquiry_conversations SET price_data = ?, status = ?, is_checkout_active = TRUE, updated_at = NOW() WHERE id = ?',
-      [JSON.stringify(prices), status, inquiryId]
-    );
-
-    // Emit checkout activation via Socket.IO
-    io.to(inquiryId).emit('checkout_activated', {
-      inquiryId: inquiryId,
-      prices: prices,
-      status: status
-    });
-
-    connection.release();
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Inquiry not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Checkout activated successfully',
-      status: status
-    });
-  } catch (error) {
-    console.error('Error activating checkout:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to activate checkout: ' + error.message
-    });
-  }
-});
-
-// File upload for inquiry attachments
-app.post('/api/inquiries/:inquiryId/upload', async (req, res) => {
-  let connection;
-  try {
-    if (!req.files || Object.keys(req.files).length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'No files were uploaded.'
-      });
-    }
-
-    const { inquiryId } = req.params;
-    const files = Array.isArray(req.files.files) ? req.files.files : [req.files.files];
-    const uploadResults = [];
-
-    // Validate inquiry exists
-    connection = await pool.getConnection();
-    const [inquiries] = await connection.query(
-      'SELECT id, user_id FROM inquiry_conversations WHERE id = ?',
-      [inquiryId]
-    );
-
-    if (inquiries.length === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Inquiry not found'
-      });
-    }
-
-    const toSlug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    let inquiryFolder = `yokebud craft/inquiries/${inquiryId}`;
-    try {
-      const uid = inquiries[0] && inquiries[0].user_id;
-      if (uid) {
-        const [userRows] = await connection.query('SELECT first_name, last_name FROM user_profiles WHERE user_id = ? LIMIT 1', [uid]);
-        let name = `user-${uid}`;
-        if (userRows.length > 0) {
-          const fn = userRows[0].first_name || '';
-          const ln = userRows[0].last_name || '';
-          const full = `${fn} ${ln}`.trim();
-          name = full || name;
-        }
-        const userSlug = toSlug(name);
-        inquiryFolder = `yokebud craft/users/${userSlug}/inquiries/${inquiryId}`;
-      }
-    } catch (_) { }
-
-    // Upload each file to Cloudinary
-    for (const file of files) {
-      const allowedTypes = [
-        'image/jpeg', 'image/png', 'image/webp', 'image/gif',
-        'application/pdf',
-        'text/plain',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'application/zip',
-        'application/vnd.rar'
-      ];
-
-      if (!allowedTypes.includes(file.mimetype)) {
-        connection.release();
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid file type. Only images, PDF, documents, and archives are allowed.'
-        });
-      }
-
-      try {
-        const result = await new Promise((resolve, reject) => {
-          const uploadStream = cloudinary.uploader.upload_stream(
-            {
-              folder: inquiryFolder,
-              public_id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              resource_type: 'auto'
-            },
-            (error, result) => {
-              if (error) {
-                console.error('Cloudinary upload error:', error);
-                reject(error);
-              } else {
-                resolve(result);
-              }
-            }
-          );
-          uploadStream.end(file.data);
-        });
-
-        uploadResults.push({
-          url: result.secure_url,
-          public_id: result.public_id,
-          name: file.name,
-          type: file.mimetype,
-          size: file.size
-        });
-      } catch (uploadError) {
-        console.error('File upload failed:', uploadError);
-        continue;
-      }
-    }
-
-    connection.release();
-
-    res.json({
-      success: true,
-      message: `${uploadResults.length} file(s) uploaded successfully`,
-      files: uploadResults
-    });
-  } catch (error) {
-    console.error('Upload endpoint error:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to upload files',
-      error: error.message
-    });
-  }
-});
-
-// ==================== HEALTH CHECK ENDPOINT ====================
-app.get('/health', async (req, res) => {
-  try {
-    const connection = await pool.getConnection();
-    await connection.query('SELECT 1');
-    connection.release();
-
-    res.status(200).json({
-      status: 'OK',
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime()
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'Error',
-      message: 'Database connection failed',
-      error: error.message
-    });
-  }
-});
-
-// Email template preview
-app.get('/debug/email-preview', (req, res) => {
-  const sampleContent = `<div style="color:${EMAIL_THEME.text};">
-    <h2 style="margin:0 0 12px 0;color:${EMAIL_THEME.text};">Sample Notification</h2>
-    <p style="margin:0;color:${EMAIL_THEME.textLight};line-height:1.7;">This is a sample preview for the current email template without logo.</p>
-  </div>`;
-  const html = renderThemedEmail({
-    title: 'Yokebud craft',
-    subtitle: 'Template Preview',
-    contentHtml: sampleContent,
-    primaryCtaText: 'Visit Website',
-    primaryCtaUrl: process.env.CLIENT_URL || 'https://www.yokebud.fi'
-  });
-  res.header('Content-Type', 'text/html');
-  res.send(html);
-});
-
-// ==================== ENHANCED USER AUTHENTICATION & PROFILE ====================
-
-// Generate OTP with 1 minute expiry
-const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-};
-
-// Send OTP email for enhanced authentication
-const sendEnhancedOTPEmail = async (email, otp, type = 'registration') => {
-  return await sendOTPEmail(email, otp, type);
-};
-
-// User Registration - Send OTP
-app.post('/api/user/register/send-otp', async (req, res) => {
-  let connection;
-  try {
-    const { email } = req.body;
-
-    console.log('Registration OTP request for email:', email);
-
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email is required'
-      });
-    }
-
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid email format'
-      });
-    }
-
-    connection = await pool.getConnection();
-
-    // Check if email already exists
-    const [existingUsers] = await connection.query(
-      'SELECT user_id FROM user_credentials WHERE email = ? AND is_active = TRUE',
-      [email]
-    );
-
-    if (existingUsers.length > 0) {
-      connection.release();
-      return res.status(400).json({
-        success: false,
-        message: 'Email already registered'
-      });
-    }
-
-    // Generate and save OTP with 1 minute expiry
-    const otp = generateOTP();
-    const expiresAt = new Date(Date.now() + 1 * 60 * 1000); // 1 minute
-
-    console.log('Generated registration OTP:', otp, 'Expires at:', expiresAt);
-
-    // Delete any existing OTPs for this email
-    await connection.query(
-      'DELETE FROM user_otps WHERE email = ? AND otp_type = ?',
-      [email, 'registration']
-    );
-
-    // Insert new OTP
-    await connection.query(
-      'INSERT INTO user_otps (email, otp_code, otp_type, expires_at, attempt_count) VALUES (?, ?, ?, ?, ?)',
-      [email, otp, 'registration', expiresAt, 0]
-    );
-
-    connection.release();
-
-    // Send OTP email
-    const emailSent = await sendEnhancedOTPEmail(email, otp, 'registration');
-
-    if (!emailSent) {
-      throw new Error('Failed to send OTP email');
-    }
-
-    console.log('Registration OTP sent successfully to:', email);
-
-    res.json({
-      success: true,
-      message: 'OTP sent successfully'
-    });
-  } catch (error) {
-    console.error('Send OTP error:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to send OTP: ' + error.message
-    });
-  }
-});
-
-// Verify OTP for Registration and create user
-app.post('/api/user/register/verify-otp', async (req, res) => {
-  let connection;
-  try {
-    const { email, otp, userData } = req.body;
-
-    console.log('Registration OTP verification request:', { email, otp, userData });
-
-    if (!email || !otp) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email and OTP are required'
-      });
-    }
-
-    connection = await pool.getConnection();
-
-    // Verify OTP with attempt count check
-    const [otps] = await connection.query(
-      `SELECT * FROM user_otps 
-       WHERE email = ? 
-       AND otp_code = ? 
-       AND otp_type = ? 
-       AND is_used = 0 
-       AND expires_at > NOW()
-       AND attempt_count < 5`,
-      [email, otp, 'registration']
-    );
-
-    console.log('Found registration OTPs:', otps);
-
-    if (otps.length === 0) {
-      // Check why OTP is invalid
-      const [expiredOtps] = await connection.query(
-        `SELECT * FROM user_otps 
-         WHERE email = ? AND otp_code = ? AND otp_type = ?`,
-        [email, otp, 'registration']
-      );
-
-      if (expiredOtps.length > 0) {
-        if (expiredOtps[0].is_used) {
-          console.log('Registration OTP already used');
-          connection.release();
-          return res.status(400).json({
-            success: false,
-            message: 'OTP has already been used'
-          });
-        } else if (expiredOtps[0].attempt_count >= 5) {
-          console.log('Registration OTP exceeded max attempts');
-          connection.release();
-          return res.status(400).json({
-            success: false,
-            message: 'OTP has been blocked due to too many failed attempts. Please request a new OTP.'
-          });
-        } else {
-          console.log('Registration OTP expired at:', expiredOtps[0].expires_at);
-          connection.release();
-          return res.status(400).json({
-            success: false,
-            message: 'OTP has expired'
-          });
-        }
-      } else {
-        // Increment attempt count for invalid OTP
-        const [invalidOtps] = await connection.query(
-          `SELECT * FROM user_otps 
-           WHERE email = ? 
-           AND otp_type = ? 
-           AND is_used = 0 
-           AND expires_at > NOW()`,
-          [email, 'registration']
-        );
-
-        if (invalidOtps.length > 0) {
-          await connection.query(
-            'UPDATE user_otps SET attempt_count = attempt_count + 1 WHERE id = ?',
-            [invalidOtps[0].id]
-          );
-        }
-
-        console.log('No valid registration OTP found for this email and code');
-        connection.release();
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid OTP code'
-        });
-      }
-    }
-
-    const otpData = otps[0];
-
-    // Generate user ID
-    const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-    // Start transaction
-    await connection.beginTransaction();
-
-    try {
-      // Check if user already exists (double check)
-      const [existingUsers] = await connection.query(
-        'SELECT user_id FROM user_credentials WHERE email = ? AND is_active = TRUE',
-        [email]
-      );
-
-      if (existingUsers.length > 0) {
-        await connection.rollback();
-        connection.release();
-        return res.status(400).json({
-          success: false,
-          message: 'Email already registered'
-        });
-      }
-
-      // Create user credentials without password
-      await connection.query(
-        'INSERT INTO user_credentials (user_id, email, is_verified, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())',
-        [userId, email, true]
-      );
-
-      // Create user profile with provided data
-      await connection.query(
-        `INSERT INTO user_profiles (
-          user_id, first_name, last_name, phone,
-          house_number, apartment, landmark,
-          address, city, state, zip_code, country, date_of_birth, gender,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-        [
-          userId,
-          userData?.firstName || userData?.first_name || '',
-          userData?.lastName || userData?.last_name || '',
-          userData?.phone || '',
-          userData?.house_number || '',
-          userData?.apartment || '',
-          userData?.landmark || '',
-          userData?.address || '',
-          userData?.city || '',
-          userData?.state || '',
-          userData?.zipCode || userData?.zip_code || '',
-          userData?.country || '',
-          userData?.dateOfBirth || userData?.date_of_birth || null,
-          userData?.gender || ''
-        ]
-      );
-
-      // Mark OTP as used
-      await connection.query(
-        'UPDATE user_otps SET is_used = 1 WHERE id = ?',
-        [otpData.id]
-      );
-
-      await connection.commit();
-
-      // Get complete user data
-      const [userDataResult] = await connection.query(
-        `SELECT uc.user_id, uc.email, uc.firebase_uid, 
-                up.first_name, up.last_name, up.phone,
-                up.house_number, up.apartment, up.landmark,
-                up.address, up.city, up.state, up.zip_code, up.country
-       FROM user_credentials uc 
-       LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
-       WHERE uc.user_id = ? AND uc.is_active = TRUE`,
-        [userId]
-      );
-
-      connection.release();
-
-      if (userDataResult.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found after creation'
-        });
-      }
-
-      const user = userDataResult[0];
-
-      // Check if profile needs completion
-      const needsProfileCompletion = !user.first_name || !user.last_name || !user.phone;
-
-      console.log('New user profile completion status:', {
-        first_name: user.first_name,
-        last_name: user.last_name,
-        phone: user.phone,
-        needsCompletion: needsProfileCompletion
-      });
-
-      // Generate JWT token using the function
-      const token = generateToken(userId);
-
-      try {
-        await sendAccountWelcomeEmail(email, user.first_name);
-      } catch (emailError) {
-        console.error('Failed to send account welcome email:', emailError);
-      }
-
-      console.log('Registration completed successfully for user:', email, 'User ID:', userId);
-
-      res.json({
-        success: true,
-        message: 'Registration successful',
-        token,
-        user: user,
-        isNewUser: true,
-        needsProfileCompletion
-      });
-
-    } catch (transactionError) {
-      await connection.rollback();
-      throw transactionError;
-    }
-
-  } catch (error) {
-    console.error('Registration OTP verification error:', error);
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
-    res.status(500).json({
-      success: false,
-      message: 'Registration failed: ' + error.message
-    });
-  }
-});
-
-// Send Login OTP
-app.post('/api/user/login/send-otp', async (req, res) => {
-  let connection;
-  try {
-    const { email } = req.body;
-
-    console.log('Login OTP request for email:', email);
-
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email is required'
-      });
-    }
-
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid email format'
-      });
-    }
-
-    connection = await pool.getConnection();
-
-    // Check if user exists
-    const [users] = await connection.query(
-      'SELECT user_id FROM user_credentials WHERE email = ? AND is_active = TRUE',
-      [email]
-    );
-
-    if (users.length === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Email not registered'
-      });
-    }
-
-    // Generate and save OTP with 1 minute expiry
-    const otp = generateOTP();
-    const expiresAt = new Date(Date.now() + 1 * 60 * 1000); // 1 minute
-
-    console.log('Generated login OTP:', otp, 'Expires at:', expiresAt);
-
-    // Delete any existing OTPs for this email
-    await connection.query(
-      'DELETE FROM user_otps WHERE email = ? AND otp_type = ?',
-      [email, 'email_verification']
-    );
-
-    // Insert new OTP
-    await connection.query(
-      'INSERT INTO user_otps (email, otp_code, otp_type, expires_at, attempt_count) VALUES (?, ?, ?, ?, ?)',
-      [email, otp, 'email_verification', expiresAt, 0]
-    );
-
-    connection.release();
-
-    // Send OTP email
-    await sendEnhancedOTPEmail(email, otp, 'email_verification');
-
-    console.log('Login OTP sent successfully to:', email);
-
-    res.json({
-      success: true,
-      message: 'OTP sent successfully'
-    });
-  } catch (error) {
-    console.error('Login OTP error:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to send OTP: ' + error.message
-    });
-  }
-});
-
-// Verify Login OTP
-app.post('/api/user/login/verify-otp', async (req, res) => {
-  let connection;
-  try {
-    const { email, otp } = req.body;
-
-    console.log('Login OTP verification request:', { email, otp });
-
-    if (!email || !otp) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email and OTP are required'
-      });
-    }
-
-    connection = await pool.getConnection();
-
-    // Verify OTP with attempt count check
-    const [otps] = await connection.query(
-      `SELECT * FROM user_otps 
-       WHERE email = ? 
-       AND otp_code = ? 
-       AND otp_type = ? 
-       AND is_used = 0 
-       AND expires_at > NOW()
-       AND attempt_count < 5`,
-      [email, otp, 'email_verification']
-    );
-
-    console.log('Found login OTPs:', otps);
-
-    if (otps.length === 0) {
-      // Check why OTP is invalid
-      const [expiredOtps] = await connection.query(
-        `SELECT * FROM user_otps 
-         WHERE email = ? AND otp_code = ? AND otp_type = ?`,
-        [email, otp, 'email_verification']
-      );
-
-      if (expiredOtps.length > 0) {
-        if (expiredOtps[0].is_used) {
-          console.log('Login OTP already used');
-          connection.release();
-          return res.status(400).json({
-            success: false,
-            message: 'OTP has already been used'
-          });
-        } else if (expiredOtps[0].attempt_count >= 5) {
-          console.log('Login OTP exceeded max attempts');
-          connection.release();
-          return res.status(400).json({
-            success: false,
-            message: 'OTP has been blocked due to too many failed attempts. Please request a new OTP.'
-          });
-        } else {
-          console.log('Login OTP expired at:', expiredOtps[0].expires_at);
-          connection.release();
-          return res.status(400).json({
-            success: false,
-            message: 'OTP has expired'
-          });
-        }
-      } else {
-        // Increment attempt count for invalid OTP
-        const [invalidOtps] = await connection.query(
-          `SELECT * FROM user_otps 
-           WHERE email = ? 
-           AND otp_type = ? 
-           AND is_used = 0 
-           AND expires_at > NOW()`,
-          [email, 'email_verification']
-        );
-
-        if (invalidOtps.length > 0) {
-          await connection.query(
-            'UPDATE user_otps SET attempt_count = attempt_count + 1 WHERE id = ?',
-            [invalidOtps[0].id]
-          );
-        }
-
-        console.log('No valid login OTP found for this email and code');
-        connection.release();
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid OTP code'
-        });
-      }
-    }
-
-    // Get user data
-    const [users] = await connection.query(
-      `SELECT uc.user_id, uc.email, uc.firebase_uid, 
-              up.first_name, up.last_name, up.phone,
-              up.house_number, up.apartment, up.landmark,
-              up.address, up.city, up.state, up.zip_code, up.country,
-              up.date_of_birth
-       FROM user_credentials uc 
-       LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
-       WHERE uc.email = ? AND uc.is_active = TRUE`,
-      [email]
-    );
-
-    if (users.length === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    const user = users[0];
-
-    // Check if profile needs completion
-    const needsProfileCompletion = !user.first_name || !user.last_name || !user.phone;
-
-    console.log('Login user profile completion status:', {
-      first_name: user.first_name,
-      last_name: user.last_name,
-      phone: user.phone,
-      needsCompletion: needsProfileCompletion
-    });
-
-    // Mark OTP as used
-    await connection.query(
-      'UPDATE user_otps SET is_used = 1 WHERE id = ?',
-      [otps[0].id]
-    );
-
-    connection.release();
-
-    // Generate JWT token using the function
-    const token = generateToken(user.user_id);
-
-    console.log('Login OTP verification successful for user:', user.email);
-
-    res.json({
-      success: true,
-      message: 'Login successful',
-      token,
-      user: user,
-      isNewUser: false,
-      needsProfileCompletion
-    });
-  } catch (error) {
-    console.error('Login verify error:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Login failed: ' + error.message
-    });
-  }
-});
-
-// ==================== PASSWORD RESET ====================
-
-// Forgot Password - Send Reset Link
-app.post('/api/user/forgot-password', async (req, res) => {
-  let connection;
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ success: false, message: 'Email is required' });
-    }
-
-    connection = await pool.getConnection();
-
-    // Check if user exists
-    const [users] = await connection.query(
-      'SELECT user_id, email FROM user_credentials WHERE email = ? AND is_active = TRUE',
-      [email]
-    );
-
-    if (users.length === 0) {
-      connection.release();
-      // For security, do not reveal if user exists
-      return res.json({ success: true, message: 'If your email is registered, you will receive a password reset link.' });
-    }
-
-    // Generate reset token
-    const resetToken = require('crypto').randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 3600000); // 1 hour
-
-    // Save to password_resets table (upsert)
-    await connection.query(
-      'INSERT INTO password_resets (email, token, expires_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE token = ?, expires_at = ?, created_at = NOW()',
-      [email, resetToken, expiresAt, resetToken, expiresAt]
-    );
-
-    connection.release();
-
-    // Send email
-    try {
-      await sendPasswordResetEmail(email, resetToken);
-    } catch (emailError) {
-      console.error('Failed to send password reset email:', emailError);
-    }
-
-    res.json({ success: true, message: 'If your email is registered, you will receive a password reset link.' });
-
-  } catch (error) {
-    console.error('Forgot password error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to process request' });
-  }
-});
-
-// Reset Password - Update Password
-app.post('/api/user/reset-password', async (req, res) => {
-  let connection;
-  try {
-    const { token, newPassword, email } = req.body;
-
-    if (!token || !newPassword || !email) {
-      return res.status(400).json({ success: false, message: 'Invalid request data' });
-    }
-
-    connection = await pool.getConnection();
-
-    // Verify token
-    const [resets] = await connection.query(
-      'SELECT * FROM password_resets WHERE email = ? AND token = ? AND expires_at > NOW()',
-      [email, token]
-    );
-
-    if (resets.length === 0) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Invalid or expired reset token' });
-    }
-
-    // Hash new password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(newPassword, salt);
-
-    // Update password
-    await connection.query(
-      'UPDATE user_credentials SET password_hash = ? WHERE email = ?',
-      [hashedPassword, email]
-    );
-
-    // Delete reset token
-    await connection.query(
-      'DELETE FROM password_resets WHERE email = ?',
-      [email]
-    );
-
-    connection.release();
-
-    res.json({ success: true, message: 'Password has been reset successfully' });
-
-  } catch (error) {
-    console.error('Reset password error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to reset password' });
-  }
-});
-
-// ==================== FIREBASE GOOGLE AUTHENTICATION ====================
-
-app.post('/api/user/auth/firebase-google', async (req, res) => {
-  let connection;
-  try {
-    const { user: firebaseUser } = req.body;
-
-    console.log('Firebase Google auth request:', { email: firebaseUser?.email });
-
-    if (!firebaseUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'Firebase user data is required'
-      });
-    }
-
-    const { uid: firebaseUid, email, displayName, photoURL, emailVerified } = firebaseUser;
-
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email is required from Firebase'
-      });
-    }
-
-    // Extract first and last name from displayName
-    let firstName = '';
-    let lastName = '';
-    if (displayName) {
-      const nameParts = displayName.split(' ');
-      firstName = nameParts[0] || '';
-      lastName = nameParts.slice(1).join(' ') || '';
-    }
-
-    connection = await pool.getConnection();
-
-    // Check if user exists with this Firebase UID or email
-    const [users] = await connection.query(
-      `SELECT uc.user_id, uc.email, uc.firebase_uid, 
-              up.first_name, up.last_name, up.phone,
-              up.house_number, up.apartment, up.landmark,
-              up.address, up.city, up.state, up.zip_code, up.country
-       FROM user_credentials uc 
-       LEFT JOIN user_profiles up ON uc.user_id = up.user_id 
-       WHERE uc.firebase_uid = ? OR uc.email = ?`,
-      [firebaseUid, email]
-    );
-
-    let userId;
-    let isNewUser = false;
-    let needsProfileCompletion = false;
-
-    if (users.length > 0) {
-      // User exists
-      const existingUser = users[0];
-      userId = existingUser.user_id;
-
-      // Check if profile needs completion
-      needsProfileCompletion = !existingUser.first_name || !existingUser.last_name || !existingUser.phone;
-
-      console.log('Existing user profile completion status:', {
-        first_name: existingUser.first_name,
-        last_name: existingUser.last_name,
-        phone: existingUser.phone,
-        needsCompletion: needsProfileCompletion
-      });
-
-      // Update Firebase UID if not set or different
-      if (!existingUser.firebase_uid || existingUser.firebase_uid !== firebaseUid) {
-        await connection.query(
-          'UPDATE user_credentials SET firebase_uid = ?, is_verified = TRUE WHERE user_id = ?',
-          [firebaseUid, userId]
-        );
-      }
-
-      // Update names if they are empty but available from Firebase
-      if ((!existingUser.first_name || !existingUser.last_name) && displayName) {
-        await connection.query(
-          'UPDATE user_profiles SET first_name = ?, last_name = ? WHERE user_id = ?',
-          [firstName, lastName, userId]
-        );
-        // Update the needsProfileCompletion after potential update
-        needsProfileCompletion = !firstName || !lastName || !existingUser.phone;
-      }
-    } else {
-      // Create new user
-      isNewUser = true;
-      userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      needsProfileCompletion = true; // New users always need profile completion
-
-      // Start transaction
-      await connection.beginTransaction();
-
-      try {
-        // Create credentials
-        await connection.query(
-          'INSERT INTO user_credentials (user_id, email, firebase_uid, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())',
-          [userId, email, firebaseUid, emailVerified || true]
-        );
-
-        // Create profile with Firebase data
-        await connection.query(
-          `INSERT INTO user_profiles (
-            user_id, first_name, last_name, created_at, updated_at
-          ) VALUES (?, ?, ?, NOW(), NOW())`,
-          [userId, firstName, lastName]
-        );
-
-        await connection.commit();
-      } catch (transactionError) {
-        await connection.rollback();
-        throw transactionError;
-      }
-    }
-
-    // Get complete user data
-    const [userData] = await connection.query(
-      `SELECT uc.user_id, uc.email, uc.firebase_uid, 
-              up.first_name, up.last_name, up.phone,
-              up.house_number, up.apartment, up.landmark,
-              up.address, up.city, up.state, up.zip_code, up.country
-       FROM user_credentials uc
-       LEFT JOIN user_profiles up ON uc.user_id = up.user_id
-       WHERE uc.user_id = ? AND uc.is_active = TRUE`,
-      [userId]
-    );
-
-    connection.release();
-
-    if (userData.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    const user = userData[0];
-
-    // Double check needsProfileCompletion status
-    const finalNeedsProfileCompletion = !user.first_name || !user.last_name || !user.phone;
-
-    // Generate JWT token using the function
-    const token = generateToken(userId);
-
-    // Send welcome email for new users
-    if (isNewUser) {
-      try {
-        await sendAccountWelcomeEmail(email, firstName || displayName || 'Valued Customer');
-      } catch (emailError) {
-        console.error('Failed to send welcome email for Google auth:', emailError);
-      }
-    }
-
-    console.log('Firebase Google auth successful for user:', email, 'isNewUser:', isNewUser, 'needsProfileCompletion:', finalNeedsProfileCompletion);
-
-    res.json({
-      success: true,
-      message: isNewUser ? 'Registration successful' : 'Login successful',
-      token,
-      user: user,
-      isNewUser,
-      needsProfileCompletion: finalNeedsProfileCompletion
-    });
-  } catch (error) {
-    console.error('Firebase Google auth error:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Firebase authentication failed: ' + error.message
-    });
-  }
-});
-
-// Get User Profile
-app.get('/api/user/profile', async (req, res) => {
-  let connection;
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const userId = decoded.userId;
-
-    connection = await pool.getConnection();
-    const [users] = await connection.query(
-      `SELECT uc.user_id, uc.email, uc.firebase_uid, 
-              up.first_name, up.last_name, up.phone,
-              up.house_number, up.apartment, up.landmark,
-              up.address, up.city, up.state, up.zip_code, up.country
-       FROM user_credentials uc
-       LEFT JOIN user_profiles up ON uc.user_id = up.user_id
-       WHERE uc.user_id = ? AND uc.is_active = TRUE`,
-      [userId]
-    );
-
-    if (users.length === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    connection.release();
-
-    res.json({
-      success: true,
-      user: users[0]
-    });
-  } catch (error) {
-    console.error('Get profile error:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get profile: ' + error.message
-    });
-  }
-});
-
-// Update User Profile
-app.put('/api/user/profile', async (req, res) => {
-  let connection;
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const userId = decoded.userId;
-    const userData = req.body;
-
-    console.log('Profile update request for user:', userId, 'data:', userData);
-
-    connection = await pool.getConnection();
-
-    // Upsert user profile (insert if not exists, update if exists)
-    // Assumes user_profiles.user_id is PRIMARY KEY or UNIQUE
-    const [updateResult] = await connection.query(
-      `UPDATE user_profiles SET
-          first_name = COALESCE(?, first_name),
-          last_name = COALESCE(?, last_name),
-          phone = COALESCE(?, phone),
-          house_number = COALESCE(?, house_number),
-          apartment = COALESCE(?, apartment),
-          landmark = COALESCE(?, landmark),
-          address = COALESCE(?, address),
-          city = COALESCE(?, city),
-          state = COALESCE(?, state),
-          zip_code = COALESCE(?, zip_code),
-          country = COALESCE(?, country),
-          updated_at = NOW()
-       WHERE user_id = ?`,
-      [
-        userData.first_name === undefined ? null : userData.first_name,
-        userData.last_name === undefined ? null : userData.last_name,
-        userData.phone === undefined ? null : userData.phone,
-        userData.house_number === undefined ? null : userData.house_number,
-        userData.apartment === undefined ? null : userData.apartment,
-        userData.landmark === undefined ? null : userData.landmark,
-        userData.address === undefined ? null : userData.address,
-        userData.city === undefined ? null : userData.city,
-        userData.state === undefined ? null : userData.state,
-        userData.zip_code === undefined ? null : userData.zip_code,
-        userData.country === undefined ? null : userData.country,
-        userId
-      ]
-    );
-
-    if (!updateResult || updateResult.affectedRows === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Profile not found for update'
-      });
-    }
-
-    // Get updated profile
-    const [users] = await connection.query(
-      `SELECT uc.user_id, uc.email, uc.firebase_uid, 
-              up.first_name, up.last_name, up.phone,
-              up.house_number, up.apartment, up.landmark,
-              up.address, up.city, up.state, up.zip_code, up.country
-       FROM user_credentials uc
-       LEFT JOIN user_profiles up ON uc.user_id = up.user_id
-       WHERE uc.user_id = ? AND uc.is_active = TRUE`,
-      [userId]
-    );
-
-    connection.release();
-
-    if (users.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    console.log('Profile updated successfully for user:', userId);
-
-    res.json({
-      success: true,
-      message: 'Profile updated successfully',
-      user: users[0]
-    });
-  } catch (error) {
-    console.error('Update profile error:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update profile: ' + error.message
-    });
-  }
-});
-
-// Get countries list (try DB, fallback to static list)
-app.get('/api/countries', async (req, res) => {
-  let connection;
-  try {
-    connection = await pool.getConnection();
-
-    // Try to query a countries table if it exists
-    try {
-      const [rows] = await connection.query('SELECT code, name FROM countries ORDER BY name');
-      connection.release();
-      if (rows && rows.length > 0) {
-        return res.json({ success: true, countries: rows });
-      }
-    } catch (dbErr) {
-      // If table doesn't exist or query fails, fall back to static list
-      connection.release();
-    }
-
-    // Fallback static list (code, name)
-    const staticCountries = [
-      { code: 'AF', name: 'Afghanistan' }, { code: 'AL', name: 'Albania' }, { code: 'DZ', name: 'Algeria' }, { code: 'AD', name: 'Andorra' }, { code: 'AO', name: 'Angola' }, { code: 'AR', name: 'Argentina' }, { code: 'AM', name: 'Armenia' }, { code: 'AU', name: 'Australia' }, { code: 'AT', name: 'Austria' }, { code: 'AZ', name: 'Azerbaijan' }, { code: 'BD', name: 'Bangladesh' }, { code: 'BB', name: 'Barbados' }, { code: 'BY', name: 'Belarus' }, { code: 'BE', name: 'Belgium' }, { code: 'BJ', name: 'Benin' }, { code: 'BT', name: 'Bhutan' }, { code: 'BO', name: 'Bolivia' }, { code: 'BA', name: 'Bosnia and Herzegovina' }, { code: 'BW', name: 'Botswana' }, { code: 'BR', name: 'Brazil' }, { code: 'BN', name: 'Brunei' }, { code: 'BG', name: 'Bulgaria' }, { code: 'BF', name: 'Burkina Faso' }, { code: 'BI', name: 'Burundi' }, { code: 'KH', name: 'Cambodia' }, { code: 'CM', name: 'Cameroon' }, { code: 'CA', name: 'Canada' }, { code: 'CV', name: 'Cabo Verde' }, { code: 'CL', name: 'Chile' }, { code: 'CN', name: 'China' }, { code: 'CO', name: 'Colombia' }, { code: 'CR', name: 'Costa Rica' }, { code: 'HR', name: 'Croatia' }, { code: 'CU', name: 'Cuba' }, { code: 'CY', name: 'Cyprus' }, { code: 'CZ', name: 'Czech Republic' }, { code: 'DK', name: 'Denmark' }, { code: 'DO', name: 'Dominican Republic' }, { code: 'EC', name: 'Ecuador' }, { code: 'EG', name: 'Egypt' }, { code: 'SV', name: 'El Salvador' }, { code: 'EE', name: 'Estonia' }, { code: 'ET', name: 'Ethiopia' }, { code: 'FI', name: 'Finland' }, { code: 'FR', name: 'France' }, { code: 'DE', name: 'Germany' }, { code: 'GH', name: 'Ghana' }, { code: 'GR', name: 'Greece' }, { code: 'GT', name: 'Guatemala' }, { code: 'GN', name: 'Guinea' }, { code: 'GY', name: 'Guyana' }, { code: 'HT', name: 'Haiti' }, { code: 'HN', name: 'Honduras' }, { code: 'HU', name: 'Hungary' }, { code: 'IS', name: 'Iceland' }, { code: 'IN', name: 'India' }, { code: 'ID', name: 'Indonesia' }, { code: 'IR', name: 'Iran' }, { code: 'IQ', name: 'Iraq' }, { code: 'IE', name: 'Ireland' }, { code: 'IL', name: 'Israel' }, { code: 'IT', name: 'Italy' }, { code: 'JP', name: 'Japan' }, { code: 'JO', name: 'Jordan' }, { code: 'KZ', name: 'Kazakhstan' }, { code: 'KE', name: 'Kenya' }, { code: 'KR', name: 'South Korea' }, { code: 'KW', name: 'Kuwait' }, { code: 'KG', name: 'Kyrgyzstan' }, { code: 'LV', name: 'Latvia' }, { code: 'LB', name: 'Lebanon' }, { code: 'LT', name: 'Lithuania' }, { code: 'LU', name: 'Luxembourg' }, { code: 'MK', name: 'North Macedonia' }, { code: 'MG', name: 'Madagascar' }, { code: 'MW', name: 'Malawi' }, { code: 'MY', name: 'Malaysia' }, { code: 'MV', name: 'Maldives' }, { code: 'ML', name: 'Mali' }, { code: 'MT', name: 'Malta' }, { code: 'MH', name: 'Marshall Islands' }, { code: 'MR', name: 'Mauritania' }, { code: 'MU', name: 'Mauritius' }, { code: 'MX', name: 'Mexico' }, { code: 'MD', name: 'Moldova' }, { code: 'MC', name: 'Monaco' }, { code: 'MN', name: 'Mongolia' }, { code: 'ME', name: 'Montenegro' }, { code: 'MA', name: 'Morocco' }, { code: 'MZ', name: 'Mozambique' }, { code: 'MM', name: 'Myanmar' }, { code: 'NA', name: 'Namibia' }, { code: 'NP', name: 'Nepal' }, { code: 'NL', name: 'Netherlands' }, { code: 'NZ', name: 'New Zealand' }, { code: 'NI', name: 'Nicaragua' }, { code: 'NG', name: 'Nigeria' }, { code: 'NO', name: 'Norway' }, { code: 'OM', name: 'Oman' }, { code: 'PK', name: 'Pakistan' }, { code: 'PW', name: 'Palau' }, { code: 'PA', name: 'Panama' }, { code: 'PG', name: 'Papua New Guinea' }, { code: 'PY', name: 'Paraguay' }, { code: 'PE', name: 'Peru' }, { code: 'PH', name: 'Philippines' }, { code: 'PL', name: 'Poland' }, { code: 'PT', name: 'Portugal' }, { code: 'QA', name: 'Qatar' }, { code: 'RO', name: 'Romania' }, { code: 'RU', name: 'Russia' }, { code: 'SA', name: 'Saudi Arabia' }, { code: 'SN', name: 'Senegal' }, { code: 'RS', name: 'Serbia' }, { code: 'SC', name: 'Seychelles' }, { code: 'SL', name: 'Sierra Leone' }, { code: 'SG', name: 'Singapore' }, { code: 'SK', name: 'Slovakia' }, { code: 'SI', name: 'Slovenia' }, { code: 'SB', name: 'Solomon Islands' }, { code: 'SO', name: 'Somalia' }, { code: 'ZA', name: 'South Africa' }, { code: 'ES', name: 'Spain' }, { code: 'LK', name: 'Sri Lanka' }, { code: 'SD', name: 'Sudan' }, { code: 'SR', name: 'Suriname' }, { code: 'SE', name: 'Sweden' }, { code: 'CH', name: 'Switzerland' }, { code: 'SY', name: 'Syria' }, { code: 'TW', name: 'Taiwan' }, { code: 'TJ', name: 'Tajikistan' }, { code: 'TZ', name: 'Tanzania' }, { code: 'TH', name: 'Thailand' }, { code: 'TL', name: 'Timor-Leste' }, { code: 'TG', name: 'Togo' }, { code: 'TO', name: 'Tonga' }, { code: 'TT', name: 'Trinidad and Tobago' }, { code: 'TN', name: 'Tunisia' }, { code: 'TR', name: 'Turkey' }, { code: 'TM', name: 'Turkmenistan' }, { code: 'TV', name: 'Tuvalu' }, { code: 'UG', name: 'Uganda' }, { code: 'UA', name: 'Ukraine' }, { code: 'AE', name: 'United Arab Emirates' }, { code: 'GB', name: 'United Kingdom' }, { code: 'US', name: 'United States' }, { code: 'UY', name: 'Uruguay' }, { code: 'UZ', name: 'Uzbekistan' }, { code: 'VU', name: 'Vanuatu' }, { code: 'VA', name: 'Vatican City' }, { code: 'VE', name: 'Venezuela' }, { code: 'VN', name: 'Vietnam' }, { code: 'YE', name: 'Yemen' }, { code: 'ZM', name: 'Zambia' }, { code: 'ZW', name: 'Zimbabwe' }
-    ];
-
-    return res.json({ success: true, countries: staticCountries });
-  } catch (error) {
-    console.error('Countries endpoint error:', error);
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to get countries' });
-  }
-});
-
-// Get User Orders
-app.get('/api/user/orders', async (req, res) => {
-  let connection;
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'Authentication required' });
-    }
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const userId = decoded.userId;
-
-    connection = await pool.getConnection();
-
-    // Lookup user email from credentials to match orders by email as a fallback
-    const [credRows] = await connection.query(
-      'SELECT email FROM user_credentials WHERE user_id = ? LIMIT 1',
-      [userId]
-    );
-    const userEmail = credRows && credRows[0] ? credRows[0].email : null;
-
-    const [rows] = await connection.query(
-      `SELECT * FROM orders 
-       WHERE user_id = ? ${userEmail ? 'OR JSON_UNQUOTE(JSON_EXTRACT(customer_info, "$.email")) = ?' : ''}
-       ORDER BY created_at DESC`,
-      userEmail ? [userId, userEmail] : [userId]
-    );
-
-    connection.release();
-
-    const parsed = (rows || []).map(o => {
-      let customer_info = o.customer_info;
-      let items = o.items;
-      let totals = o.totals;
-      let shipping_address = o.shipping_address;
-      try { customer_info = typeof customer_info === 'string' ? JSON.parse(customer_info) : customer_info; } catch { }
-      try { items = typeof items === 'string' ? JSON.parse(items) : items; } catch { }
-      try { totals = typeof totals === 'string' ? JSON.parse(totals) : totals; } catch { }
-      try { shipping_address = typeof shipping_address === 'string' ? JSON.parse(shipping_address) : shipping_address; } catch { }
-      const firstItem = Array.isArray(items) && items[0] ? items[0] : null;
-      const product_details = firstItem ? {
-        product_name: firstItem.product_name || firstItem.name || 'N/A',
-        image: firstItem.image || null,
-        price: firstItem.price || 0,
-        quantity: firstItem.quantity || 1
-      } : { product_name: 'N/A' };
-      return {
-        order_id: o.order_id,
-        items: Array.isArray(items) ? items : [],
-        product_details,
-        order_date: o.created_at,
-        status: o.status,
-        total_amount: totals && typeof totals.total !== 'undefined' ? totals.total : null,
-        shipping_address,
-        payment_method: o.payment_method,
-        tracking_number: o.tracking_number || null,
-        shipping_status: o.shipping_status || o.status || null,
-        notes: o.notes || null
-      };
-    });
-
-    res.json({ success: true, orders: parsed });
-  } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to get orders: ' + error.message });
-  }
-});
-
-// Get user wishlist
-app.get('/api/user/wishlist', async (req, res) => {
-  let connection;
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'Authentication required' });
-    }
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const userId = decoded.userId;
-
-    connection = await pool.getConnection();
-    const [profileRows] = await connection.query('SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1', [userId]);
-    if (!profileRows || profileRows.length === 0) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Profile not found for user' });
-    }
-    const profileId = profileRows[0].id;
-    const [rows] = await connection.query(
-      `SELECT uw.product_id AS _id,
-              p.product_name,
-              COALESCE(p.discounted_price, p.price) AS price,
-              p.images
-       FROM user_wishlist uw
-       JOIN products p ON p.id = uw.product_id
-       WHERE uw.user_id = ?
-       ORDER BY uw.added_at DESC`,
-      [profileId]
-    );
-    connection.release();
-
-    const wishlist = (rows || []).map(r => {
-      let firstImage = null;
-      try {
-        const imgs = typeof r.images === 'string' ? JSON.parse(r.images || '[]') : (r.images || []);
-        if (Array.isArray(imgs) && imgs.length > 0) {
-          firstImage = imgs[0] || null;
-        }
-      } catch { }
-      const image = firstImage
-        ? (String(firstImage).startsWith('http') ? firstImage : `https://api.yokebud.fi${String(firstImage).startsWith('/') ? '' : '/'}${firstImage}`)
-        : null;
-      return { _id: r._id, product_name: r.product_name, price: r.price, image };
-    });
-
-    res.json({ success: true, wishlist });
-  } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to fetch wishlist: ' + error.message });
-  }
-});
-
-// Add item to wishlist
-app.post('/api/user/wishlist', async (req, res) => {
-  let connection;
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'Authentication required' });
-    }
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const userId = decoded.userId;
-    const { product_id } = req.body || {};
-
-    const pid = parseInt(product_id);
-    if (!pid || isNaN(pid)) {
-      return res.status(400).json({ success: false, message: 'Invalid product_id' });
-    }
-
-    connection = await pool.getConnection();
-    const [profileRows] = await connection.query('SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1', [userId]);
-    if (!profileRows || profileRows.length === 0) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Profile not found for user' });
-    }
-    const profileId = profileRows[0].id;
-    const [exists] = await connection.query('SELECT id FROM products WHERE id = ? LIMIT 1', [pid]);
-    if (!exists || exists.length === 0) {
-      connection.release();
-      return res.status(404).json({ success: false, message: 'Product not found' });
-    }
-
-    try {
-      await connection.query(
-        'INSERT INTO user_wishlist (user_id, product_id) VALUES (?, ?)',
-        [profileId, pid]
-      );
-      connection.release();
-      return res.json({ success: true, message: 'Added to wishlist' });
-    } catch (e) {
-      connection.release();
-      if (e && e.code === 'ER_DUP_ENTRY') {
-        return res.json({ success: true, message: 'Already in wishlist' });
-      }
-      if (e && (e.code === 'ER_NO_REFERENCED_ROW_2' || e.errno === 1452)) {
-        return res.status(400).json({ success: false, message: 'Cannot add: related user or product not found' });
-      }
-      return res.status(500).json({ success: false, message: 'Failed to add to wishlist: ' + (e.message || e) });
-    }
-  } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to add to wishlist: ' + error.message });
-  }
-});
-
-// Remove item from wishlist
-app.delete('/api/user/wishlist/:productId', async (req, res) => {
-  let connection;
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'Authentication required' });
-    }
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const userId = decoded.userId;
-    const pid = parseInt(req.params.productId);
-    if (!pid || isNaN(pid)) {
-      return res.status(400).json({ success: false, message: 'Invalid productId' });
-    }
-
-    connection = await pool.getConnection();
-    const [profileRows] = await connection.query('SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1', [userId]);
-    if (!profileRows || profileRows.length === 0) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Profile not found for user' });
-    }
-    const profileId = profileRows[0].id;
-    const [result] = await connection.query('DELETE FROM user_wishlist WHERE user_id = ? AND product_id = ?', [profileId, pid]);
-    connection.release();
-    const removed = result && result.affectedRows > 0;
-    res.json({ success: true, removed });
-  } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to remove from wishlist: ' + error.message });
-  }
-});
-
-// Check if product exists in wishlist
-app.get('/api/user/wishlist/check/:productId', async (req, res) => {
-  let connection;
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(200).json({ success: true, exists: false });
-    }
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const userId = decoded.userId;
-    const pid = parseInt(req.params.productId);
-    if (!pid || isNaN(pid)) {
-      return res.status(400).json({ success: false, message: 'Invalid productId' });
-    }
-    connection = await pool.getConnection();
-    const [profileRows] = await connection.query('SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1', [userId]);
-    if (!profileRows || profileRows.length === 0) {
-      connection.release();
-      return res.json({ success: true, exists: false });
-    }
-    const profileId = profileRows[0].id;
-    const [rows] = await connection.query('SELECT 1 FROM user_wishlist WHERE user_id = ? AND product_id = ? LIMIT 1', [profileId, pid]);
-    connection.release();
-    res.json({ success: true, exists: !!(rows && rows.length) });
-  } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to check wishlist: ' + error.message });
-  }
-});
-
-// Delete User Account
-app.delete('/api/user/account', async (req, res) => {
-  let connection;
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const userId = decoded.userId;
-
-    console.log('Account deletion request for user:', userId);
-
-    connection = await pool.getConnection();
-
-    // Soft delete user (set is_active to false)
-    await connection.query(
-      'UPDATE user_credentials SET is_active = FALSE, updated_at = NOW() WHERE user_id = ?',
-      [userId]
-    );
-
-    connection.release();
-
-    console.log('Account deleted successfully for user:', userId);
-
-    res.json({
-      success: true,
-      message: 'Account deleted successfully'
-    });
-  } catch (error) {
-    console.error('Delete account error:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to delete account: ' + error.message
-    });
-  }
-});
-
-// Logout
-app.post('/api/user/logout', async (req, res) => {
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-
-    if (token) {
-      // In a real app, you might want to blacklist the token
-      // For now, we'll just return success
-      console.log('User logout with token');
-    }
-
-    res.json({
-      success: true,
-      message: 'Logged out successfully'
-    });
-  } catch (error) {
-    console.error('Logout error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Logout failed: ' + error.message
-    });
-  }
-});
-
-
-// ==================== ORDER MANAGEMENT API ====================
-
-// Save order from checkout
-app.post('/api/checkout', async (req, res) => {
-  let connection;
-  try {
-    const {
-      customerInfo,
-      paymentMethod,
-      paymentId,
-      items,
-      customizationNotes,
-      customizationFile,
-      totals,
-      estimatedDelivery,
-      productionTime
-    } = req.body;
-
-    console.log('Received order data:', {
-      customerInfo,
-      paymentMethod,
-      itemsCount: items?.length,
-      totals
-    });
-
-    // Validate required fields
-    if (!customerInfo || !items || !totals) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required order data'
-      });
-    }
-
-    connection = await pool.getConnection();
-
-    const authHeader = req.headers.authorization || '';
-    const tokenRaw = authHeader.startsWith('Bearer ') ? authHeader.replace('Bearer ', '') : null;
-    let authUserId = null;
-    if (tokenRaw) {
-      try {
-        const decoded = jwt.verify(tokenRaw, JWT_SECRET);
-        authUserId = decoded && decoded.userId ? decoded.userId : null;
-      } catch (_) { }
-    }
-
-    if (paymentId) {
-      const [existing] = await connection.query(
-        'SELECT order_id FROM orders WHERE payment_id = ? LIMIT 1',
-        [paymentId]
-      );
-      if (existing && existing.length) {
-        connection.release();
-        return res.json({
-          success: true,
-          message: 'Order already recorded',
-          orderId: existing[0].order_id
-        });
-      }
-    }
-
-    await connection.beginTransaction();
-
-    try {
-      const arrItems = Array.isArray(items) ? items : [];
-      const processedItems = arrItems.map(it => {
-        const freeShippingConfig = getNormalizedFreeShippingConfig(it);
-        return {
-          ...it,
-          free_shipping: freeShippingConfig.enabled,
-          free_shipping_min_amount: freeShippingConfig.minimumAmount
-        };
-      });
-
-      for (const it of processedItems) {
-        const pid = it && it.id != null ? Number(it.id) : null;
-        const qty = it && it.quantity != null ? Number(it.quantity) : 0;
-        if (!pid || qty <= 0) continue;
-        const [prodRows] = await connection.query('SELECT stock, stock_status, is_preorder FROM products WHERE id = ? FOR UPDATE', [pid]);
-        if (!prodRows || prodRows.length === 0) throw new Error('Product not found');
-
-        const isPreorder = prodRows[0].stock_status === 'Pre-order' || prodRows[0].is_preorder === 1;
-        const currentStock = Number(prodRows[0].stock || 0);
-
-        if (!isPreorder && currentStock < qty) throw new Error('Insufficient stock');
-
-        const [variantRows] = await connection.query('SELECT color, size, quantity FROM product_variants WHERE product_id = ? FOR UPDATE', [pid]);
-        const units = Array.isArray(it.units) ? it.units : [];
-        const hasVariants = Array.isArray(variantRows) && variantRows.length > 0;
-        if (!isPreorder && hasVariants && units.length > 0) {
-          const map = new Map();
-          for (const u of units) {
-            const c = u && u.color != null ? String(u.color) : null;
-            const s = u && u.size != null ? String(u.size) : null;
-            const key = `${c ?? ''}|${s ?? ''}`;
-            map.set(key, (map.get(key) || 0) + 1);
-          }
-          for (const [key, need] of map.entries()) {
-            const parts = key.split('|');
-            const c = parts[0] !== '' ? parts[0] : null;
-            const s = parts[1] !== '' ? parts[1] : null;
-            const match = (variantRows || []).find(v => (v.color == null ? c == null : String(v.color) === String(c)) && (v.size == null ? s == null : String(v.size) === String(s)));
-            const available = match ? Number(match.quantity || 0) : 0;
-            if (available < need) throw new Error('Insufficient variant stock');
-          }
-          for (const [key, dec] of map.entries()) {
-            const parts = key.split('|');
-            const c = parts[0] !== '' ? parts[0] : null;
-            const s = parts[1] !== '' ? parts[1] : null;
-            await connection.query(
-              'UPDATE product_variants SET quantity = quantity - ? WHERE product_id = ? AND color <=> ? AND size <=> ?',
-              [dec, pid, c, s]
-            );
-          }
-        }
-        if (!isPreorder) {
-          await connection.query('UPDATE products SET stock = stock - ? WHERE id = ?', [qty, pid]);
-        }
-      }
-      // After updating stock and variants, recompute shipping server-side to avoid client tampering
-      const computeServerShipping = (itemsArr, country, city) => {
-        if (!itemsArr || itemsArr.length === 0) return 0;
-
-        const countryRates = {
-          "Finland": { base: 3.0, zones: { "Helsinki": 2.5, "Espoo": 2.5, "Tampere": 2.8, "Vantaa": 2.5, "Oulu": 3.2, "Turku": 2.8 } },
-          "Sweden": { base: 8.0 },
-          "Norway": { base: 10.0 },
-          "Denmark": { base: 8.0 },
-          "Germany": { base: 12.0 },
-          "France": { base: 12.0 },
-          "United Kingdom": { base: 15.0 },
-          "United States": { base: 30.0, zones: { "New York": 28, "California": 32, "Texas": 31, "Florida": 30 } },
-          "Canada": { base: 35.0 },
-          "Australia": { base: 40.0 },
-          "Japan": { base: 35.0 },
-          "China": { base: 38.0 },
-          "India": { base: 42.0 }
-        };
-
-        const weightBrackets = [
-          { max: 0.5, rate: 0 },
-          { max: 1, rate: 0 },
-          { max: 2, rate: 3 },
-          { max: 5, rate: 8 },
-          { max: 10, rate: 15 },
-          { max: 20, rate: 25 },
-          { max: Infinity, rate: 40 }
-        ];
-
-        const defaultCountryConfig = { base: 15.0 };
-
-        const totalActualWeight = itemsArr.reduce((sum, item) => {
-          let itemWeight = 0.2;
-          const category = (item.category || (item.product && item.product.category) || '').toString().toLowerCase();
-          if (item.shipping) {
-            itemWeight = Number(item.shipping) || itemWeight;
-          } else if (item.weight) {
-            itemWeight = Number(item.weight) || itemWeight;
-          } else if (item.product && item.product.shipping) {
-            itemWeight = Number(item.product.shipping) || itemWeight;
-          } else if (item.product && item.product.weight) {
-            itemWeight = Number(item.product.weight) || itemWeight;
-          } else {
-            if (category.includes('hoodie') || category.includes('hoody')) itemWeight = 0.6;
-            else if (category.includes('apparel') || category.includes('tshirt') || category.includes('t-shirt') || category.includes('clothing')) itemWeight = 0.25;
-            else if (category.includes('jewelry') || category.includes('accessory')) itemWeight = 0.1;
-            else if (category.includes('mug') || category.includes('ceramic')) itemWeight = 0.5;
-          }
-          return sum + (itemWeight * (Number(item.quantity) || 1));
-        }, 0);
-
-        const totalVolumetricWeight = itemsArr.reduce((sum, item) => {
-          let dimensions = null;
-          if (item.customization_dimensions || (item.product && item.product.customization_dimensions)) {
-            dimensions = item.customization_dimensions || (item.product && item.product.customization_dimensions);
-            if (typeof dimensions === 'string') {
-              try { dimensions = JSON.parse(dimensions); } catch (e) { dimensions = null; }
-            }
-          }
-          if (!dimensions) return sum;
-          const h = Number(dimensions.height?.value || 0);
-          const w = Number(dimensions.width?.value || 0);
-          const t = Number(dimensions.thickness?.value || 0);
-          const itemVol = (h * w * t) / 5000;
-          return sum + (itemVol * (Number(item.quantity) || 1));
-        }, 0);
-
-        const billableWeight = Math.max(totalActualWeight, totalVolumetricWeight, 0.1);
-
-        const countryConfig = (countryRates[country] || defaultCountryConfig);
-        let baseRate = countryConfig.base;
-        if (countryConfig.zones && city && countryConfig.zones[city]) baseRate = countryConfig.zones[city];
-
-        let weightSurcharge = 0;
-        for (const bracket of weightBrackets) {
-          if (billableWeight <= bracket.max) { weightSurcharge = bracket.rate; break; }
-        }
-
-        const packagingCost = Math.min(billableWeight * 0.5, 5.0);
-        const totalShipping = baseRate + weightSurcharge + packagingCost;
-        return Math.round(totalShipping * 100) / 100;
-      };
-
-      // Compute server-side shipping and override client-sent shipping to prevent tampering
-      try {
-        const promo = Number(req.body?.totals?.promoDiscount || req.body?.totals?.promo || 0) || 0;
-        const subtotal = Number(req.body?.totals?.subtotal);
-        const merchandiseTotal = Math.max(
-          (Number.isFinite(subtotal) ? subtotal : calculateItemsMerchandiseTotal(processedItems)) - promo,
-          0
-        );
-        const freeShippingStatus = getFreeShippingStatus(processedItems, merchandiseTotal);
-        const requestedShippingMethod = String(req.body?.totals?.shippingMethod || 'automatic');
-        const effectiveShippingMethod = requestedShippingMethod === 'pickup'
-          ? 'pickup'
-          : (freeShippingStatus.qualifies ? 'free' : 'automatic');
-        const serverShipping = effectiveShippingMethod === 'automatic'
-          ? computeServerShipping(processedItems, customerInfo.country, customerInfo.city)
-          : 0;
-        if (!totals || typeof totals !== 'object') {
-          req.body.totals = {};
-        }
-        req.body.totals.shipping = serverShipping;
-        req.body.totals.shippingMethod = effectiveShippingMethod;
-        // Recalculate grand total if subtotal present
-        if (req.body.totals && typeof req.body.totals.subtotal === 'number') {
-          req.body.totals.total = Math.round(((req.body.totals.subtotal - promo) + serverShipping) * 100) / 100;
-        }
-        // Replace items with processedItems for saving
-        req.body.items = processedItems;
-      } catch (e) {
-        console.warn('Server shipping calc failed, proceeding with client totals', e);
-      }
-    } catch (e) {
-      try { await connection.rollback(); } catch { }
-      connection.release();
-      return res.status(400).json({ success: false, message: e.message || 'Stock update failed' });
-    }
-
-    // Generate unique order ID
-    const orderId = `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-
-    // Prepare order data for database
-    const orderData = {
-      order_id: orderId,
-      user_id: authUserId || null,
-      customer_info: JSON.stringify(customerInfo),
-      items: JSON.stringify(typeof processedItems !== 'undefined' ? processedItems : items),
-      totals: JSON.stringify(req.body && req.body.totals ? req.body.totals : totals),
-      payment_method: paymentMethod,
-      payment_id: paymentId || null,
-      status: 'Pending',
-      customization_data: JSON.stringify({
-        notes: customizationNotes,
-        file: customizationFile,
-        customizationData: req.body.customizationData || {}
-      }),
-      design_files: JSON.stringify(req.body.designFiles || req.body.design_files || []),
-      estimated_delivery: estimatedDelivery,
-      production_time: productionTime,
-      shipping_address: JSON.stringify({
-        address: customerInfo.address,
-        city: customerInfo.city,
-        state: customerInfo.state,
-        zip: customerInfo.zip,
-        country: customerInfo.country
-      }),
-      billing_address: JSON.stringify({
-        name: `${customerInfo.firstName} ${customerInfo.lastName}`,
-        email: customerInfo.email,
-        phone: customerInfo.phone,
-        address: customerInfo.address,
-        city: customerInfo.city,
-        state: customerInfo.state,
-        zip: customerInfo.zip,
-        country: customerInfo.country
-      }),
-      notes: customizationNotes
-    };
-
-    // Insert order into database
-    const [result] = await connection.query(
-      `INSERT INTO orders SET ?`,
-      [orderData]
-    );
-
-    await connection.commit();
-    connection.release();
-
-    console.log('Order saved successfully:', orderId);
-
-    // Send order confirmation email
-    try {
-      await sendOrderConfirmationEmail(orderId, customerInfo, (typeof processedItems !== 'undefined' ? processedItems : items), (req.body && req.body.totals ? req.body.totals : totals));
-      // Send admin notification
-      await sendAdminNewOrderEmail(orderId, customerInfo, (typeof processedItems !== 'undefined' ? processedItems : items), (req.body && req.body.totals ? req.body.totals : totals));
-    } catch (e) {
-      console.error('Order email error:', e.message || e);
-    }
-
-    res.json({
-      success: true,
-      message: 'Order placed successfully',
-      orderId: orderId
-    });
-
-  } catch (error) {
-    console.error('Order save error:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to save order: ' + error.message
-    });
-  }
-});
-
-// Upload design files for checkout
-app.post('/api/checkout/upload-design', async (req, res) => {
-  try {
-    if (!req.files || Object.keys(req.files).length === 0) {
-      return res.status(400).json({ success: false, message: 'No files were uploaded.' });
-    }
-
-    const files = Array.isArray(req.files.files) ? req.files.files : [req.files.files];
-    const uploadResults = [];
-
-    for (const file of files) {
-      const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
-      if (!allowedTypes.includes(file.mimetype)) {
-        return res.status(400).json({ success: false, message: 'Invalid file type. Only images and PDFs are allowed.' });
-      }
-
-      try {
-        const result = await new Promise((resolve, reject) => {
-          const uploadOptions = {
-            folder: 'yokebud-craft/checkout/designs',
-            public_id: `design_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            resource_type: 'auto'
-          };
-
-          // If useTempFiles is true, use the temp file path
-          if (file.tempFilePath) {
-            cloudinary.uploader.upload(file.tempFilePath, uploadOptions, (error, result) => {
-              if (error) reject(error);
-              else resolve(result);
-            });
-          } else {
-            const uploadStream = cloudinary.uploader.upload_stream(uploadOptions, (error, result) => {
-              if (error) reject(error);
-              else resolve(result);
-            });
-            uploadStream.end(file.data);
-          }
-        });
-
-        uploadResults.push({
-          url: result.secure_url,
-          public_id: result.public_id,
-          name: file.name,
-          type: file.mimetype,
-          size: file.size
-        });
-      } catch (e) {
-        console.error('Cloudinary upload error:', e);
-        return res.status(500).json({ success: false, message: 'Failed to upload file to storage', error: e.message });
-      }
-    }
-
-    res.json({ success: true, files: uploadResults });
-  } catch (error) {
-    console.error('Checkout upload error:', error);
-    res.status(500).json({ success: false, message: 'Failed to process upload', error: error.message });
-  }
-});
-
-// Get all orders for admin
-app.get('/api/orders', async (req, res) => {
-  let connection;
-  try {
-    connection = await pool.getConnection();
-    const [orders] = await connection.query(
-      'SELECT * FROM orders ORDER BY created_at DESC'
-    );
-
-    const parsedOrders = (orders || []).map(order => {
-      let customer_info = order.customer_info;
-      let items = order.items;
-      let totals = order.totals;
-      let customization_data = order.customization_data;
-      let design_files = order.design_files;
-      let shipping_address = order.shipping_address;
-      let billing_address = order.billing_address;
-      try { customer_info = typeof customer_info === 'string' ? JSON.parse(customer_info) : customer_info; } catch { }
-      try { items = typeof items === 'string' ? JSON.parse(items) : items; } catch { }
-      try { totals = typeof totals === 'string' ? JSON.parse(totals) : totals; } catch { }
-      try { customization_data = typeof customization_data === 'string' ? JSON.parse(customization_data) : customization_data; } catch { }
-      try { design_files = typeof design_files === 'string' ? JSON.parse(design_files) : design_files; } catch { }
-      try { shipping_address = typeof shipping_address === 'string' ? JSON.parse(shipping_address) : shipping_address; } catch { }
-      try { billing_address = typeof billing_address === 'string' ? JSON.parse(billing_address) : billing_address; } catch { }
-      const product_name = (Array.isArray(items) && items[0] && (items[0].product_name || items[0].name)) || order.product_name || 'N/A';
-      return {
-        ...order,
-        customer_info,
-        items,
-        totals,
-        customization_data,
-        design_files,
-        shipping_address,
-        billing_address,
-        customer_name: (customer_info && (customer_info.firstName || customer_info.lastName))
-          ? `${customer_info.firstName || ''} ${customer_info.lastName || ''}`.trim()
-          : 'N/A',
-        customer_email: customer_info && customer_info.email ? customer_info.email : null,
-        customer_phone: customer_info && customer_info.phone ? customer_info.phone : null,
-        product_name
-      };
-    });
-
-    connection.release();
-    res.json({ success: true, orders: parsedOrders });
-  } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to fetch orders: ' + error.message });
-  }
-});
-
-// Get single order details
-app.get('/api/orders/:orderId', async (req, res) => {
-  let connection;
-  try {
-    const { orderId } = req.params;
-
-    connection = await pool.getConnection();
-    await connection.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
-    await connection.query("SET collation_connection = 'utf8mb4_unicode_ci'");
-
-    const [orders] = await connection.query(`
-      SELECT 
-        o.*,
-        up.first_name,
-        up.last_name,
-        up.phone,
-        up.address as profile_address,
-        up.city as profile_city,
-        up.state as profile_state,
-        up.zip_code as profile_zip,
-        up.country as profile_country
-      FROM orders o
-      LEFT JOIN user_profiles up ON o.user_id = up.user_id
-      WHERE BINARY o.order_id = ?
-    `, [orderId]);
-
-    if (orders.length === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-
-    const order = orders[0];
-
-    // Parse all JSON fields
-    const safeParse = (val) => {
-      try {
-        if (typeof val === 'string' && val.trim()) return JSON.parse(val);
-      } catch (_) { }
-      return val;
-    };
-
-    const parsedOrder = {
-      ...order,
-      customer_info: safeParse(order.customer_info),
-      items: safeParse(order.items),
-      totals: safeParse(order.totals),
-      customization_data: safeParse(order.customization_data),
-      design_files: safeParse(order.design_files),
-      shipping_address: safeParse(order.shipping_address),
-      billing_address: safeParse(order.billing_address)
-    };
-
-    connection.release();
-
-    res.json({
-      success: true,
-      order: parsedOrder
-    });
-
-  } catch (error) {
-    console.error('Error fetching order:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch order: ' + error.message
-    });
-  }
-});
-
-// Send manual email to customer
-app.post('/api/orders/:orderId/send-email', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    const { orderId } = req.params;
-    connection = await pool.getConnection();
-
-    const [orders] = await connection.query('SELECT customer_info FROM orders WHERE order_id = ?', [orderId]);
-    if (orders.length === 0) {
-      connection.release();
-      return res.status(404).json({ success: false, message: 'Order not found' });
-    }
-
-    const order = orders[0];
-    let customerInfo = order.customer_info;
-    try { customerInfo = typeof customerInfo === 'string' ? JSON.parse(customerInfo) : customerInfo; } catch { }
-
-    connection.release();
-
-    await sendManualNotificationEmail(orderId, customerInfo);
-
-    res.json({ success: true, message: 'Email sent successfully' });
-  } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to send email: ' + error.message });
-  }
-});
-
-// Update order status
-app.put('/api/orders/:orderId/status', async (req, res) => {
-  let connection;
-  try {
-    const { orderId } = req.params;
-    const { status, delivered_at, estimated_delivery_date } = req.body;
-
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: 'Status is required'
-      });
-    }
-
-    connection = await pool.getConnection();
-
-    const deliveredValue = (status && String(status).toLowerCase() === 'delivered')
-      ? (delivered_at ? new Date(delivered_at) : new Date())
-      : null;
-    const [result] = await connection.query(
-      'UPDATE orders SET status = ?, delivered_at = ?, estimated_delivery_date = ?, updated_at = NOW() WHERE order_id = ?',
-      [status, deliveredValue, estimated_delivery_date || null, orderId]
-    );
-
-    if (result.affectedRows === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-
-    // Get updated order
-    const [orders] = await connection.query(
-      'SELECT * FROM orders WHERE order_id = ?',
-      [orderId]
-    );
-
-    const order = orders[0];
-
-    // Parse JSON fields
-    const parsedOrder = {
-      ...order,
-      customer_info: typeof order.customer_info === 'string' ?
-        JSON.parse(order.customer_info) : order.customer_info,
-      items: typeof order.items === 'string' ?
-        JSON.parse(order.items) : order.items,
-      totals: typeof order.totals === 'string' ?
-        JSON.parse(order.totals) : order.totals
-    };
-
-    connection.release();
-
-    // Send order status update email
-    try {
-      await sendOrderStatusUpdateEmail(orderId, status, parsedOrder.customer_info, parsedOrder.tracking_number, parsedOrder.estimated_delivery_date);
-    } catch (e) {
-      console.error('Status email error:', e.message || e);
-    }
-
-    res.json({
-      success: true,
-      message: 'Order status updated successfully',
-      order: parsedOrder
-    });
-
-  } catch (error) {
-    console.error('Error updating order status:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update order status: ' + error.message
-    });
-  }
-});
-
-// Update estimated delivery date only
-app.put('/api/orders/:orderId/estimated-delivery', requireAdminAuth, async (req, res) => {
-  let connection;
-  try {
-    const { orderId } = req.params;
-    const { estimated_delivery_date } = req.body;
-
-    connection = await pool.getConnection();
-
-    const [result] = await connection.query(
-      'UPDATE orders SET estimated_delivery_date = ?, updated_at = NOW() WHERE order_id = ?',
-      [estimated_delivery_date || null, orderId]
-    );
-
-    if (result.affectedRows === 0) {
-      connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-
-    // Get updated order
-    const [orders] = await connection.query(
-      'SELECT * FROM orders WHERE order_id = ?',
-      [orderId]
-    );
-
-    const order = orders[0];
-
-    // Parse JSON fields
-    const parsedOrder = {
-      ...order,
-      customer_info: typeof order.customer_info === 'string' ?
-        JSON.parse(order.customer_info) : order.customer_info,
-      items: typeof order.items === 'string' ?
-        JSON.parse(order.items) : order.items,
-      totals: typeof order.totals === 'string' ?
-        JSON.parse(order.totals) : order.totals
-    };
-
-    connection.release();
-
-    // Send estimated delivery update email
-    try {
-      await sendEstimatedDeliveryUpdateEmail(orderId, parsedOrder.customer_info, parsedOrder.estimated_delivery_date);
-    } catch (e) {
-      console.error('Estimated delivery email error:', e.message || e);
-    }
-
-    res.json({
-      success: true,
-      message: 'Estimated delivery date updated successfully',
-      order: parsedOrder
-    });
-
-  } catch (error) {
-    console.error('Error updating estimated delivery date:', error);
-    if (connection) connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update estimated delivery date: ' + error.message
-    });
-  }
-});
-
-// Update tracking info
-app.put('/api/orders/:orderId/tracking', async (req, res) => {
-  let connection;
-  try {
-    const { orderId } = req.params;
-    const { tracking_number, shipping_status } = req.body;
-    connection = await pool.getConnection();
-    const [result] = await connection.query(
-      'UPDATE orders SET tracking_number = ?, shipping_status = ?, updated_at = NOW() WHERE order_id = ?',
-      [tracking_number || null, shipping_status || null, orderId]
-    );
-    if (result.affectedRows === 0) {
-      connection.release();
-      return res.status(404).json({ success: false, message: 'Order not found' });
-    }
-    const [orders] = await connection.query('SELECT * FROM orders WHERE order_id = ?', [orderId]);
-    const order = orders[0];
-    let parsed = order;
-    try {
-      parsed = {
-        ...order,
-        customer_info: typeof order.customer_info === 'string' ? JSON.parse(order.customer_info) : order.customer_info,
-        items: typeof order.items === 'string' ? JSON.parse(order.items) : order.items,
-        totals: typeof order.totals === 'string' ? JSON.parse(order.totals) : order.totals
-      };
-
-      // Send tracking update email
-      if (tracking_number || shipping_status) {
-        try {
-          const statusToSend = shipping_status || 'Tracking Updated';
-          await sendOrderStatusUpdateEmail(orderId, statusToSend, parsed.customer_info, tracking_number);
-        } catch (e) {
-          console.error('Tracking email error:', e.message || e);
-        }
-      }
-    } catch { }
-    connection.release();
-    res.json({ success: true, order: parsed });
-  } catch (error) {
-    if (connection) connection.release();
-    res.status(500).json({ success: false, message: 'Failed to update tracking: ' + error.message });
-  }
-});
-
-
-
-// ==================== PRODUCT MANAGEMENT ====================
-
+          const [rows] = await connection.query('SELECT id FROM user_messages WHERE is_read = 0 LIMIT 1');
+              connection.release();
+                  return rows;
+                    } catch (error) {
+                        console.error('Unread message reminder check failed:', error.message);
+                          }
+                          };
+                          
 // Create product endpoint
 app.post('/api/products', requireAdminAuth, async (req, res) => {
   try {
-    console.log('POST /api/products request body:', JSON.stringify(req.body, null, 2));
-    const {
-      name,
-      description,
-      price,
-      discounted_price,
-      categories,
-      stock,
-      moq,
-      material,
-      care,
-      sku,
-      shipping,
-      warranty,
-      bulk_discount,
-      sizes,
-      colors,
-      tags,
-      features,
-      imageUrls,
-      slug,
-      status,
-      featured,
-      thumbnail,
-      attributes,
-      images,
-      metadata,
-      rating,
-      is_customizable,
-      is_preorder,
-      stock_status,
-      customization_type,
-      customization_images,
-      customization_dimensions,
-      discount_ranges,
-      personalization_input_type,
-      allow_customer_size_adjustment
-    } = req.body;
-
+      console.log('POST /api/products request body:', JSON.stringify(req.body, null, 2));
+          const {
+                name,
+                      description,
+                            price,
+                                  discounted_price,
+                                        categories,
+                                              stock,
+                                                    moq,
+                                                          material,
+                                                                care,
+                                                                      sku,
+                                                                            shipping,
+                                                                                  warranty,
+                                                                                        bulk_discount,
+                                                                                              sizes,
+                                                                                                    colors,
+                                                                                                          tags,
+                                                                                                                features,
+                                                                                                                      imageUrls,
+                                                                                                                            slug,
+                                                                                                                                  status,
+                                                                                                                                        featured,
+                                                                                                                                              thumbnail,
+                                                                                                                                                    attributes,
+                                                                                                                                                          images,
+                                                                                                                                                                metadata,
+                                                                                                                                                                      rating,
+                                                                                                                                                                            is_customizable,
+                                                                                                                                                                                  is_preorder,
+                                                                                                                                                                                        stock_status,
+                                                                                                                                                                                              customization_type,
+                                                                                                                                                                                                    customization_images,
+                                                                                                                                                                                                          customization_dimensions,
+                                                                                                                                                                                                                engraving_type,
+                                                                                                                                                                                                                      allow_customer_size_adjustment,
+                                                                                                                                                                                                                            discount_ranges
+                                                                                                                                                                                                                                } = req.body;
+                                                                                                                                                                                                                    
     const validation = validateProductPayload(req.body);
-    if (!validation.valid) {
-      return res.status(400).json({
-        success: false,
-        message: validation.message
-      });
-    }
-
+        if (!validation.valid) {
+              return res.status(400).json({ success: false, message: validation.message });
+                  }
+                  
     const finalPrice = parseFloat(price);
-    const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
-
-    // Process sizes
-    const processedSizes = processSizes(sizes);
-
+        const finalDiscountedPrice = discounted_price ? parseFloat(discounted_price) : null;
+            const processedSizes = processSizes(sizes);
+            
     const connection = await pool.getConnection();
-
-    // Check for duplicate SKU
-    const [existingProducts] = await connection.query(
-      'SELECT id FROM products WHERE sku = ?',
-      [sku]
-    );
-
-    if (existingProducts.length > 0) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'SKU already exists' });
-    }
-
-    const baseSlug = slugify(slug || name);
-    const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
+        const baseSlug = slugify(slug || name);
+            const uniqueSlug = await ensureUniqueSlug(connection, baseSlug);
+                const finalSku = await ensureUniqueSKU(connection, sku);
+                
     const imageArray = Array.isArray(images) ? images : (Array.isArray(imageUrls) ? imageUrls : []);
-    const thumb = thumbnail || (imageArray[0] || null);
-
-    // Auto-generate SEO fields if not provided
+        const thumb = thumbnail || (imageArray[0] || null);
+        
     const seo = generateProductSEO(name, description, finalPrice, imageArray);
-    const finalSeoTitle = req.body.seo_title || seo.seo_title;
-    const finalSeoDescription = req.body.seo_description || seo.seo_description;
-    const finalSeoKeywords = req.body.seo_keywords || seo.seo_keywords;
-    const finalSchemaJson = req.body.schema_json ? JSON.stringify(req.body.schema_json) : JSON.stringify(seo.schema_json);
-
+        const finalSeoTitle = req.body.seo_title ; seo.seo_title;
+            const finalSeoDescription = req.body.seo_description ; seo.seo_description;
+                const finalSeoKeywords = req.body.seo_keywords ; seo.seo_keywords;
+                    const finalSchemaJson = req.body.schema_json ? JSON.stringify(req.body.schema_json) : JSON.stringify(seo.schema_json);
+                    
     const metadataPayload = metadata && typeof metadata === 'object' ? metadata : {};
-    const freeShipping = isFreeShippingEnabled(metadataPayload.free_shipping ?? req.body.free_shipping);
-    const freeShippingMinAmount = freeShipping
-      ? parseFreeShippingMinAmount(metadataPayload.free_shipping_min_amount ?? req.body.free_shipping_min_amount)
-      : null;
-
+        const freeShipping = isFreeShippingEnabled(metadataPayload.free_shipping ?? req.body.free_shipping);
+            const freeShippingMinAmount = freeShipping
+                  ? parseFreeShippingMinAmount(metadataPayload.free_shipping_min_amount ?? req.body.free_shipping_min_amount)
+                        : null;
+                        
     if (freeShipping && freeShippingMinAmount === null) {
-      connection.release();
-      return res.status(400).json({ success: false, message: 'Please provide a valid free shipping minimum amount.' });
-    }
-
-    // Insert product into database
+          connection.release();
+                return res.status(400).json({ success: false, message: 'Please provide a valid free shipping minimum amount.' });
+                    }
+                    
     const attributesJson = JSON.stringify({ material, sizes: processedSizes, colors });
-    const imagesJson = JSON.stringify(imageArray);
-    const metadataJson = JSON.stringify({
-      tags: Array.isArray(tags) ? tags : (Array.isArray(metadataPayload.tags) ? metadataPayload.tags : []),
-      features: Array.isArray(features) ? features : (Array.isArray(metadataPayload.features) ? metadataPayload.features : []),
-      moq: moq ?? metadataPayload.moq ?? 1,
-      shipping: shipping ?? metadataPayload.shipping ?? '',
-      warranty: warranty ?? metadataPayload.warranty ?? '',
-      bulk_discount: bulk_discount ?? metadataPayload.bulk_discount ?? '',
-      free_shipping: freeShipping,
-      free_shipping_min_amount: freeShippingMinAmount
-    });
-
-    // Debug: log customization_mode for incoming create
+        const imagesJson = JSON.stringify(imageArray);
+            const metadataJson = JSON.stringify({
+                  tags: Array.isArray(tags) ? tags : (Array.isArray(metadataPayload.tags) ? metadataPayload.tags : []),
+                        features: Array.isArray(features) ? features : (Array.isArray(metadataPayload.features) ? metadataPayload.features : []),
+                              moq: moq ?? metadataPayload.moq ?? 1,
+                                    shipping: shipping ?? metadataPayload.shipping ?? '',
+                                          warranty: warranty ?? metadataPayload.warranty ?? '',
+                                                bulk_discount: bulk_discount ?? metadataPayload.bulk_discount ?? '',
+                                                      free_shipping: freeShipping,
+                                                            free_shipping_min_amount: freeShippingMinAmount
+                                                                });
+                                                                
     console.log('CREATE product - customization_mode:', req.body.customization_mode);
+    
     const [result] = await connection.query(
-      `INSERT INTO products (
-        product_name,
-        product_description,
-        price,
-        discounted_price,
-        category,
-        stock,
-        moq,
-        material,
-        care_instructions,
-        sku,
-        shipping_info,
-        warranty,
-        bulk_discount,
-        sizes,
-        colors,
-        tags,
-        features,
-        slug,
-        status,
-        featured,
-        thumbnail,
-        attributes,
-        images,
-        metadata,
-        rating,
-        is_customizable,
-        is_preorder,
-        stock_status,
-        seo_title,
-        seo_description,
-        seo_keywords,
-        schema_json,
-        customization_type,
-        customization_mode,
-        customization_images,
-        customization_dimensions,
-        personalization_input_type,
-        allow_customer_size_adjustment
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        name,
-        description,
-        finalPrice,
-        finalDiscountedPrice,
-        JSON.stringify(categories),
-        (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
-        parseInt(moq) || 1,
-        material,
-        care,
-        sku,
-        shipping,
-        warranty,
-        bulk_discount,
-        JSON.stringify(processedSizes),
-        JSON.stringify(colors),
-        JSON.stringify(tags),
-        JSON.stringify(features),
-        uniqueSlug,
-        status || 'active',
-        featured ? 1 : 0,
-        thumb,
-        attributesJson,
-        imagesJson,
-        metadataJson,
-        rating || 0,
-        is_customizable ? 1 : 0,
-        (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 1 : 0,
-        stock_status || (is_preorder === true || is_preorder === 1 || is_preorder === 'true' ? 'Pre-order' : 'In Stock'),
-        finalSeoTitle,
-        finalSeoDescription,
-        finalSeoKeywords,
-        finalSchemaJson,
-        customization_type || 'Apparels',
-        req.body.customization_mode || null,
-        customization_images ? JSON.stringify(customization_images) : null,
-        customization_dimensions ? JSON.stringify(customization_dimensions) : null,
-        personalization_input_type || 'design',
-        allow_customer_size_adjustment ? 1 : 0
-      ]
-    );
+          `INSERT INTO products (
+                  product_name,
+                          product_description,
+                                  price,
+                                          discounted_price,
+                                                  category,
+                                                          stock,
+                                                                  moq,
+                                                                          material,
+                                                                                  care_instructions,
+                                                                                          sku,
+                                                                                                  shipping_info,
+                                                                                                          warranty,
+                                                                                                                  bulk_discount,
+                                                                                                                          sizes,
+                                                                                                                                  colors,
+                                                                                                                                          tags,
+                                                                                                                                                  features,
+                                                                                                                                                          slug,
+                                                                                                                                                                  status,
+                                                                                                                                                                          featured,
+                                                                                                                                                                                  thumbnail,
+                                                                                                                                                                                          attributes,
+                                                                                                                                                                                                  images,
+                                                                                                                                                                                                          metadata,
+                                                                                                                                                                                                                  rating,
+                                                                                                                                                                                                                          is_customizable,
+                                                                                                                                                                                                                                  is_preorder,
+                                                                                                                                                                                                                                          stock_status,
+                                                                                                                                                                                                                                                  seo_title,
+                                                                                                                                                                                                                                                          seo_description,
+                                                                                                                                                                                                                                                                  seo_keywords,
+                                                                                                                                                                                                                                                                          schema_json,
+                                                                                                                                                                                                                                                                                  customization_type,
+                                                                                                                                                                                                                                                                                          customization_mode,
+                                                                                                                                                                                                                                                                                                  customization_images,
+                                                                                                                                                                                                                                                                                                          customization_dimensions,
+                                                                                                                                                                                                                                                                                                                  engraving_type,
+                                                                                                                                                                                                                                                                                                                          allow_customer_size_adjustment
+                                                                                                                                                                                                                                                                                                                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+                                                                                                                                                                                                                                                                                                                      [
+                                                                                                                                                                                                                                                                                                                              name,
+                                                                                                                                                                                                                                                                                                                                      description,
+                                                                                                                                                                                                                                                                                                                                              finalPrice,
+                                                                                                                                                                                                                                                                                                                                                      finalDiscountedPrice,
+                                                                                                                                                                                                                                                                                                                                                              JSON.stringify(categories),
+                                                                                                                                                                                                                                                                                                                                                                      (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 0 : parseInt(stock),
+                                                                                                                                                                                                                                                                                                                                                                              parseInt(moq) || 1,
+                                                                                                                                                                                                                                                                                                                                                                                      material,
+                                                                                                                                                                                                                                                                                                                                                                                              care,
+                                                                                                                                                                                                                                                                                                                                                                                                      finalSku,
+                                                                                                                                                                                                                                                                                                                                                                                                              shipping,
+                                                                                                                                                                                                                                                                                                                                                                                                                      warranty,
+                                                                                                                                                                                                                                                                                                                                                                                                                              bulk_discount,
+                                                                                                                                                                                                                                                                                                                                                                                                                                      JSON.stringify(processedSizes),
+                                                                                                                                                                                                                                                                                                                                                                                                                                              JSON.stringify(colors),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                      JSON.stringify(tags),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                              JSON.stringify(features),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                      uniqueSlug,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                              status || 'active',
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      featured ? 1 : 0,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              thumb,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      attributesJson,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              imagesJson,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      metadataJson,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              rating || 0,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      is_customizable ? 1 : 0,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              (is_preorder === true || is_preorder === 1 || is_preorder === 'true' || stock_status === 'Pre-order') ? 1 : 0,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      stock_status || (is_preorder === true || is_preorder === 1 || is_preorder === 'true' ? 'Pre-order' : 'In Stock'),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              finalSeoTitle,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      finalSeoDescription,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              finalSeoKeywords,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      finalSchemaJson,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              customization_type || 'Apparels',
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      req.body.customization_mode || null,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              customization_images ? JSON.stringify(customization_images) : null,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      customization_dimensions ? JSON.stringify(customization_dimensions) : null,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              engraving_type || 'both',
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      allow_customer_size_adjustment ? 1 : 0
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ]
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                );
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
     const variants = Array.isArray(req.body.variants) ? req.body.variants : [];
-    for (const v of variants) {
-      const qty = v && v.quantity != null ? parseInt(v.quantity) : 0;
-      await connection.query(
-        'INSERT INTO product_variants (product_id, color, size, quantity) VALUES (?, ?, ?, ?)',
-        [result.insertId, v && v.color ? String(v.color) : null, v && v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
-      );
-    }
-    // Save discount ranges
+        for (const v of variants) {
+              const qty = v.quantity != null ? parseInt(v.quantity) : 0;
+                    await connection.query(
+                            'INSERT INTO product_variants (product_id, color, size, quantity) VALUES (?, ?, ?, ?)',
+                                    [result.insertId, v.color ? String(v.color) : null, v.size ? String(v.size) : null, isNaN(qty) ? 0 : qty]
+                                          );
+                                              }
+                                              
     const discountRanges = Array.isArray(discount_ranges) ? discount_ranges : [];
-    for (const range of discountRanges) {
-      const minQty = Number(range.min_quantity || range.min_qty || 2);
-      const maxQty = range.max_quantity !== undefined ? Number(range.max_quantity) : (range.max_qty !== undefined ? Number(range.max_qty) : null);
-      const discountPercent = Number(range.discount_percentage || range.discount_percent || 0);
-      const discPrice = range.discounted_price !== undefined ? Number(range.discounted_price) : null;
-      await connection.query(
-        `INSERT INTO quantity_discount_ranges 
-         (product_id, min_quantity, max_quantity, discount_percentage, discounted_price) 
-         VALUES (?, ?, ?, ?, ?)`,
-        [result.insertId, minQty, maxQty !== null ? maxQty : null, discountPercent, discPrice]
-      );
-    }
+        for (const range of discountRanges) {
+              const minQty = Number(range.min_quantity ?? range.min_qty ?? 2);
+                    const maxQty = range.max_quantity !== undefined ? Number(range.max_quantity) : (range.max_qty !== undefined ? Number(range.max_qty) : null);
+                          const discountPercent = Number(range.discount_percentage ?? range.discount_percent ?? 0);
+                                const discPrice = range.discounted_price !== undefined ? Number(range.discounted_price) : null;
+                                      await connection.query(
+                                              `INSERT INTO quantity_discount_ranges
+                                                       (product_id, min_quantity, max_quantity, discount_percentage, discounted_price)
+                                                                VALUES (?, ?, ?, ?, ?)`,
+                                                                        [result.insertId, minQty, maxQty !== null ? maxQty : null, discountPercent, discPrice]
+                                                                              );
+                                                                                  }
+                                                                                  
     connection.release();
-
+    
     res.json({
-      success: true,
-      message: 'Product created successfully',
-      productId: result.insertId
-    });
-
-    // Auto-regenerate sitemap when a new product is added
+          success: true,
+                message: 'Product created successfully',
+                      productId: result.insertId
+                          });
+                          
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product creation:', err));
-  } catch (error) {
-    console.error('Product creation error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create product',
-      error: error.message
-    });
-  }
-});
-
+      } catch (error) {
+          console.error('Product creation error:', error);
+              res.status(500).json({
+                    success: false,
+                          message: 'Failed to create product',
+                                error: error.message
+                                    });
+                                      }
+                                      });
+                                      
 // Update product endpoint
 app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
   let connection;
@@ -8667,15 +4753,17 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       features,
       imageUrls,
       imagesToDelete = [],
+      status,
+      featured,
       is_customizable,
       is_preorder,
       stock_status,
       customization_type,
       customization_images,
       customization_dimensions,
-      discount_ranges,
-      personalization_input_type,
-      allow_customer_size_adjustment
+      engraving_type,
+      allow_customer_size_adjustment,
+      discount_ranges
     } = req.body;
 
     const metadataPayload = req.body.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
@@ -8722,7 +4810,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
 
     // Get current product data
     const [products] = await connection.query(
-      'SELECT sku FROM products WHERE id = ?',
+      'SELECT sku, status, featured FROM products WHERE id = ?',
       [productId]
     );
 
@@ -8733,6 +4821,8 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
     }
 
     const currentSku = products[0].sku;
+    const currentStatus = products[0].status;
+    const currentFeatured = products[0].featured;
 
     // Check if SKU is being changed to one that already exists
     if (sku !== currentSku) {
@@ -8821,7 +4911,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         customization_mode = ?,
         customization_images = ?,
         customization_dimensions = ?,
-        personalization_input_type = ?,
+        engraving_type = ?,
         allow_customer_size_adjustment = ?,
         updated_at = NOW()
       WHERE id = ?`,
@@ -8844,8 +4934,8 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         JSON.stringify(tags),
         JSON.stringify(features),
         uniqueSlug,
-        'active',
-        0,
+        status ?? currentStatus ?? 'active',
+        typeof featured !== 'undefined' ? (featured ? 1 : 0) : (currentFeatured ? 1 : 0),
         (imageUrls[0] || null),
         attributesJson,
         imagesJson,
@@ -8862,7 +4952,7 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
         req.body.customization_mode || null,
         customization_images ? JSON.stringify(customization_images) : null,
         customization_dimensions ? JSON.stringify(customization_dimensions) : null,
-        personalization_input_type || 'design',
+        engraving_type || 'both',
         allow_customer_size_adjustment ? 1 : 0,
         productId
       ]
@@ -8926,44 +5016,41 @@ app.put('/api/products/:id/status', requireAdminAuth, async (req, res) => {
     if (!['active', 'inactive'].includes(normalizedStatus)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid product status'
+        message: 'Invalid product status. Use active or inactive.'
       });
     }
 
     connection = await pool.getConnection();
-
-    const [existingProducts] = await connection.query(
-      'SELECT id, status FROM products WHERE id = ? LIMIT 1',
+    const [products] = await connection.query(
+      'SELECT id, product_name FROM products WHERE id = ? LIMIT 1',
       [productId]
     );
 
-    if (existingProducts.length === 0) {
+    if (products.length === 0) {
       connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found'
-      });
+      return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
     await connection.query(
       'UPDATE products SET status = ?, updated_at = NOW() WHERE id = ?',
       [normalizedStatus, productId]
     );
-
     connection.release();
+    connection = null;
 
     res.json({
       success: true,
       message: `Product ${normalizedStatus === 'active' ? 'activated' : 'deactivated'} successfully`,
       product: {
         id: Number(productId),
+        product_name: products[0].product_name,
         status: normalizedStatus
       }
     });
 
     regenerateSitemap().catch(err => console.error('Sitemap regeneration failed after product status update:', err));
   } catch (error) {
-    try { if (connection) connection.release(); } catch { }
+    try { if (connection) connection.release(); } catch {}
     console.error('Product status update error:', error);
     res.status(500).json({
       success: false,
@@ -8975,16 +5062,24 @@ app.put('/api/products/:id/status', requireAdminAuth, async (req, res) => {
 
 // Get single product endpoint
 app.get('/api/products/:id', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
   try {
     const productId = req.params.id;
+    const canViewInactive = hasAdminSession(req);
 
     const connection = await pool.getConnection();
     const [products] = await connection.query(
-      'SELECT * FROM products WHERE id = ?',
+      `SELECT * FROM products
+       WHERE id = ?
+       ${canViewInactive ? '' : 'AND (status = "active" OR status IS NULL)'}`,
       [productId]
     );
 
     if (products.length === 0) {
+      connection.release();
       return res.status(404).json({ error: 'Product not found' });
     }
 
@@ -9061,8 +5156,8 @@ app.get('/api/products/:id', async (req, res) => {
       customization_images: product.customization_images ? (typeof product.customization_images === 'string' ? JSON.parse(product.customization_images) : product.customization_images) : null,
       customization_dimensions: product.customization_dimensions ? (typeof product.customization_dimensions === 'string' ? JSON.parse(product.customization_dimensions) : product.customization_dimensions) : null,
       customization_mode: product.customization_mode || null,
-      personalization_input_type: product.personalization_input_type || 'design',
       allow_customer_size_adjustment: product.allow_customer_size_adjustment ? 1 : 0,
+      personalization_input_type: product.personalization_input_type || null,
       seo_title: product.seo_title,
       seo_description: product.seo_description,
       seo_keywords: product.seo_keywords,
@@ -9088,17 +5183,21 @@ app.get('/api/products/:id', async (req, res) => {
 
 // Get all products endpoint
 app.get('/api/products', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
   try {
+    const canViewInactive = req.query.includeInactive === 'true' && hasAdminSession(req);
+    const requestedLimit = parseInt(req.query.limit, 10);
+    const hasLimit = Number.isInteger(requestedLimit) && requestedLimit > 0;
     const connection = await pool.getConnection();
-    const includeInactive = String(req.query.includeInactive || '').toLowerCase() === 'true';
-    const limitValue = Number.parseInt(req.query.limit, 10);
-    const hasLimit = Number.isInteger(limitValue) && limitValue > 0;
-    const productsQuery = includeInactive
-      ? `SELECT * FROM products ORDER BY created_at DESC${hasLimit ? ' LIMIT ?' : ''}`
-      : `SELECT * FROM products WHERE status = 'active' ORDER BY created_at DESC${hasLimit ? ' LIMIT ?' : ''}`;
     const [products] = await connection.query(
-      productsQuery,
-      hasLimit ? [limitValue] : []
+      `SELECT * FROM products
+       ${canViewInactive ? '' : 'WHERE status = "active" OR status IS NULL'}
+       ORDER BY created_at DESC
+       ${hasLimit ? 'LIMIT ?' : ''}`,
+      hasLimit ? [requestedLimit] : []
     );
     const [summaries] = await connection.query(
       'SELECT product_id, ROUND(AVG(rating),1) AS avg_rating, COUNT(*) AS review_count FROM user_reviews WHERE is_approved = 1 GROUP BY product_id'
@@ -9177,9 +5276,6 @@ app.get('/api/products', async (req, res) => {
         free_shipping: isFreeShippingEnabled(meta?.free_shipping),
         free_shipping_min_amount: freeShippingMinAmount,
         customization_mode: product.customization_mode || null,
-        customization_type: product.customization_type,
-        personalization_input_type: product.personalization_input_type || 'design',
-        allow_customer_size_adjustment: product.allow_customer_size_adjustment ? 1 : 0,
         created_at: product.created_at,
         updated_at: product.updated_at,
         rating: sum.rating,
@@ -9674,15 +5770,22 @@ app.delete('/api/products/:id/images', requireAdminAuth, async (req, res) => {
 
 // Get related products
 app.get('/api/products/:id/related', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
   try {
     const productId = req.params.id;
     const limit = parseInt(req.query.limit) || 4;
+    const canViewInactive = hasAdminSession(req);
 
     const connection = await pool.getConnection();
 
     // First get the product's categories
     const [products] = await connection.query(
-      'SELECT category FROM products WHERE id = ?',
+      `SELECT category FROM products
+       WHERE id = ?
+       ${canViewInactive ? '' : 'AND (status = "active" OR status IS NULL)'}`,
       [productId]
     );
 
@@ -9707,6 +5810,7 @@ app.get('/api/products/:id/related', async (req, res) => {
       `SELECT id, product_name, price, min_price, max_price, discounted_price, images 
        FROM products 
        WHERE id != ? 
+       ${canViewInactive ? '' : 'AND (status = "active" OR status IS NULL)'}
        AND JSON_OVERLAPS(category, ?)
        LIMIT ?`,
       [productId, JSON.stringify(categories), limit]
@@ -9740,9 +5844,12 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
   try {
     const { id } = req.params;
     const { img: imgParam } = req.query;
-
+    
     connection = await pool.getConnection();
-    const [rows] = await connection.query('SELECT * FROM products WHERE id = ? LIMIT 1', [id]);
+    const [rows] = await connection.query(
+      'SELECT * FROM products WHERE id = ? AND (status = "active" OR status IS NULL) LIMIT 1',
+      [id]
+    );
     if (!rows || rows.length === 0) {
       connection.release();
       res.status(404).send('<!doctype html><html><head><meta charset="utf-8"><title>Product Not Found</title></head><body>Product not found</body></html>');
@@ -9756,7 +5863,7 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     connection = null;
 
     const photos = productSocialSeo.parseProductPhotos(p);
-
+    
     // Better image selection for sharing
     let imgIdx = 0;
     if (imgParam) {
@@ -9765,10 +5872,10 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
         imgIdx = parsed;
       }
     }
-
+    
     // Use the new image function
     const firstImage = productSocialSeo.getImageUrlForSharing(photos[imgIdx], 1200, 630);
-
+    
     const canonicalPath = productSocialSeo.buildCanonicalProductPath(p, sitemapPath, id);
     const canonicalUrl = `${siteBase}${canonicalPath}`;
     const meta = productSocialSeo.buildProductSocialMetaTags(p, { canonicalUrl, imageUrl: firstImage });
@@ -9811,14 +5918,14 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
     const schemaScripts = `
       <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>
       <script type="application/ld+json">${JSON.stringify({
-      '@context': 'https://schema.org',
-      '@type': 'BreadcrumbList',
-      itemListElement: [
-        { '@type': 'ListItem', position: 1, name: 'Home', item: siteBase },
-        { '@type': 'ListItem', position: 2, name: String(p.category || 'Products') || 'Products', item: `${siteBase}/` },
-        { '@type': 'ListItem', position: 3, name: name, item: canonicalUrl }
-      ]
-    })}</script>
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: 'Home', item: siteBase },
+          { '@type': 'ListItem', position: 2, name: String(p.category || 'Products') || 'Products', item: `${siteBase}/` },
+          { '@type': 'ListItem', position: 3, name: name, item: canonicalUrl }
+        ]
+      })}</script>
     `;
 
     const html = `<!doctype html><html lang="en"><head>
@@ -9842,10 +5949,20 @@ app.get('/share/products/:id/:slug?', async (req, res) => {
 });
 
 app.get('/api/products/slug/:slug', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
   try {
     const { slug } = req.params;
+    const canViewInactive = hasAdminSession(req);
     const connection = await pool.getConnection();
-    const [products] = await connection.query('SELECT * FROM products WHERE slug = ?', [slug]);
+    const [products] = await connection.query(
+      `SELECT * FROM products
+       WHERE slug = ?
+       ${canViewInactive ? '' : 'AND (status = "active" OR status IS NULL)'}`,
+      [slug]
+    );
     connection.release();
     if (!products.length) {
       return res.status(404).json({ error: 'Product not found' });
@@ -9895,14 +6012,6 @@ app.get('/api/products/slug/:slug', async (req, res) => {
       attributes: product.attributes ? JSON.parse(product.attributes) : null,
       images: product.images ? JSON.parse(product.images) : null,
       metadata: product.metadata ? JSON.parse(product.metadata) : null,
-      is_customizable: product.is_customizable ? 1 : 0,
-      is_preorder: product.is_preorder ? 1 : 0,
-      stock_status: product.stock_status || (product.is_preorder ? 'Pre-order' : 'In Stock'),
-      customization_type: product.customization_type,
-      customization_images: product.customization_images ? (typeof product.customization_images === 'string' ? JSON.parse(product.customization_images) : product.customization_images) : null,
-      customization_dimensions: product.customization_dimensions ? (typeof product.customization_dimensions === 'string' ? JSON.parse(product.customization_dimensions) : product.customization_dimensions) : null,
-      personalization_input_type: product.personalization_input_type || 'design',
-      allow_customer_size_adjustment: product.allow_customer_size_adjustment ? 1 : 0,
       created_at: product.created_at,
       updated_at: product.updated_at
     });
@@ -9912,6 +6021,10 @@ app.get('/api/products/slug/:slug', async (req, res) => {
 });
 
 app.get('/api/products/featured', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
   try {
     const limit = parseInt(req.query.limit) || 8;
     const connection = await pool.getConnection();
@@ -9970,12 +6083,12 @@ app.get('/api/products/:productId/discount-ranges', async (req, res) => {
   try {
     const { productId } = req.params;
     connection = await pool.getConnection();
-
+    
     const [rows] = await connection.query(
       'SELECT * FROM quantity_discount_ranges WHERE product_id = ? ORDER BY min_quantity ASC',
       [productId]
     );
-
+    
     connection.release();
     res.json({ success: true, data: rows });
   } catch (error) {
@@ -9992,31 +6105,31 @@ app.post('/api/products/:productId/discount-ranges', requireAdminAuth, async (re
     const { productId } = req.params;
     console.log('POST /discount-ranges req.body:', req.body);
     const { min_quantity, max_quantity, discount_percentage, discounted_price } = req.body;
-
+    
     if (min_quantity === undefined || min_quantity === null || min_quantity < 1) {
       return res.status(400).json({ success: false, message: 'Minimum quantity is required and must be at least 1' });
     }
-
+    
     if ((discount_percentage === undefined || discount_percentage === null) && (discounted_price === undefined || discounted_price === null)) {
       return res.status(400).json({ success: false, message: 'Either discount percentage or discounted price is required' });
     }
-
+    
     connection = await pool.getConnection();
-
+    
     // Check if product exists
     const [product] = await connection.query('SELECT id FROM products WHERE id = ?', [productId]);
     if (product.length === 0) {
       connection.release();
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
-
+    
     const [result] = await connection.query(
       `INSERT INTO quantity_discount_ranges 
        (product_id, min_quantity, max_quantity, discount_percentage, discounted_price) 
        VALUES (?, ?, ?, ?, ?)`,
       [productId, min_quantity, max_quantity || null, discount_percentage || 0, discounted_price || null]
     );
-
+    
     connection.release();
     res.json({ success: true, message: 'Discount range added successfully', id: result.insertId });
   } catch (error) {
@@ -10032,21 +6145,21 @@ app.put('/api/products/:productId/discount-ranges/:id', requireAdminAuth, async 
   try {
     const { productId, id } = req.params;
     const { min_quantity, max_quantity, discount_percentage, discounted_price } = req.body;
-
+    
     connection = await pool.getConnection();
-
+    
     const [result] = await connection.query(
       `UPDATE quantity_discount_ranges 
        SET min_quantity = ?, max_quantity = ?, discount_percentage = ?, discounted_price = ?, updated_at = NOW()
        WHERE id = ? AND product_id = ?`,
       [min_quantity, max_quantity || null, discount_percentage || 0, discounted_price || null, id, productId]
     );
-
+    
     if (result.affectedRows === 0) {
       connection.release();
       return res.status(404).json({ success: false, message: 'Discount range not found' });
     }
-
+    
     connection.release();
     res.json({ success: true, message: 'Discount range updated successfully' });
   } catch (error) {
@@ -10062,17 +6175,17 @@ app.delete('/api/products/:productId/discount-ranges/:id', requireAdminAuth, asy
   try {
     const { productId, id } = req.params;
     connection = await pool.getConnection();
-
+    
     const [result] = await connection.query(
       'DELETE FROM quantity_discount_ranges WHERE id = ? AND product_id = ?',
       [id, productId]
     );
-
+    
     if (result.affectedRows === 0) {
       connection.release();
       return res.status(404).json({ success: false, message: 'Discount range not found' });
     }
-
+    
     connection.release();
     res.json({ success: true, message: 'Discount range deleted successfully' });
   } catch (error) {
@@ -10491,8 +6604,11 @@ app.post('/api/admin/verify-otp', async (req, res) => {
       maxAge: 365 * 24 * 60 * 60 * 1000
     });
 
+    // Generate admin token to include in response
+    const adminToken = generateAdminToken();
+
     connection.release();
-    res.json({ success: true, message: 'Authentication Verified' });
+    res.json({ success: true, message: 'Authentication Verified', token: adminToken });
 
   } catch (error) {
     console.error('Verify Error:', error);
@@ -11721,33 +7837,33 @@ Sitemap: https://www.yokebud.fi/sitemap.xml
     });
 
     // SPA fallback with Dynamic SEO for product pages
-    // SPA fallback with Dynamic SEO for product pages
-    app.get([
-      '/',
-      /^\/(?!api|uploads|assets|.*sitemap.*\.xml|sitemap\.xsl|robots\.txt|health|debug\/email-preview|.*\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|xsl)$).*/
-    ], async (req, res) => {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
+// SPA fallback with Dynamic SEO for product pages
+app.get([
+  '/',
+  /^\/(?!api|uploads|assets|.*sitemap.*\.xml|sitemap\.xsl|robots\.txt|health|debug\/email-preview|.*\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|xsl)$).*/
+], async (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
 
-      const indexPath = path.join(distDir, 'index.html');
+  const indexPath = path.join(distDir, 'index.html');
 
-      // Product pages: inject server-rendered Open Graph / Twitter Card meta for social crawlers
-      if (productSocialSeo.extractProductIdFromRequestPath(req.path)) {
-        try {
-          const baseHtml = fs.readFileSync(indexPath, 'utf8');
-          const html = await productSocialSeo.buildProductSocialHtml(pool, req.path, baseHtml);
-          if (html) {
-            return res.send(html);
-          }
-        } catch (err) {
-          console.error('Error injecting product social meta tags:', err);
-        }
+  // Product pages: inject server-rendered Open Graph / Twitter Card meta for social crawlers
+  if (productSocialSeo.extractProductIdFromRequestPath(req.path)) {
+    try {
+      const baseHtml = fs.readFileSync(indexPath, 'utf8');
+      const html = await productSocialSeo.buildProductSocialHtml(pool, req.path, baseHtml);
+      if (html) {
+        return res.send(html);
       }
+    } catch (err) {
+      console.error('Error injecting product social meta tags:', err);
+    }
+  }
 
-      // Default fallback
-      res.sendFile(indexPath);
-    });
+  // Default fallback
+  res.sendFile(indexPath);
+});
   }
 } catch (_) { /* ignore */ }
 
@@ -13291,22 +9407,22 @@ app.get('/share*', async (req, res) => {
   try {
     const originalPath = req.path.replace(/^\/share/, '') || '/';
     const indexPath = path.join(CLIENT_BUILD_PATH, 'index.html');
-
+    
     // Check if index.html exists
     if (!fs.existsSync(indexPath)) {
       console.warn('Client index.html not found, falling back to default');
       return res.sendFile(path.join(__dirname, '../client/index.html'));
     }
-
+    
     // Read index.html
     let html = fs.readFileSync(indexPath, 'utf8');
-
+    
     // Try to build social HTML
     const socialHtml = await productSocialSeo.buildProductSocialHtml(pool, originalPath, html);
     if (socialHtml) {
       return res.send(socialHtml);
     }
-
+    
     // Fallback to original index.html
     res.sendFile(indexPath);
   } catch (err) {
