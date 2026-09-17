@@ -416,6 +416,38 @@ async function ensureProductVariantsSchema() {
 
 ensureProductVariantsSchema();
 
+async function ensureProductVariationsSchema() {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.query(
+      `CREATE TABLE IF NOT EXISTS product_variations (
+        id INT NOT NULL AUTO_INCREMENT,
+        product_id INT NOT NULL,
+        variation_name VARCHAR(100) NOT NULL,
+        option_name VARCHAR(255) NOT NULL,
+        price DECIMAL(10,2) NULL,
+        image_url TEXT NULL,
+        is_visible TINYINT(1) NOT NULL DEFAULT 1,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_product_variation (product_id, variation_name, option_name),
+        KEY idx_product_id (product_id),
+        KEY idx_variation_name (product_id, variation_name)
+      )`
+    );
+    console.log('✅ Product variations table checked/created');
+  } catch (e) {
+    console.warn('Product variations schema setup error:', e.message || e);
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+ensureProductVariationsSchema();
+
 // ===== এই ফাংশনটি যোগ করুন =====
 async function ensureQuantityDiscountRangesSchema() {
   let connection;
@@ -4706,6 +4738,27 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
                                                                         [result.insertId, minQty, maxQty !== null ? maxQty : null, discountPercent, discPrice]
                                                                               );
                                                                                   }
+
+    const productVariations = Array.isArray(req.body.product_variations) ? req.body.product_variations : [];
+    for (const pv of productVariations) {
+      if (!pv || !pv.variation_name || !pv.option_name) continue;
+      const varPrice = pv.price != null && pv.price !== '' ? Number(pv.price) : null;
+      const varImage = pv.image_url ? String(pv.image_url) : null;
+      const varVisible = pv.is_visible === false || pv.is_visible === 0 ? 0 : 1;
+      const varSort = pv.sort_order != null ? parseInt(pv.sort_order) : 0;
+      await connection.query(
+        `INSERT INTO product_variations
+         (product_id, variation_name, option_name, price, image_url, is_visible, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           price = VALUES(price),
+           image_url = VALUES(image_url),
+           is_visible = VALUES(is_visible),
+           sort_order = VALUES(sort_order)`,
+        [result.insertId, String(pv.variation_name), String(pv.option_name),
+         varPrice, varImage, varVisible, varSort]
+      );
+    }
                                                                                   
     connection.release();
     
@@ -4985,6 +5038,23 @@ app.put('/api/products/:id', requireAdminAuth, async (req, res) => {
       );
     }
 
+    const productVariations = Array.isArray(req.body.product_variations) ? req.body.product_variations : [];
+    await connection.query('DELETE FROM product_variations WHERE product_id = ?', [productId]);
+    for (const pv of productVariations) {
+      if (!pv || !pv.variation_name || !pv.option_name) continue;
+      const varPrice = pv.price != null && pv.price !== '' ? Number(pv.price) : null;
+      const varImage = pv.image_url ? String(pv.image_url) : null;
+      const varVisible = pv.is_visible === false || pv.is_visible === 0 ? 0 : 1;
+      const varSort = pv.sort_order != null ? parseInt(pv.sort_order) : 0;
+      await connection.query(
+        `INSERT INTO product_variations
+         (product_id, variation_name, option_name, price, image_url, is_visible, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [productId, String(pv.variation_name), String(pv.option_name),
+         varPrice, varImage, varVisible, varSort]
+      );
+    }
+
     await connection.commit();
     connection.release();
 
@@ -5174,6 +5244,43 @@ app.get('/api/products/:id', async (req, res) => {
       [productId]
     );
     parsedProduct.variants = Array.isArray(variants) ? variants.map(v => ({ color: v.color, size: v.size, quantity: Number(v.quantity || 0) })) : [];
+
+    const [prodVariations] = await connection.query(
+      'SELECT id, variation_name, option_name, price, image_url, is_visible, sort_order FROM product_variations WHERE product_id = ? ORDER BY sort_order ASC, id ASC',
+      [productId]
+    );
+    const customVariations = Array.isArray(prodVariations) ? prodVariations.map(v => ({
+      id: v.id,
+      variation_name: v.variation_name,
+      option_name: v.option_name,
+      price: v.price != null ? Number(v.price) : null,
+      image_url: v.image_url,
+      is_visible: v.is_visible ? 1 : 0,
+      sort_order: Number(v.sort_order || 0)
+    })) : [];
+    parsedProduct.product_variations = customVariations;
+
+    const visibleWithPrice = customVariations.filter(v => v.is_visible && v.price != null);
+    if (visibleWithPrice.length > 0) {
+      const pricesFromVars = visibleWithPrice.map(v => Number(v.price));
+      const dynMin = Math.min(...pricesFromVars);
+      const dynMax = Math.max(...pricesFromVars);
+      const basePrice = Number(product.price || 0);
+      parsedProduct.min_price = Math.min(
+        priceRange && priceRange.min != null ? Number(priceRange.min) : basePrice,
+        product.discounted_price ? Number(product.discounted_price) : basePrice,
+        dynMin
+      );
+      parsedProduct.max_price = Math.max(
+        priceRange && priceRange.max != null ? Number(priceRange.max) : basePrice,
+        basePrice,
+        dynMax
+      );
+      parsedProduct.has_custom_variations = 1;
+    } else {
+      parsedProduct.has_custom_variations = customVariations.length > 0 ? 1 : 0;
+    }
+
     connection.release();
     res.json(parsedProduct);
   } catch (error) {
@@ -5224,6 +5331,30 @@ app.get('/api/products', async (req, res) => {
       }
     }
 
+    const variationMap = new Map();
+    if (products.length > 0) {
+      const productIds = products.map(p => p.id);
+      const placeholders = productIds.map(() => '?').join(',');
+      const [variationRows] = await pool.query(
+        `SELECT id, product_id, variation_name, option_name, price, image_url, is_visible, sort_order
+         FROM product_variations WHERE product_id IN (${placeholders})`,
+        productIds
+      );
+      for (const vr of variationRows) {
+        const pid = Number(vr.product_id);
+        if (!variationMap.has(pid)) variationMap.set(pid, []);
+        variationMap.get(pid).push({
+          id: vr.id,
+          variation_name: vr.variation_name,
+          option_name: vr.option_name,
+          price: vr.price != null ? Number(vr.price) : null,
+          image_url: vr.image_url,
+          is_visible: vr.is_visible ? 1 : 0,
+          sort_order: Number(vr.sort_order || 0)
+        });
+      }
+    }
+
     const parsedProducts = products.map(product => {
       // Parse categories
       let categories;
@@ -5242,6 +5373,20 @@ app.get('/api/products', async (req, res) => {
 
       const sum = summaryMap.get(Number(product.id)) || { rating: null, review_count: 0 };
       const sitemapPath = sitemapMap.get(Number(product.id)) || null;
+      const productVariations = variationMap.get(Number(product.id)) || [];
+      const hasCustomVariations = productVariations.length > 0 ? 1 : 0;
+
+      let baseMin = priceRange && priceRange.min != null ? Number(priceRange.min) : (product.discounted_price || product.price);
+      let baseMax = priceRange && priceRange.max != null ? Number(priceRange.max) : product.price;
+      if (hasCustomVariations) {
+        const visiblePriced = productVariations.filter(v => v.is_visible && v.price != null && !isNaN(v.price));
+        if (visiblePriced.length > 0) {
+          const dynMin = Math.min(...visiblePriced.map(v => Number(v.price)));
+          const dynMax = Math.max(...visiblePriced.map(v => Number(v.price)));
+          baseMin = Math.min(Number(baseMin), dynMin);
+          baseMax = Math.max(Number(baseMax), dynMax);
+        }
+      }
 
       return {
         id: product.id,
@@ -5257,8 +5402,10 @@ app.get('/api/products', async (req, res) => {
         metadata: meta,
         tags: JSON.parse(product.tags || '[]'),
         features: JSON.parse(product.features || '[]'),
-        min_price: priceRange && priceRange.min != null ? Number(priceRange.min) : (product.discounted_price || product.price),
-        max_price: priceRange && priceRange.max != null ? Number(priceRange.max) : product.price,
+        min_price: baseMin,
+        max_price: baseMax,
+        product_variations: productVariations,
+        has_custom_variations: hasCustomVariations,
         slug: product.slug,
         sitemap_path: sitemapPath,
         status: product.status,
