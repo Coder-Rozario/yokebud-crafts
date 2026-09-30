@@ -6901,9 +6901,1051 @@ app.get('/api/user-profiles/count', async (req, res) => {
   }
 });
 
+// ==================== USER AUTHENTICATION & PROFILE SYSTEM ====================
+
+const requireUserAuth = (req, res, next) => {
+  const authHeader = req.headers.authorization || req.headers.Authorization || '';
+  if (!authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, message: 'Authentication required' });
+  }
+  const token = authHeader.slice(7);
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.type !== 'user') {
+      return res.status(403).json({ success: false, message: 'Invalid token type' });
+    }
+    req.user = { userId: decoded.userId };
+    next();
+  } catch (err) {
+    return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+  }
+};
+
+const generateOtpCode = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+const sendUserOtpEmail = async (email, otp, purpose = 'login') => {
+  try {
+    const purposeText = purpose === 'registration' ? 'Account Verification' : 'Sign In';
+    const htmlContent = `
+      <div style="font-family:'Poppins',Arial,sans-serif;max-width:560px;margin:0 auto;background:#0b0b0b;color:#f5f5f5;border-radius:14px;overflow:hidden;border:1px solid rgba(212,175,55,0.25)">
+        <div style="padding:28px 24px;background:linear-gradient(135deg,#BF953F,#FCF6BA,#B38728,#FBF5B7,#AA771C);text-align:center">
+          <h2 style="margin:0;color:#000;font-weight:800;letter-spacing:0.5px">YOKEBUD Craft</h2>
+        </div>
+        <div style="padding:30px 28px">
+          <h3 style="margin:0 0 10px;color:#FBF5B7;font-size:1.25rem">${purposeText} Code</h3>
+          <p style="margin:0 0 22px;color:#aaa;line-height:1.6">Use the 6-digit code below to ${purpose === 'registration' ? 'create your account' : 'complete your sign in'}. This code expires in <strong style="color:#FBF5B7">10 minutes</strong>.</p>
+          <div style="background:rgba(191,149,63,0.08);border:1px solid rgba(212,175,55,0.35);border-radius:12px;padding:22px;text-align:center;margin-bottom:20px">
+            <div style="font-size:2.2rem;font-weight:800;letter-spacing:18px;color:#FBF5B7;line-height:1">${otp}</div>
+          </div>
+          <p style="margin:0;color:#777;font-size:0.8rem;line-height:1.55">If you did not request this, you can safely ignore this email. Never share your OTP with anyone.</p>
+        </div>
+        <div style="padding:18px 28px;background:rgba(255,255,255,0.02);border-top:1px solid rgba(255,255,255,0.05);text-align:center;color:#666;font-size:0.75rem">
+          © ${new Date().getFullYear()} Yokebud Craft — Laser Engraving, Cutting & 3D Printing Studio
+        </div>
+      </div>
+    `;
+    await sendMail({
+      to: email,
+      subject: `Your ${purposeText} OTP for Yokebud Craft: ${otp}`,
+      html: htmlContent,
+    });
+    return true;
+  } catch (err) {
+    console.error('User OTP email send error:', err.message);
+    return false;
+  }
+};
+
+(async () => {
+  let conn;
+  try {
+    conn = await pool.getConnection();
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS user_credentials (
+        user_id VARCHAR(100) NOT NULL PRIMARY KEY,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        google_uid VARCHAR(255) NULL UNIQUE,
+        display_name VARCHAR(255) NULL,
+        photo_url VARCHAR(500) NULL,
+        email_verified TINYINT(1) NOT NULL DEFAULT 0,
+        auth_provider ENUM('email','google','both') NOT NULL DEFAULT 'email',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_email (email),
+        KEY idx_google_uid (google_uid)
+      )
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS user_profiles (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id VARCHAR(100) NOT NULL UNIQUE,
+        first_name VARCHAR(100) NULL,
+        last_name VARCHAR(100) NULL,
+        phone VARCHAR(50) NULL,
+        address VARCHAR(500) NULL,
+        house_number VARCHAR(50) NULL,
+        apartment VARCHAR(50) NULL,
+        landmark VARCHAR(255) NULL,
+        city VARCHAR(100) NULL,
+        state VARCHAR(100) NULL,
+        zip_code VARCHAR(50) NULL,
+        country VARCHAR(100) NULL,
+        profile_picture VARCHAR(500) NULL,
+        date_of_birth DATE NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_user_id (user_id)
+      )
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS user_otps (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        email VARCHAR(255) NOT NULL,
+        otp_code VARCHAR(6) NOT NULL,
+        purpose ENUM('login','registration') NOT NULL DEFAULT 'login',
+        expires_at DATETIME NOT NULL,
+        is_used TINYINT(1) NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_email_purpose (email, purpose),
+        KEY idx_expires (expires_at)
+      )
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS user_wishlists (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id VARCHAR(100) NOT NULL,
+        product_id INT NOT NULL,
+        added_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_user_product (user_id, product_id),
+        KEY idx_user_id (user_id),
+        KEY idx_product_id (product_id)
+      )
+    `);
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS orders (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id VARCHAR(100) NOT NULL UNIQUE,
+        user_id VARCHAR(100) NULL,
+        customer_name VARCHAR(255) NULL,
+        customer_email VARCHAR(255) NULL,
+        customer_phone VARCHAR(50) NULL,
+        customer_country VARCHAR(100) NULL,
+        status ENUM('pending','paid','processing','shipped','delivered','cancelled','refunded') NOT NULL DEFAULT 'pending',
+        payment_method VARCHAR(50) NULL,
+        payment_status VARCHAR(50) NULL,
+        payment_id VARCHAR(255) NULL,
+        subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+        shipping DECIMAL(12,2) NOT NULL DEFAULT 0,
+        tax DECIMAL(12,2) NOT NULL DEFAULT 0,
+        discount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        total DECIMAL(12,2) NOT NULL DEFAULT 0,
+        currency VARCHAR(10) NOT NULL DEFAULT 'EUR',
+        shipping_method VARCHAR(100) NULL,
+        shipping_address JSON NULL,
+        customer_info JSON NULL,
+        items JSON NULL,
+        product_details JSON NULL,
+        estimated_delivery DATE NULL,
+        tracking_number VARCHAR(255) NULL,
+        tracking_url VARCHAR(500) NULL,
+        promo_code VARCHAR(50) NULL,
+        notes TEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_user_id (user_id),
+        KEY idx_order_id (order_id),
+        KEY idx_status (status),
+        KEY idx_email (customer_email)
+      )
+    `);
+    conn.release();
+    console.log('User auth tables ready.');
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('User auth table setup error:', err.message);
+  }
+})();
+
+app.post('/api/user/auth/firebase-google', async (req, res) => {
+  let conn;
+  try {
+    const { user: fbUser } = req.body || {};
+    if (!fbUser || !fbUser.email || !fbUser.uid) {
+      return res.status(400).json({ success: false, message: 'Invalid Google user data' });
+    }
+    const email = String(fbUser.email).toLowerCase().trim();
+    const uid = String(fbUser.uid);
+
+    conn = await pool.getConnection();
+
+    let [credRows] = await conn.query(
+      'SELECT user_id FROM user_credentials WHERE email = ? OR google_uid = ? LIMIT 1',
+      [email, uid]
+    );
+    let userId;
+    if (credRows.length > 0) {
+      userId = credRows[0].user_id;
+      await conn.query(
+        `UPDATE user_credentials SET
+          google_uid = COALESCE(google_uid, ?),
+          display_name = COALESCE(NULLIF(display_name, ''), ?),
+          photo_url = COALESCE(NULLIF(photo_url, ''), ?),
+          email_verified = CASE WHEN email_verified = 0 THEN ? ELSE email_verified END,
+          auth_provider = CASE
+            WHEN auth_provider = 'email' THEN 'both'
+            ELSE auth_provider
+          END,
+          updated_at = NOW()
+         WHERE user_id = ?`,
+        [
+          uid,
+          fbUser.displayName || null,
+          fbUser.photoURL || null,
+          fbUser.emailVerified ? 1 : 0,
+          userId,
+        ]
+      );
+    } else {
+      userId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      await conn.query(
+        `INSERT INTO user_credentials (user_id, email, google_uid, display_name, photo_url, email_verified, auth_provider)
+         VALUES (?, ?, ?, ?, ?, ?, 'google')`,
+        [
+          userId,
+          email,
+          uid,
+          fbUser.displayName || null,
+          fbUser.photoURL || null,
+          fbUser.emailVerified ? 1 : 0,
+        ]
+      );
+      const [names] = (() => {
+        const d = (fbUser.displayName || '').trim();
+        if (!d) return [[null, null]];
+        const parts = d.split(/\s+/);
+        const first = parts[0] || null;
+        const last = parts.slice(1).join(' ') || null;
+        return [[first, last]];
+      })();
+      await conn.query(
+        `INSERT INTO user_profiles (user_id, first_name, last_name) VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE first_name = COALESCE(NULLIF(first_name, ''), VALUES(first_name)),
+                                  last_name = COALESCE(NULLIF(last_name, ''), VALUES(last_name))`,
+        [userId, names[0] || null, names[1] || null]
+      );
+    }
+
+    const [profileRows] = await conn.query(
+      'SELECT * FROM user_profiles WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+    const profile = profileRows[0] || null;
+    conn.release();
+
+    const token = generateToken(userId);
+    res.json({
+      success: true,
+      token,
+      user: profile || { user_id: userId, first_name: fbUser.displayName?.split(' ')[0] || null, last_name: null },
+    });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Firebase Google auth error:', err);
+    res.status(500).json({ success: false, message: 'Authentication failed' });
+  }
+});
+
+app.post('/api/user/login/send-otp', async (req, res) => {
+  let conn;
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ success: false, message: 'Email is required' });
+    const normalizedEmail = String(email).toLowerCase().trim();
+
+    conn = await pool.getConnection();
+    const [credRows] = await conn.query(
+      'SELECT user_id FROM user_credentials WHERE email = ? LIMIT 1',
+      [normalizedEmail]
+    );
+    if (credRows.length === 0) {
+      conn.release();
+      return res.status(404).json({ success: false, message: 'No account found with this email. Please create an account first.' });
+    }
+
+    const otp = generateOtpCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await conn.query(
+      'INSERT INTO user_otps (email, otp_code, purpose, expires_at) VALUES (?, ?, ?, ?)',
+      [normalizedEmail, otp, 'login', expiresAt]
+    );
+    conn.release();
+
+    const emailSent = await sendUserOtpEmail(normalizedEmail, otp, 'login');
+    res.json({
+      success: true,
+      message: emailSent ? 'OTP sent to your email' : 'OTP generated (email delivery skipped)',
+      debug_otp: process.env.NODE_ENV === 'development' ? otp : undefined,
+    });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Login send OTP error:', err);
+    res.status(500).json({ success: false, message: 'Failed to send OTP' });
+  }
+});
+
+app.post('/api/user/register/send-otp', async (req, res) => {
+  let conn;
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ success: false, message: 'Email is required' });
+    const normalizedEmail = String(email).toLowerCase().trim();
+
+    conn = await pool.getConnection();
+    const [credRows] = await conn.query(
+      'SELECT user_id FROM user_credentials WHERE email = ? LIMIT 1',
+      [normalizedEmail]
+    );
+    let isNew = credRows.length === 0;
+    if (!isNew) {
+      conn.release();
+      return res.status(409).json({ success: false, message: 'An account with this email already exists. Please sign in instead.' });
+    }
+
+    const otp = generateOtpCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await conn.query(
+      'INSERT INTO user_otps (email, otp_code, purpose, expires_at) VALUES (?, ?, ?, ?)',
+      [normalizedEmail, otp, 'registration', expiresAt]
+    );
+    conn.release();
+
+    const emailSent = await sendUserOtpEmail(normalizedEmail, otp, 'registration');
+    res.json({
+      success: true,
+      message: emailSent ? 'Verification OTP sent to your email' : 'OTP generated (email delivery skipped)',
+      debug_otp: process.env.NODE_ENV === 'development' ? otp : undefined,
+    });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Register send OTP error:', err);
+    res.status(500).json({ success: false, message: 'Failed to send OTP' });
+  }
+});
+
+app.post('/api/user/login/verify-otp', async (req, res) => {
+  let conn;
+  try {
+    const { email, otp } = req.body || {};
+    if (!email || !otp) return res.status(400).json({ success: false, message: 'Email and OTP are required' });
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const otpCode = String(otp).trim();
+
+    conn = await pool.getConnection();
+    await conn.query('START TRANSACTION');
+
+    const [otpRows] = await conn.query(
+      `SELECT * FROM user_otps
+       WHERE email = ? AND purpose = 'login' AND is_used = 0
+       ORDER BY id DESC LIMIT 1`,
+      [normalizedEmail]
+    );
+
+    if (otpRows.length === 0) {
+      await conn.query('ROLLBACK');
+      conn.release();
+      return res.status(400).json({ success: false, message: 'No OTP found. Please request a new one.' });
+    }
+    const otpRec = otpRows[0];
+    if (new Date() > new Date(otpRec.expires_at)) {
+      await conn.query('ROLLBACK');
+      conn.release();
+      return res.status(410).json({ success: false, message: 'OTP has expired. Please request a new one.' });
+    }
+    if (String(otpRec.otp_code) !== otpCode) {
+      await conn.query('ROLLBACK');
+      conn.release();
+      return res.status(400).json({ success: false, message: 'Invalid OTP. Please check and try again.' });
+    }
+
+    await conn.query('UPDATE user_otps SET is_used = 1 WHERE id = ?', [otpRec.id]);
+
+    const [credRows] = await conn.query(
+      'SELECT user_id FROM user_credentials WHERE email = ? LIMIT 1',
+      [normalizedEmail]
+    );
+    if (credRows.length === 0) {
+      await conn.query('ROLLBACK');
+      conn.release();
+      return res.status(404).json({ success: false, message: 'No account found. Please register first.' });
+    }
+    const userId = credRows[0].user_id;
+
+    await conn.query('COMMIT');
+
+    const [profileRows] = await conn.query(
+      'SELECT * FROM user_profiles WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+    conn.release();
+
+    const token = generateToken(userId);
+    res.json({
+      success: true,
+      token,
+      user: profileRows[0] || { user_id: userId },
+    });
+  } catch (err) {
+    if (conn) { try { conn.query('ROLLBACK'); conn.release(); } catch (_) {} }
+    console.error('Login verify OTP error:', err);
+    res.status(500).json({ success: false, message: 'Verification failed' });
+  }
+});
+
+app.post('/api/user/register/verify-otp', async (req, res) => {
+  let conn;
+  try {
+    const { email, otp } = req.body || {};
+    if (!email || !otp) return res.status(400).json({ success: false, message: 'Email and OTP are required' });
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const otpCode = String(otp).trim();
+
+    conn = await pool.getConnection();
+    await conn.query('START TRANSACTION');
+
+    const [otpRows] = await conn.query(
+      `SELECT * FROM user_otps
+       WHERE email = ? AND purpose = 'registration' AND is_used = 0
+       ORDER BY id DESC LIMIT 1`,
+      [normalizedEmail]
+    );
+
+    if (otpRows.length === 0) {
+      await conn.query('ROLLBACK');
+      conn.release();
+      return res.status(400).json({ success: false, message: 'No OTP found. Please request a new one.' });
+    }
+    const otpRec = otpRows[0];
+    if (new Date() > new Date(otpRec.expires_at)) {
+      await conn.query('ROLLBACK');
+      conn.release();
+      return res.status(410).json({ success: false, message: 'OTP has expired. Please request a new one.' });
+    }
+    if (String(otpRec.otp_code) !== otpCode) {
+      await conn.query('ROLLBACK');
+      conn.release();
+      return res.status(400).json({ success: false, message: 'Invalid OTP. Please check and try again.' });
+    }
+
+    const userId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    await conn.query(
+      `INSERT INTO user_credentials (user_id, email, auth_provider) VALUES (?, ?, 'email')
+       ON DUPLICATE KEY UPDATE updated_at = NOW()`,
+      [userId, normalizedEmail]
+    );
+    await conn.query(
+      `INSERT INTO user_profiles (user_id) VALUES (?)
+       ON DUPLICATE KEY UPDATE updated_at = NOW()`,
+      [userId]
+    );
+    await conn.query('UPDATE user_otps SET is_used = 1 WHERE id = ?', [otpRec.id]);
+    await conn.query('COMMIT');
+
+    const [profileRows] = await conn.query(
+      'SELECT * FROM user_profiles WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+    conn.release();
+
+    const token = generateToken(userId);
+    res.json({
+      success: true,
+      token,
+      user: profileRows[0] || { user_id: userId },
+    });
+  } catch (err) {
+    if (conn) { try { conn.query('ROLLBACK'); conn.release(); } catch (_) {} }
+    console.error('Register verify OTP error:', err);
+    res.status(500).json({ success: false, message: 'Verification failed' });
+  }
+});
+
+app.get('/api/user/profile', requireUserAuth, async (req, res) => {
+  let conn;
+  try {
+    const userId = req.user.userId;
+    conn = await pool.getConnection();
+    const [profileRows] = await conn.query(
+      'SELECT * FROM user_profiles WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+    if (profileRows.length === 0) {
+      await conn.query(
+        'INSERT INTO user_profiles (user_id) VALUES (?)',
+        [userId]
+      );
+      const [pRows] = await conn.query(
+        'SELECT * FROM user_profiles WHERE user_id = ? LIMIT 1',
+        [userId]
+      );
+      conn.release();
+      return res.json({ success: true, user: pRows[0] });
+    }
+    conn.release();
+    res.json({ success: true, user: profileRows[0] });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Get user profile error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load profile' });
+  }
+});
+
+app.put('/api/user/profile', requireUserAuth, async (req, res) => {
+  let conn;
+  try {
+    const userId = req.user.userId;
+    const body = req.body || {};
+    const allowed = [
+      'first_name','last_name','phone','address','house_number','apartment',
+      'landmark','city','state','zip_code','country','profile_picture','date_of_birth'
+    ];
+    const fields = [];
+    const values = [];
+    for (const key of allowed) {
+      if (body[key] !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(body[key] === '' ? null : body[key]);
+      }
+    }
+    conn = await pool.getConnection();
+    if (fields.length > 0) {
+      values.push(userId);
+      await conn.query(
+        `INSERT INTO user_profiles (user_id, ${allowed.join(', ')})
+         VALUES (?, ${allowed.map(() => 'NULL').join(', ')})
+         ON DUPLICATE KEY UPDATE ${fields.join(', ')}, updated_at = NOW()`,
+        [userId, ...values]
+      );
+    } else {
+      await conn.query(
+        'INSERT INTO user_profiles (user_id) VALUES (?) ON DUPLICATE KEY UPDATE updated_at = NOW()',
+        [userId]
+      );
+    }
+    const [profileRows] = await conn.query(
+      'SELECT * FROM user_profiles WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+    conn.release();
+    res.json({ success: true, user: profileRows[0] });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Update user profile error:', err);
+    res.status(500).json({ success: false, message: 'Failed to update profile' });
+  }
+});
+
+app.get('/api/user/orders', requireUserAuth, async (req, res) => {
+  let conn;
+  try {
+    const userId = req.user.userId;
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(
+      `SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC`,
+      [userId]
+    );
+    conn.release();
+    const orders = rows.map(o => {
+      const parsed = { ...o };
+      if (o.shipping_address && typeof o.shipping_address === 'string') {
+        try { parsed.shipping_address = JSON.parse(o.shipping_address); } catch (_) {}
+      }
+      if (o.customer_info && typeof o.customer_info === 'string') {
+        try { parsed.customer_info = JSON.parse(o.customer_info); } catch (_) {}
+      }
+      if (o.items && typeof o.items === 'string') {
+        try { parsed.items = JSON.parse(o.items); } catch (_) {}
+      }
+      if (o.product_details && typeof o.product_details === 'string') {
+        try { parsed.product_details = JSON.parse(o.product_details); } catch (_) {}
+      }
+      return parsed;
+    });
+    res.json({ success: true, orders });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Get user orders error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load orders' });
+  }
+});
+
+app.get('/api/user/wishlist', requireUserAuth, async (req, res) => {
+  let conn;
+  try {
+    const userId = req.user.userId;
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(
+      `SELECT w.id, w.user_id, w.product_id, w.added_at,
+              p.product_name, p.slug, p.price, p.sale_price, p.stock_quantity, p.product_photos,
+              p.product_type, p.customization_mode
+       FROM user_wishlists w
+       LEFT JOIN products p ON p.id = w.product_id
+       WHERE w.user_id = ?
+       ORDER BY w.added_at DESC`,
+      [userId]
+    );
+    conn.release();
+    const wishlist = rows.map(r => {
+      const out = { ...r, _id: r.id, id: r.product_id };
+      if (r.product_photos) {
+        try {
+          const photos = typeof r.product_photos === 'string' ? JSON.parse(r.product_photos) : r.product_photos;
+          out.product_photos = Array.isArray(photos) ? photos : (r.product_photos ? [r.product_photos] : []);
+          out.images = out.product_photos;
+          out.firstImage = out.product_photos[0] || '';
+          out.image = out.product_photos[0] || '';
+        } catch (_) {
+          out.product_photos = [];
+          out.images = [];
+          out.firstImage = '';
+          out.image = '';
+        }
+      }
+      if (!out.image || !out.firstImage) {
+        out.image = '';
+        out.firstImage = '';
+      }
+      return out;
+    });
+    res.json({ success: true, wishlist });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Get user wishlist error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load wishlist' });
+  }
+});
+
+app.post('/api/user/wishlist/:productId', requireUserAuth, async (req, res) => {
+  let conn;
+  try {
+    const userId = req.user.userId;
+    const productId = parseInt(req.params.productId, 10);
+    if (!Number.isFinite(productId) || productId <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid product ID' });
+    }
+    conn = await pool.getConnection();
+    await conn.query(
+      `INSERT IGNORE INTO user_wishlists (user_id, product_id) VALUES (?, ?)`,
+      [userId, productId]
+    );
+    conn.release();
+    res.json({ success: true, message: 'Added to wishlist' });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Add to wishlist error:', err);
+    res.status(500).json({ success: false, message: 'Failed to add to wishlist' });
+  }
+});
+
+app.delete('/api/user/wishlist/:productId', requireUserAuth, async (req, res) => {
+  let conn;
+  try {
+    const userId = req.user.userId;
+    const productId = parseInt(req.params.productId, 10);
+    if (!Number.isFinite(productId) || productId <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid product ID' });
+    }
+    conn = await pool.getConnection();
+    await conn.query(
+      'DELETE FROM user_wishlists WHERE user_id = ? AND product_id = ?',
+      [userId, productId]
+    );
+    conn.release();
+    res.json({ success: true, message: 'Removed from wishlist' });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Remove from wishlist error:', err);
+    res.status(500).json({ success: false, message: 'Failed to remove from wishlist' });
+  }
+});
+
+// ==================== END USER AUTHENTICATION & PROFILE SYSTEM ====================
 
 
+// ==================== ORDERS & CHECKOUT SYSTEM ====================
 
+const parseOrderRow = (o) => {
+  if (!o) return o;
+  const parsed = { ...o };
+  for (const key of ['shipping_address','customer_info','items','product_details']) {
+    if (parsed[key] && typeof parsed[key] === 'string') {
+      try { parsed[key] = JSON.parse(parsed[key]); } catch (_) {}
+    }
+  }
+  const totals = {
+    subtotal: parseFloat(o.subtotal || 0),
+    shipping: parseFloat(o.shipping || 0),
+    tax: parseFloat(o.tax || 0),
+    discount: parseFloat(o.discount || 0),
+    total: parseFloat(o.total || 0),
+  };
+  parsed.totals = totals;
+  parsed.customer = parsed.customer_info || {};
+  parsed.shippingAddress = parsed.shipping_address || {};
+  return parsed;
+};
+
+app.get('/api/orders', async (req, res) => {
+  let conn;
+  try {
+    const authHeader = req.headers.authorization || req.headers.Authorization || '';
+    let filterByUserId = null;
+    let isAdmin = false;
+    if (authHeader.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET);
+        if (decoded.type === 'admin') {
+          isAdmin = true;
+        } else if (decoded.type === 'user') {
+          filterByUserId = decoded.userId;
+        }
+      } catch (_) {}
+    }
+    if (!isAdmin && !filterByUserId && hasAdminSession(req)) {
+      isAdmin = true;
+    }
+    conn = await pool.getConnection();
+    let rows;
+    if (isAdmin) {
+      [rows] = await conn.query('SELECT * FROM orders ORDER BY created_at DESC');
+    } else if (filterByUserId) {
+      [rows] = await conn.query('SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC', [filterByUserId]);
+    } else {
+      conn.release();
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+    conn.release();
+    const orders = rows.map(parseOrderRow);
+    res.json({ success: true, orders });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('List orders error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load orders' });
+  }
+});
+
+app.get('/api/orders/:orderId', async (req, res) => {
+  let conn;
+  try {
+    const orderId = String(req.params.orderId || '');
+    if (!orderId) return res.status(400).json({ success: false, message: 'Order ID required' });
+    conn = await pool.getConnection();
+    const [rows] = await conn.query('SELECT * FROM orders WHERE order_id = ? LIMIT 1', [orderId]);
+    if (rows.length === 0) {
+      conn.release();
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    conn.release();
+    res.json({ success: true, order: parseOrderRow(rows[0]) });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Get order error:', err);
+    res.status(500).json({ success: false, message: 'Failed to load order' });
+  }
+});
+
+app.get('/api/orders/:orderId/status', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const orderId = String(req.params.orderId || '');
+    conn = await pool.getConnection();
+    const [rows] = await conn.query('SELECT status FROM orders WHERE order_id = ? LIMIT 1', [orderId]);
+    if (rows.length === 0) {
+      conn.release();
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    conn.release();
+    res.json({ success: true, status: rows[0].status });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.put('/api/orders/:orderId/status', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const orderId = String(req.params.orderId || '');
+    const { status } = req.body || {};
+    const allowed = ['pending','paid','processing','shipped','delivered','cancelled','refunded'];
+    if (!status || !allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+    conn = await pool.getConnection();
+    const [result] = await conn.query(
+      'UPDATE orders SET status = ?, updated_at = NOW() WHERE order_id = ?',
+      [status, orderId]
+    );
+    conn.release();
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+    res.json({ success: true, message: 'Status updated', status });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/orders/:orderId/estimated-delivery', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const orderId = String(req.params.orderId || '');
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(
+      'SELECT estimated_delivery, tracking_number, tracking_url, status FROM orders WHERE order_id = ? LIMIT 1',
+      [orderId]
+    );
+    if (rows.length === 0) { conn.release(); return res.status(404).json({ success: false, message: 'Order not found' }); }
+    conn.release();
+    res.json({ success: true, estimated_delivery: rows[0].estimated_delivery, tracking_number: rows[0].tracking_number, tracking_url: rows[0].tracking_url, status: rows[0].status });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.put('/api/orders/:orderId/estimated-delivery', requireAdminAuth, async (req, res) => {
+  let conn;
+  try {
+    const orderId = String(req.params.orderId || '');
+    const { estimated_delivery, tracking_number, tracking_url } = req.body || {};
+    conn = await pool.getConnection();
+    const [result] = await conn.query(
+      `UPDATE orders SET
+         estimated_delivery = ?,
+         tracking_number = ?,
+         tracking_url = ?,
+         updated_at = NOW()
+       WHERE order_id = ?`,
+      [estimated_delivery || null, tracking_number || null, tracking_url || null, orderId]
+    );
+    conn.release();
+    if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Order not found' });
+    res.json({ success: true, message: 'Delivery info updated' });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/create-checkout-session', async (req, res) => {
+  let conn;
+  try {
+    const { items, currency, customer, totals, shippingMethod, shipping, successUrl, cancelUrl } = req.body || {};
+    const total = Number((totals && totals.total != null) ? totals.total : (calculateItemsMerchandiseTotal(items) + Number(shipping || 0))) || 0;
+    if (!stripe) {
+      conn = await pool.getConnection();
+      const orderId = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+      let userId = null;
+      try {
+        const authHeader = req.headers.authorization || req.headers.Authorization || '';
+        if (authHeader.startsWith('Bearer ')) {
+          const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET);
+          if (decoded.type === 'user') userId = decoded.userId;
+        }
+      } catch (_) {}
+      const name = [customer?.firstName, customer?.lastName].filter(Boolean).join(' ') || customer?.name || null;
+      await conn.query(
+        `INSERT INTO orders (order_id, user_id, customer_name, customer_email, customer_phone, customer_country,
+                             status, payment_method, subtotal, shipping, total, currency, shipping_method,
+                             shipping_address, customer_info, items, promo_code)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          orderId, userId, name, customer?.email || null, customer?.phone || null, customer?.country || null,
+          'paid', 'fallback',
+          Number(totals?.subtotal || 0), Number(totals?.shipping || 0), Number(total),
+          (currency || 'EUR').toUpperCase(), shippingMethod || null,
+          customer ? JSON.stringify({
+            name, address: customer?.address || customer?.shippingAddress || null,
+            city: customer?.city || null, state: customer?.state || null,
+            zip: customer?.zip || customer?.zip_code || null, country: customer?.country || null,
+            phone: customer?.phone || null,
+          }) : null,
+          customer ? JSON.stringify(customer) : null,
+          items ? JSON.stringify(items) : null,
+          req.body?.promoCode || null,
+        ]
+      );
+      conn.release();
+      const fallbackUrl = (successUrl || '').replace('{CHECKOUT_SESSION_ID}', orderId);
+      return res.json({ success: true, url: fallbackUrl, orderId, offline: true });
+    }
+
+    const lineItems = (items || []).map(it => {
+      const unitAmount = Math.round(Number(it?.discounted_price ?? it?.price ?? 0) * 100);
+      const qty = Number(it?.quantity ?? 1) || 1;
+      return {
+        price_data: {
+          currency: (currency || 'EUR').toLowerCase(),
+          product_data: {
+            name: it?.product_name || it?.name || 'Custom Product',
+            description: it?.sku ? `SKU: ${it.sku}` : undefined,
+          },
+          unit_amount: Math.max(unitAmount, 0),
+        },
+        quantity: qty,
+      };
+    });
+    if (Number(shipping || 0) > 0) {
+      lineItems.push({
+        price_data: {
+          currency: (currency || 'EUR').toLowerCase(),
+          product_data: { name: 'Shipping & Handling' },
+          unit_amount: Math.round(Number(shipping) * 100),
+        },
+        quantity: 1,
+      });
+    }
+
+    const orderId = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+    let userId = null;
+    try {
+      const authHeader = req.headers.authorization || req.headers.Authorization || '';
+      if (authHeader.startsWith('Bearer ')) {
+        const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET);
+        if (decoded.type === 'user') userId = decoded.userId;
+      }
+    } catch (_) {}
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      mode: 'payment',
+      line_items: lineItems,
+      success_url: successUrl || (process.env.PUBLIC_SITE_URL || 'http://localhost:5173') + '/Checkout?session_id={CHECKOUT_SESSION_ID}',
+      cancel_url: cancelUrl || (process.env.PUBLIC_SITE_URL || 'http://localhost:5173') + '/cart',
+      metadata: {
+        order_id: orderId,
+        user_id: userId || '',
+        customer_email: customer?.email || '',
+        items_json: JSON.stringify(items || []),
+        customer_json: JSON.stringify(customer || {}),
+        shipping_method: shippingMethod || '',
+        promo_code: req.body?.promoCode || '',
+      },
+      customer_email: customer?.email || undefined,
+    });
+
+    conn = await pool.getConnection();
+    const name = [customer?.firstName, customer?.lastName].filter(Boolean).join(' ') || customer?.name || null;
+    await conn.query(
+      `INSERT INTO orders (order_id, user_id, customer_name, customer_email, customer_phone, customer_country,
+                           status, payment_method, payment_id, subtotal, shipping, total, currency, shipping_method,
+                           shipping_address, customer_info, items, promo_code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        orderId, userId, name, customer?.email || null, customer?.phone || null, customer?.country || null,
+        'pending', 'stripe', session.id,
+        Number(totals?.subtotal || 0), Number(totals?.shipping || 0), Number(total),
+        (currency || 'EUR').toUpperCase(), shippingMethod || null,
+        customer ? JSON.stringify({
+          name, address: customer?.address || customer?.shippingAddress || null,
+          city: customer?.city || null, state: customer?.state || null,
+          zip: customer?.zip || customer?.zip_code || null, country: customer?.country || null,
+          phone: customer?.phone || null,
+        }) : null,
+        customer ? JSON.stringify(customer) : null,
+        items ? JSON.stringify(items) : null,
+        req.body?.promoCode || null,
+      ]
+    );
+    conn.release();
+    res.json({ success: true, url: session.url, orderId });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Create checkout session error:', err);
+    res.status(500).json({ success: false, message: err.message || 'Failed to create checkout' });
+  }
+});
+
+app.post('/api/checkout', async (req, res) => {
+  let conn;
+  try {
+    const body = req.body || {};
+    const items = body.items || [];
+    const customer = body.customer || {};
+    const totals = body.totals || {};
+    if (!items.length) return res.status(400).json({ success: false, message: 'Cart is empty' });
+    const orderId = body.orderId || `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+
+    let userId = null;
+    try {
+      const authHeader = req.headers.authorization || req.headers.Authorization || '';
+      if (authHeader.startsWith('Bearer ')) {
+        const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET);
+        if (decoded.type === 'user') userId = decoded.userId;
+      }
+    } catch (_) {}
+
+    conn = await pool.getConnection();
+    const [existing] = await conn.query('SELECT id FROM orders WHERE order_id = ? LIMIT 1', [orderId]);
+    const name = [customer?.firstName, customer?.lastName].filter(Boolean).join(' ') || customer?.name || null;
+    const shippingInfo = customer?.shipping || customer?.shippingAddress || customer;
+    if (existing.length === 0) {
+      await conn.query(
+        `INSERT INTO orders (order_id, user_id, customer_name, customer_email, customer_phone, customer_country,
+                             status, payment_method, payment_status, payment_id,
+                             subtotal, shipping, tax, discount, total, currency, shipping_method,
+                             shipping_address, customer_info, items, product_details, promo_code, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          orderId, userId, name, customer?.email || null, customer?.phone || null, customer?.country || null,
+          body.payment_status === 'succeeded' || body.status === 'paid' ? 'paid' : 'pending',
+          body.paymentMethod || body.payment_method || 'card',
+          body.payment_status || null,
+          body.payment_id || body.transactionId || null,
+          Number(totals.subtotal || 0), Number(totals.shipping || 0), Number(totals.tax || 0), Number(totals.discount || 0), Number(totals.total || 0),
+          (body.currency || 'EUR').toUpperCase(),
+          body.shippingMethod || null,
+          JSON.stringify({
+            name, address_line1: shippingInfo?.address || shippingInfo?.address_line1 || customer?.address || null,
+            city: shippingInfo?.city || customer?.city || null, state: shippingInfo?.state || customer?.state || null,
+            zip: shippingInfo?.zip || shippingInfo?.zip_code || customer?.zip || customer?.zip_code || null,
+            country: shippingInfo?.country || customer?.country || null,
+            phone: customer?.phone || shippingInfo?.phone || null,
+          }),
+          JSON.stringify(customer),
+          JSON.stringify(items),
+          body.product_details ? JSON.stringify(body.product_details) : null,
+          body.promoCode || body.promo_code || null,
+          body.notes || null,
+        ]
+      );
+    } else {
+      await conn.query(
+        `UPDATE orders SET
+          status = ?, payment_status = ?, payment_id = ?, total = ?, updated_at = NOW()
+         WHERE order_id = ?`,
+        [
+          body.payment_status === 'succeeded' || body.status === 'paid' ? 'paid' : 'pending',
+          body.payment_status || null,
+          body.payment_id || body.transactionId || null,
+          Number(totals.total || 0),
+          orderId,
+        ]
+      );
+    }
+    conn.release();
+    res.json({ success: true, orderId });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Checkout store error:', err);
+    res.status(500).json({ success: false, message: err.message || 'Failed to store order' });
+  }
+});
+
+// ==================== END ORDERS & CHECKOUT SYSTEM ====================
 
 
 // ==================== MESSAGE HANDLING ====================
