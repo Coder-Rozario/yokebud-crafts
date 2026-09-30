@@ -6962,6 +6962,8 @@ const sendUserOtpEmail = async (email, otp, purpose = 'login') => {
   let conn;
   try {
     conn = await pool.getConnection();
+    const dbName = process.env.DB_NAME;
+
     await conn.query(`
       CREATE TABLE IF NOT EXISTS user_credentials (
         user_id VARCHAR(100) NOT NULL PRIMARY KEY,
@@ -6977,6 +6979,24 @@ const sendUserOtpEmail = async (email, otp, purpose = 'login') => {
         KEY idx_google_uid (google_uid)
       )
     `);
+
+    const [ucCols] = await conn.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'user_credentials'`,
+      [dbName]
+    );
+    const ucColSet = new Set((ucCols || []).map(c => c.COLUMN_NAME));
+    const ucMissing = [];
+    if (!ucColSet.has('google_uid')) ucMissing.push(`ADD COLUMN google_uid VARCHAR(255) NULL UNIQUE`);
+    if (!ucColSet.has('display_name')) ucMissing.push(`ADD COLUMN display_name VARCHAR(255) NULL`);
+    if (!ucColSet.has('photo_url')) ucMissing.push(`ADD COLUMN photo_url VARCHAR(500) NULL`);
+    if (!ucColSet.has('email_verified')) ucMissing.push(`ADD COLUMN email_verified TINYINT(1) NOT NULL DEFAULT 0`);
+    if (!ucColSet.has('auth_provider')) ucMissing.push(`ADD COLUMN auth_provider ENUM('email','google','both') NOT NULL DEFAULT 'email'`);
+    if (!ucColSet.has('created_at')) ucMissing.push(`ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+    if (!ucColSet.has('updated_at')) ucMissing.push(`ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`);
+    for (const alter of ucMissing) {
+      try { await conn.query(`ALTER TABLE user_credentials ${alter}`); } catch (e) { console.warn('user_credentials alter skipped:', e.message); }
+    }
+
     await conn.query(`
       CREATE TABLE IF NOT EXISTS user_profiles (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -6999,6 +7019,33 @@ const sendUserOtpEmail = async (email, otp, purpose = 'login') => {
         KEY idx_user_id (user_id)
       )
     `);
+
+    const [upCols] = await conn.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'user_profiles'`,
+      [dbName]
+    );
+    const upColSet = new Set((upCols || []).map(c => c.COLUMN_NAME));
+    const upMissing = [];
+    if (!upColSet.has('user_id')) upMissing.push(`ADD COLUMN user_id VARCHAR(100) NOT NULL UNIQUE`);
+    if (!upColSet.has('first_name')) upMissing.push(`ADD COLUMN first_name VARCHAR(100) NULL`);
+    if (!upColSet.has('last_name')) upMissing.push(`ADD COLUMN last_name VARCHAR(100) NULL`);
+    if (!upColSet.has('phone')) upMissing.push(`ADD COLUMN phone VARCHAR(50) NULL`);
+    if (!upColSet.has('address')) upMissing.push(`ADD COLUMN address VARCHAR(500) NULL`);
+    if (!upColSet.has('house_number')) upMissing.push(`ADD COLUMN house_number VARCHAR(50) NULL`);
+    if (!upColSet.has('apartment')) upMissing.push(`ADD COLUMN apartment VARCHAR(50) NULL`);
+    if (!upColSet.has('landmark')) upMissing.push(`ADD COLUMN landmark VARCHAR(255) NULL`);
+    if (!upColSet.has('city')) upMissing.push(`ADD COLUMN city VARCHAR(100) NULL`);
+    if (!upColSet.has('state')) upMissing.push(`ADD COLUMN state VARCHAR(100) NULL`);
+    if (!upColSet.has('zip_code')) upMissing.push(`ADD COLUMN zip_code VARCHAR(50) NULL`);
+    if (!upColSet.has('country')) upMissing.push(`ADD COLUMN country VARCHAR(100) NULL`);
+    if (!upColSet.has('profile_picture')) upMissing.push(`ADD COLUMN profile_picture VARCHAR(500) NULL`);
+    if (!upColSet.has('date_of_birth')) upMissing.push(`ADD COLUMN date_of_birth DATE NULL`);
+    if (!upColSet.has('created_at')) upMissing.push(`ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+    if (!upColSet.has('updated_at')) upMissing.push(`ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`);
+    for (const alter of upMissing) {
+      try { await conn.query(`ALTER TABLE user_profiles ${alter}`); } catch (e) { console.warn('user_profiles alter skipped:', e.message); }
+    }
+
     await conn.query(`
       CREATE TABLE IF NOT EXISTS user_otps (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -7012,6 +7059,21 @@ const sendUserOtpEmail = async (email, otp, purpose = 'login') => {
         KEY idx_expires (expires_at)
       )
     `);
+
+    const [uoCols] = await conn.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'user_otps'`,
+      [dbName]
+    );
+    const uoColSet = new Set((uoCols || []).map(c => c.COLUMN_NAME));
+    const uoMissing = [];
+    if (!uoColSet.has('purpose')) uoMissing.push(`ADD COLUMN purpose ENUM('login','registration') NOT NULL DEFAULT 'login'`);
+    if (!uoColSet.has('expires_at')) uoMissing.push(`ADD COLUMN expires_at DATETIME NOT NULL`);
+    if (!uoColSet.has('is_used')) uoMissing.push(`ADD COLUMN is_used TINYINT(1) NOT NULL DEFAULT 0`);
+    if (!uoColSet.has('created_at')) uoMissing.push(`ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+    for (const alter of uoMissing) {
+      try { await conn.query(`ALTER TABLE user_otps ${alter}`); } catch (e) { console.warn('user_otps alter skipped:', e.message); }
+    }
+
     await conn.query(`
       CREATE TABLE IF NOT EXISTS user_wishlists (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -7023,6 +7085,33 @@ const sendUserOtpEmail = async (email, otp, purpose = 'login') => {
         KEY idx_product_id (product_id)
       )
     `);
+
+    try {
+      const [uwCols] = await conn.query(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'user_wishlists'`,
+        [dbName]
+      );
+      if ((uwCols || []).length === 0) throw new Error('retry as user_wishlist');
+    } catch (_) {
+      try {
+        await conn.query(`RENAME TABLE user_wishlist TO user_wishlists`);
+      } catch (__) {}
+    }
+
+    const [uwCols] = await conn.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'user_wishlists'`,
+      [dbName]
+    );
+    const uwColSet = new Set((uwCols || []).map(c => c.COLUMN_NAME));
+    const uwMissing = [];
+    if (!uwColSet.has('user_id')) uwMissing.push(`ADD COLUMN user_id VARCHAR(100) NOT NULL`);
+    if (!uwColSet.has('product_id')) uwMissing.push(`ADD COLUMN product_id INT NOT NULL`);
+    if (!uwColSet.has('added_at')) uwMissing.push(`ADD COLUMN added_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+    for (const alter of uwMissing) {
+      try { await conn.query(`ALTER TABLE user_wishlists ${alter}`); } catch (e) { console.warn('user_wishlists alter skipped:', e.message); }
+    }
+    try { await conn.query(`ALTER TABLE user_wishlists ADD UNIQUE KEY uniq_user_product (user_id, product_id)`); } catch (_) {}
+
     await conn.query(`
       CREATE TABLE IF NOT EXISTS orders (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -7048,6 +7137,7 @@ const sendUserOtpEmail = async (email, otp, purpose = 'login') => {
         items JSON NULL,
         product_details JSON NULL,
         estimated_delivery DATE NULL,
+        delivered_at DATETIME NULL,
         tracking_number VARCHAR(255) NULL,
         tracking_url VARCHAR(500) NULL,
         promo_code VARCHAR(50) NULL,
@@ -7060,6 +7150,46 @@ const sendUserOtpEmail = async (email, otp, purpose = 'login') => {
         KEY idx_email (customer_email)
       )
     `);
+
+    const [ordCols] = await conn.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders'`,
+      [dbName]
+    );
+    const ordColSet = new Set((ordCols || []).map(c => c.COLUMN_NAME));
+    const ordMissing = [];
+    if (!ordColSet.has('order_id')) ordMissing.push(`ADD COLUMN order_id VARCHAR(100) NOT NULL UNIQUE`);
+    if (!ordColSet.has('user_id')) ordMissing.push(`ADD COLUMN user_id VARCHAR(100) NULL`);
+    if (!ordColSet.has('customer_name')) ordMissing.push(`ADD COLUMN customer_name VARCHAR(255) NULL`);
+    if (!ordColSet.has('customer_email')) ordMissing.push(`ADD COLUMN customer_email VARCHAR(255) NULL`);
+    if (!ordColSet.has('customer_phone')) ordMissing.push(`ADD COLUMN customer_phone VARCHAR(50) NULL`);
+    if (!ordColSet.has('customer_country')) ordMissing.push(`ADD COLUMN customer_country VARCHAR(100) NULL`);
+    if (!ordColSet.has('status')) ordMissing.push(`ADD COLUMN status ENUM('pending','paid','processing','shipped','delivered','cancelled','refunded') NOT NULL DEFAULT 'pending'`);
+    if (!ordColSet.has('payment_method')) ordMissing.push(`ADD COLUMN payment_method VARCHAR(50) NULL`);
+    if (!ordColSet.has('payment_status')) ordMissing.push(`ADD COLUMN payment_status VARCHAR(50) NULL`);
+    if (!ordColSet.has('payment_id')) ordMissing.push(`ADD COLUMN payment_id VARCHAR(255) NULL`);
+    if (!ordColSet.has('subtotal')) ordMissing.push(`ADD COLUMN subtotal DECIMAL(12,2) NOT NULL DEFAULT 0`);
+    if (!ordColSet.has('shipping')) ordMissing.push(`ADD COLUMN shipping DECIMAL(12,2) NOT NULL DEFAULT 0`);
+    if (!ordColSet.has('tax')) ordMissing.push(`ADD COLUMN tax DECIMAL(12,2) NOT NULL DEFAULT 0`);
+    if (!ordColSet.has('discount')) ordMissing.push(`ADD COLUMN discount DECIMAL(12,2) NOT NULL DEFAULT 0`);
+    if (!ordColSet.has('total')) ordMissing.push(`ADD COLUMN total DECIMAL(12,2) NOT NULL DEFAULT 0`);
+    if (!ordColSet.has('currency')) ordMissing.push(`ADD COLUMN currency VARCHAR(10) NOT NULL DEFAULT 'EUR'`);
+    if (!ordColSet.has('shipping_method')) ordMissing.push(`ADD COLUMN shipping_method VARCHAR(100) NULL`);
+    if (!ordColSet.has('shipping_address')) ordMissing.push(`ADD COLUMN shipping_address JSON NULL`);
+    if (!ordColSet.has('customer_info')) ordMissing.push(`ADD COLUMN customer_info JSON NULL`);
+    if (!ordColSet.has('items')) ordMissing.push(`ADD COLUMN items JSON NULL`);
+    if (!ordColSet.has('product_details')) ordMissing.push(`ADD COLUMN product_details JSON NULL`);
+    if (!ordColSet.has('estimated_delivery_date') && !ordColSet.has('estimated_delivery')) ordMissing.push(`ADD COLUMN estimated_delivery DATE NULL`);
+    if (!ordColSet.has('delivered_at')) ordMissing.push(`ADD COLUMN delivered_at DATETIME NULL`);
+    if (!ordColSet.has('tracking_number')) ordMissing.push(`ADD COLUMN tracking_number VARCHAR(255) NULL`);
+    if (!ordColSet.has('tracking_url')) ordMissing.push(`ADD COLUMN tracking_url VARCHAR(500) NULL`);
+    if (!ordColSet.has('promo_code')) ordMissing.push(`ADD COLUMN promo_code VARCHAR(50) NULL`);
+    if (!ordColSet.has('notes')) ordMissing.push(`ADD COLUMN notes TEXT NULL`);
+    if (!ordColSet.has('created_at')) ordMissing.push(`ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+    if (!ordColSet.has('updated_at')) ordMissing.push(`ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`);
+    for (const alter of ordMissing) {
+      try { await conn.query(`ALTER TABLE orders ${alter}`); } catch (e) { console.warn('orders alter skipped:', e.message); }
+    }
+
     conn.release();
     console.log('User auth tables ready.');
   } catch (err) {
@@ -7067,6 +7197,15 @@ const sendUserOtpEmail = async (email, otp, purpose = 'login') => {
     console.error('User auth table setup error:', err.message);
   }
 })();
+
+const splitDisplayName = (displayName) => {
+  const d = (displayName || '').trim();
+  if (!d) return [null, null];
+  const parts = d.split(/\s+/);
+  const first = parts[0] || null;
+  const last = parts.slice(1).join(' ') || null;
+  return [first, last];
+};
 
 app.post('/api/user/auth/firebase-google', async (req, res) => {
   let conn;
@@ -7077,6 +7216,7 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
     }
     const email = String(fbUser.email).toLowerCase().trim();
     const uid = String(fbUser.uid);
+    const [firstName, lastName] = splitDisplayName(fbUser.displayName);
 
     conn = await pool.getConnection();
 
@@ -7107,6 +7247,14 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
           userId,
         ]
       );
+      await conn.query(
+        `INSERT INTO user_profiles (user_id, first_name, last_name, profile_picture) VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           first_name = COALESCE(NULLIF(first_name, ''), VALUES(first_name)),
+           last_name = COALESCE(NULLIF(last_name, ''), VALUES(last_name)),
+           profile_picture = COALESCE(NULLIF(profile_picture, ''), VALUES(profile_picture))`,
+        [userId, firstName, lastName, fbUser.photoURL || null]
+      );
     } else {
       userId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       await conn.query(
@@ -7121,19 +7269,13 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
           fbUser.emailVerified ? 1 : 0,
         ]
       );
-      const [names] = (() => {
-        const d = (fbUser.displayName || '').trim();
-        if (!d) return [[null, null]];
-        const parts = d.split(/\s+/);
-        const first = parts[0] || null;
-        const last = parts.slice(1).join(' ') || null;
-        return [[first, last]];
-      })();
       await conn.query(
-        `INSERT INTO user_profiles (user_id, first_name, last_name) VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE first_name = COALESCE(NULLIF(first_name, ''), VALUES(first_name)),
-                                  last_name = COALESCE(NULLIF(last_name, ''), VALUES(last_name))`,
-        [userId, names[0] || null, names[1] || null]
+        `INSERT INTO user_profiles (user_id, first_name, last_name, profile_picture) VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           first_name = COALESCE(NULLIF(first_name, ''), VALUES(first_name)),
+           last_name = COALESCE(NULLIF(last_name, ''), VALUES(last_name)),
+           profile_picture = COALESCE(NULLIF(profile_picture, ''), VALUES(profile_picture))`,
+        [userId, firstName, lastName, fbUser.photoURL || null]
       );
     }
 
@@ -7148,7 +7290,7 @@ app.post('/api/user/auth/firebase-google', async (req, res) => {
     res.json({
       success: true,
       token,
-      user: profile || { user_id: userId, first_name: fbUser.displayName?.split(' ')[0] || null, last_name: null },
+      user: profile || { user_id: userId, first_name: firstName, last_name: lastName },
     });
   } catch (err) {
     if (conn) { try { conn.release(); } catch (_) {} }
@@ -7281,6 +7423,12 @@ app.post('/api/user/login/verify-otp', async (req, res) => {
       return res.status(404).json({ success: false, message: 'No account found. Please register first.' });
     }
     const userId = credRows[0].user_id;
+
+    await conn.query(
+      `INSERT INTO user_profiles (user_id) VALUES (?)
+       ON DUPLICATE KEY UPDATE updated_at = NOW()`,
+      [userId]
+    );
 
     await conn.query('COMMIT');
 
