@@ -1867,6 +1867,9 @@ const EMAIL_THEME = {
   border: '#E2E8F0'
 };
 
+const SUPPORT_PHONE = '+358 413195610';
+const WHATSAPP_PHONE = '358413195610';
+
 // ==================== PREMIUM EMAIL TEMPLATE COMPONENTS ====================
 
 const renderThemedEmail = ({
@@ -2226,7 +2229,7 @@ const renderThemedEmail = ({
               <a href="https://www.facebook.com/share/1D9o7CoZB7/" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/124/124010.png" alt="Facebook" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
-              <a href="https://wa.me/+358440328124" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
+              <a href="https://wa.me/${WHATSAPP_PHONE}" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
                 <img src="https://cdn-icons-png.flaticon.com/512/733/733585.png" alt="WhatsApp" class="social-icon" style="width:24px;height:24px;display:block;background:transparent;border-radius:0;border:0;outline:none;vertical-align:middle;">
               </a>
               <a href="https://www.youtube.com/@yokebud" class="social-link" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;background:transparent;border-radius:0;margin:0 6px 10px 6px;">
@@ -2253,7 +2256,7 @@ const renderThemedEmail = ({
             <div class="contact-info">
               <p>Yokebud craft</p>
               <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
-              <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
+              <p>Email: info@yokebud.com | Phone: ${SUPPORT_PHONE}</p>
             </div>
             
             <div class="copyright">
@@ -2851,32 +2854,16 @@ const renderNewsletterSection = ({
 const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
   const unsubscribeLink = `${PUBLIC_SITE_URL}/UnsubscribePage?token=${token}`;
   const newArrivals = Array.isArray(collections?.newArrivals) ? collections.newArrivals : [];
-  const discountedProducts = Array.isArray(collections?.discounted) ? collections.discounted : [];
-  const totalHighlights = newArrivals.length + discountedProducts.length;
-
-  const highlightsSummary = [
-    newArrivals.length > 0 ? `${newArrivals.length} latest upload${newArrivals.length > 1 ? 's' : ''}` : null,
-    discountedProducts.length > 0 ? `${discountedProducts.length} special deal${discountedProducts.length > 1 ? 's' : ''}` : null
-  ].filter(Boolean).join(' and ');
+  const totalHighlights = newArrivals.length;
 
   const newArrivalsHtml = renderNewsletterSection({
     title: 'Latest Uploads',
-    intro: 'Freshly uploaded products from the workshop, selected from the newest active items on the site.',
+    intro: 'Products uploaded or updated in the last seven days.',
     products: newArrivals,
     accentColor: '#111111',
     badgeBg: '#FFF4D8',
     badgeText: '#8A5A00',
     ctaText: 'View Product'
-  });
-
-  const discountedHtml = renderNewsletterSection({
-    title: 'Special Discounts',
-    intro: 'Current discounted products featured separately, so subscribers can spot active offers right away.',
-    products: discountedProducts,
-    accentColor: EMAIL_THEME.danger,
-    badgeBg: '#FDECEC',
-    badgeText: '#B42318',
-    ctaText: 'Claim Offer'
   });
 
   const contentHtml = `
@@ -2891,8 +2878,8 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
         </p>
         <p class="content-text" style="text-align: center; max-width: 520px; margin: 0 auto;">
           ${totalHighlights > 0
-            ? `We prepared ${escapeEmailHtml(highlightsSummary)} for this week's edition, with newly uploaded products and clearly separated offer items for faster browsing.`
-            : 'We prepared a curated weekly look at what is new on Yokebud craft.'}
+            ? `This week's edition includes ${totalHighlights} product${totalHighlights === 1 ? '' : 's'} uploaded or updated in the last seven days.`
+            : 'No products have been uploaded or updated in the last seven days.'}
         </p>
       </div>
 
@@ -2900,14 +2887,13 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
         <tr>
           <td style="padding: 18px 20px;">
             <div style="font-size: 14px; line-height: 23px; color: ${EMAIL_THEME.text};">
-              You are receiving the latest uploads directly from our store. Whenever a product has a live discount, it appears in its own dedicated section below instead of being mixed into the general product feed.
+              These cards are the products recently added or updated in our store. Older products are not repeated in this weekly update.
             </div>
           </td>
         </tr>
       </table>
 
       ${newArrivalsHtml}
-      ${discountedHtml}
 
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top: 28px; border: 1px dashed ${EMAIL_THEME.primary}; border-radius: 14px; background: #FFF9ED;">
         <tr>
@@ -2926,13 +2912,13 @@ const renderWeeklyNewsletterEmail = (subscriber, collections, token) => {
 
   return renderThemedEmail({
     title: 'Weekly Product Highlights',
-    subtitle: 'Latest uploads and separate discount picks',
+    subtitle: 'Products added or updated in the last seven days',
     contentHtml,
     primaryCtaText: 'Browse All Products',
     primaryCtaUrl: `${PUBLIC_SITE_URL}/shop`,
     secondaryCtaText: 'Unsubscribe',
     secondaryCtaUrl: unsubscribeLink,
-    footerNote: `Need inspiration first? Explore the latest stories on our blog: <a href="${PUBLIC_SITE_URL}/blog" style="color:${EMAIL_THEME.primary}; text-decoration:none;">${PUBLIC_SITE_URL}/blog</a>`
+    footerNote: `<a href="${PUBLIC_SITE_URL}" style="color:${EMAIL_THEME.primary}; text-decoration:none;">Visit our website</a>`
   });
 };
 
@@ -3139,7 +3125,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
             <a href="https://www.facebook.com/share/1D9o7CoZB7/" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
               <img src="https://cdn-icons-png.flaticon.com/512/124/124010.png" alt="Facebook" style="width:22px;height:22px;display:block;border:0;outline:none;">
             </a>
-            <a href="https://wa.me/+358440328124" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
+            <a href="https://wa.me/${WHATSAPP_PHONE}" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
               <img src="https://cdn-icons-png.flaticon.com/512/733/733585.png" alt="WhatsApp" style="width:22px;height:22px;display:block;border:0;outline:none;">
             </a>
             <a href="https://www.youtube.com/@yokebud" target="_blank" rel="noopener" style="display:inline-block;line-height:0;text-decoration:none;margin:0 6px 10px 6px;">
@@ -3164,7 +3150,7 @@ const renderOTPEmail = (email, otp, type = 'registration') => {
           <div class="contact-info">
             <p><strong>Yokebud craft</strong></p>
             <p>Kotopellonkatu 1A, 04200 Kerava, Finland</p>
-            <p>Email: info@yokebud.com | Phone: +358 440 328 124</p>
+            <p>Email: info@yokebud.com | Phone: ${SUPPORT_PHONE}</p>
           </div>
           <div class="copyright">
             &copy; ${new Date().getFullYear()} Yokebud craft. All rights reserved.
@@ -3433,7 +3419,7 @@ const renderContactFormConfirmationEmail = (name, email, message) => {
       
       <p class="content-text">
         We have received your message and our team will get back to you within 24 hours. 
-        For urgent inquiries, you can also reach us on WhatsApp at +358 440 328 124.
+        For urgent inquiries, you can also reach us on WhatsApp at ${SUPPORT_PHONE}.
       </p>
       
       <div class="email-card" style="background: linear-gradient(135deg, ${EMAIL_THEME.light}, #EDF2F7);">
@@ -6821,23 +6807,34 @@ app.get('/api/admin/users/summary', requireAdminAuth, async (req, res) => {
     const connection = await pool.getConnection();
 
     const [totalRows] = await connection.query(
-      'SELECT COUNT(*) as count FROM user_profiles'
+      "SELECT COUNT(DISTINCT user_id) as count FROM user_profiles WHERE user_id IS NOT NULL AND TRIM(user_id) <> ''"
     );
 
     // Return last 60 days of signup timestamps for frontend growth/activity
     const [recentRows] = await connection.query(
-      `SELECT created_at FROM user_profiles 
-       WHERE created_at >= DATE_SUB(NOW(), INTERVAL 60 DAY)
-       ORDER BY created_at DESC`
+      `SELECT first_created_at AS created_at
+       FROM (
+         SELECT user_id, MIN(created_at) AS first_created_at
+         FROM user_profiles
+         WHERE user_id IS NOT NULL AND TRIM(user_id) <> ''
+         GROUP BY user_id
+       ) AS unique_users
+       WHERE first_created_at >= DATE_SUB(NOW(), INTERVAL 60 DAY)
+       ORDER BY first_created_at DESC`
     );
 
     // Aggregate last 30 days by date for quick activity charting
     const [activityRows] = await connection.query(
-      `SELECT DATE(created_at) as date, COUNT(*) as count
-       FROM user_profiles
-       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-       GROUP BY DATE(created_at)
-       ORDER BY DATE(created_at)`
+      `SELECT DATE(first_created_at) AS date, COUNT(*) AS count
+       FROM (
+         SELECT user_id, MIN(created_at) AS first_created_at
+         FROM user_profiles
+         WHERE user_id IS NOT NULL AND TRIM(user_id) <> ''
+         GROUP BY user_id
+       ) AS unique_users
+       WHERE first_created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+       GROUP BY DATE(first_created_at)
+       ORDER BY DATE(first_created_at)`
     );
 
     connection.release();
@@ -6860,12 +6857,18 @@ app.get('/api/admin/user-profiles', requireAdminAuth, async (req, res) => {
   try {
     connection = await pool.getConnection();
     const [rows] = await connection.query(`
-      SELECT id, user_id, first_name, last_name, phone, address, house_number,
-             apartment, landmark, city, state, zip_code, country,
-             profile_picture, date_of_birth, created_at, updated_at
-      FROM user_profiles
-      WHERE 1
-      ORDER BY created_at DESC
+      SELECT profile.id, profile.user_id, profile.first_name, profile.last_name,
+             profile.phone, profile.address, profile.house_number, profile.apartment,
+             profile.landmark, profile.city, profile.state, profile.zip_code, profile.country,
+             profile.profile_picture, profile.date_of_birth, profile.created_at, profile.updated_at
+      FROM user_profiles AS profile
+      INNER JOIN (
+        SELECT MAX(id) AS id
+        FROM user_profiles
+        WHERE user_id IS NOT NULL AND TRIM(user_id) <> ''
+        GROUP BY user_id
+      ) AS latest_profile ON latest_profile.id = profile.id
+      ORDER BY profile.created_at DESC
     `);
 
     connection.release();
@@ -7671,6 +7674,29 @@ app.get('/api/user/wishlist', requireUserAuth, async (req, res) => {
     if (conn) { try { conn.release(); } catch (_) {} }
     console.error('Get user wishlist error:', err);
     res.status(500).json({ success: false, message: 'Failed to load wishlist' });
+  }
+});
+
+app.get('/api/user/wishlist/check/:productId', requireUserAuth, async (req, res) => {
+  let conn;
+  try {
+    const userId = req.user.userId;
+    const productId = parseInt(req.params.productId, 10);
+    if (!Number.isFinite(productId) || productId <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid product ID' });
+    }
+
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(
+      'SELECT 1 FROM user_wishlists WHERE user_id = ? AND product_id = ? LIMIT 1',
+      [userId, productId]
+    );
+    conn.release();
+    res.json({ success: true, exists: rows.length > 0 });
+  } catch (err) {
+    if (conn) { try { conn.release(); } catch (_) {} }
+    console.error('Check user wishlist error:', err);
+    res.status(500).json({ success: false, message: 'Failed to check wishlist' });
   }
 });
 
@@ -8881,53 +8907,21 @@ const normalizeNewsletterProducts = (productList) => {
 };
 
 const getWeeklyNewsletterCollections = async (connection) => {
-  const [discountedProducts] = await connection.query(`
-      SELECT p.*,
-             JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
-      FROM products p
-      WHERE p.stock > 0
-        AND p.status = 'active'
-        AND p.discounted_price IS NOT NULL
-        AND p.discounted_price < p.price
-      ORDER BY p.updated_at DESC, p.created_at DESC
-      LIMIT 4
-    `);
-
-  const discountedIds = discountedProducts.map(product => Number(product.id)).filter(Boolean);
-  let latestProducts = [];
-
-  if (discountedIds.length > 0) {
-    const placeholders = discountedIds.map(() => '?').join(', ');
-    const [latestWithoutDiscounts] = await connection.query(
-      `
-        SELECT p.*,
-               JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
-        FROM products p
-        WHERE p.stock > 0
-          AND p.status = 'active'
-          AND p.id NOT IN (${placeholders})
-        ORDER BY p.created_at DESC
-        LIMIT 4
-      `,
-      discountedIds
-    );
-    latestProducts = latestWithoutDiscounts;
-  } else {
-    const [latestOnly] = await connection.query(`
-        SELECT p.*,
-               JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
-        FROM products p
-        WHERE p.stock > 0
-          AND p.status = 'active'
-        ORDER BY p.created_at DESC
-        LIMIT 4
-      `);
-    latestProducts = latestOnly;
-  }
+  const [latestProducts] = await connection.query(`
+    SELECT p.*,
+           JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]')) as firstImage
+    FROM products p
+    WHERE p.status = 'active'
+      AND (
+        p.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        OR p.updated_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+      )
+    ORDER BY GREATEST(COALESCE(p.updated_at, p.created_at), p.created_at) DESC
+  `);
 
   return {
     newArrivals: normalizeNewsletterProducts(latestProducts),
-    discounted: normalizeNewsletterProducts(discountedProducts)
+    discounted: []
   };
 };
 
