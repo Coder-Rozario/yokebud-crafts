@@ -6334,6 +6334,7 @@ app.delete('/api/products/:productId/discount-ranges/:id', requireAdminAuth, asy
 
 
 // ==================== IMAGE UPLOAD HANDLING WITH CLOUDINARY ====================
+const MAX_PRODUCT_IMAGE_SIZE_BYTES = 20 * 1024 * 1024;
 app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
   try {
     if (!req.files || Object.keys(req.files).length === 0) {
@@ -6388,6 +6389,12 @@ app.post('/api/upload/:productId?', requireAdminAuth, async (req, res) => {
         return res.status(400).json({
           success: false,
           message: 'Invalid file type. Only JPEG, PNG, WebP and MP4/WEBM/OGG/MOV videos are allowed.'
+        });
+      }
+      if (String(file.mimetype || '').startsWith('image/') && file.size > MAX_PRODUCT_IMAGE_SIZE_BYTES) {
+        return res.status(413).json({
+          success: false,
+          message: 'Each image must be 20 MB or smaller.'
         });
       }
 
